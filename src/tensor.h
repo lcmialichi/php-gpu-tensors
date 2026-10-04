@@ -58,6 +58,7 @@ typedef struct tensor
     int is_contiguous_cached;
     struct fusion_node *fusion;
     int fusion_failed;
+    size_t fusion_readers;
 } tensor_t;
 
 #ifdef __cplusplus

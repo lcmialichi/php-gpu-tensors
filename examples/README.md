@@ -12,6 +12,7 @@ This directory contains functional implementations of the extension's API. The e
 | `04_custom_jit_kernels.php` | JIT Compilation | CUDA source strings, typed parameters, Grid/Block config. |
 | `05_jit_async_execution.php` | Concurrency | Non-blocking execution, Op polling, Stream sync. |
 | `06_serialize_compiled_module.php` | JIT Serialization | PHP Serialize CompiledModule object example |
+| `07_fusion_graph.php` | Fusion and CUDA Graph | Scoped capture, compiled replay, private streams, async result and optional timing comparison |
 
 ## Execution Requirements
 

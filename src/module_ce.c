@@ -1314,7 +1314,7 @@ static zend_bool module_prepare_cuda_arguments(cuda_kernel_data *kernel, HashTab
             }
 
             tensor_t *tensor = array_obj->tensor_handle;
-            if (!fusion_check_mutation() || !fusion_materialize(tensor)) return 0;
+            if (!fusion_check_tensor_mutation(tensor) || !fusion_materialize(tensor)) return 0;
             if (tensor->dtype != param->second_dtype)
             {
                 const char *expected = module_dtype_to_string(param->second_dtype);

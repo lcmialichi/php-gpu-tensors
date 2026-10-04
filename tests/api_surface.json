@@ -1571,6 +1571,13 @@
             "abstract": false,
             "final": true,
             "methods": {
+                "clearCache": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "void"
+                },
                 "compile": {
                     "static": true,
                     "abstract": false,
@@ -1593,9 +1600,25 @@
                             "optional": false,
                             "hasDefault": false,
                             "default": null
+                        },
+                        {
+                            "name": "cudaGraph",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": false
                         }
                     ],
                     "returnType": "Cuda\\FusionGraph"
+                },
+                "getCacheStats": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
                 },
                 "run": {
                     "static": true,
@@ -1625,11 +1648,39 @@
                 }
             }
         },
+        "Cuda\\FusionExecution": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "isFinished": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "bool"
+                },
+                "wait": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "mixed"
+                }
+            }
+        },
         "Cuda\\FusionGraph": {
             "parent": null,
             "abstract": false,
             "final": true,
             "methods": {
+                "getPlan": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
                 "getSource": {
                     "static": false,
                     "abstract": false,
@@ -1660,6 +1711,23 @@
                         }
                     ],
                     "returnType": "mixed"
+                },
+                "runAsync": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "inputs",
+                            "type": "Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": true,
+                            "optional": true,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "Cuda\\FusionExecution"
                 }
             }
         },

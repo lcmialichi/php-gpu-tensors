@@ -70,7 +70,10 @@ Focus: **expanding capabilities**
 ### Performance
 - [ ] Benchmark and improve existing pinned host transfers and stream usage
 - [x] Opt-in elementwise kernel fusion with scoped capture and compiled replay
-- [ ] CUDA Graph backend for replaying multi-kernel fusion plans
+- [x] CUDA Graph backend for replaying compatible multi-kernel fusion plans
+- [x] Fused unaries, selection, safe casts, layout transforms and grouped outputs
+- [x] Bounded PTX cache and private-stream async fusion execution
+- [ ] Adapt native reduction/matmul/power boundaries to private streams and CUDA Graph
 - [ ] Public, comparable benchmark suite
 
 ## Long Term (1+ year)

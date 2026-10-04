@@ -75,7 +75,7 @@ array(2) {
     float(74)
   }
 }
-int(1)
+int(0)
 bool(true)
 array(2) {
   [0]=>

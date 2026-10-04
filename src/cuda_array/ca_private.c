@@ -359,7 +359,7 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
         final_shape,
         new_strides,
         new_ndims,
-        original->offset,
+        0,
         original->total_size);
 
     return reshaped;

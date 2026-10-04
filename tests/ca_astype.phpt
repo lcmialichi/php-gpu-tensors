@@ -1,5 +1,5 @@
 --TEST--
-CudaArray same-dtype astype retains tensor ownership
+CudaArray astype retains same-dtype ownership and supports safe conversions
 --SKIPIF--
 <?php
 if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
@@ -13,11 +13,7 @@ unset($original);
 var_dump($alias->toArray());
 unset($alias);
 echo "released\n";
-try {
-  (new Cuda\CudaArray([1]))->astype('float64');
-} catch (Cuda\RuntimeException $error) {
-    echo "unsupported cast\n";
-}
+var_dump((new Cuda\CudaArray([1]))->astype('float64')->toArray());
 try {
   (new Cuda\CudaArray([1]))->astype('int32');
 } catch (Cuda\InvalidArgumentException $error) {
@@ -32,5 +28,8 @@ array(2) {
   float(2)
 }
 released
-unsupported cast
+array(1) {
+  [0]=>
+  float(1)
+}
 unsafe cast

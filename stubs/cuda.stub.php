@@ -20,7 +20,11 @@ final class Fusion
     /** Execute once and return materialized tensor outputs; false uses eager execution. */
     public static function run(callable $callback, bool $enabled = true): mixed {}
     /** Trace with metadata-only inputs and compile all fused segments together. */
-    public static function compile(callable $callback, array $inputs): FusionGraph {}
+    public static function compile(callable $callback, array $inputs, bool $cudaGraph = false): FusionGraph {}
+    /** Request-local bounded PTX cache counters. */
+    public static function getCacheStats(): array {}
+    /** Clear cached PTX without invalidating existing compiled graphs. */
+    public static function clearCache(): void {}
 }
 
 /** Reusable synchronous plan specialized for input shapes, dtypes and strides. */
@@ -29,10 +33,24 @@ final class FusionGraph
     private function __construct() {}
     /** Execute with new tensor values without invoking the capture callback again. */
     public function run(CudaArray ...$inputs): mixed {}
+    /** Queue a compatible plan on a private stream and retain its inputs until wait(). */
+    public function runAsync(CudaArray ...$inputs): FusionExecution {}
     /** Planned kernels, execution boundaries, buffers and replay count. */
     public function getStats(): array {}
     /** Generated CUDA source for all fused segments. */
     public function getSource(): string {}
+    /** Execution steps and the reason for each materialization boundary. */
+    public function getPlan(): array {}
+}
+
+/** Pending fusion result; destruction waits before releasing tensors. */
+final class FusionExecution
+{
+    private function __construct() {}
+    /** Synchronize and return materialized outputs; repeated waits return the same result. */
+    public function wait(): mixed {}
+    /** Query the completion event without synchronizing. */
+    public function isFinished(): bool {}
 }
 
 /** Compile CUDA C++ source into PTX with NVRTC. */
@@ -256,9 +274,9 @@ class CudaArray
     /** Generate uniform random GPU values. */
     public static function rand(array $shape, float|int $min = 0, float|int $max = 1, ?string $dtype = 'float32'): CudaArray {}
     /**
-     * Identical dtype reuses storage; other casts are currently unsupported.
+     * Identical dtype reuses storage; safe conversions allocate converted storage.
      * @throws InvalidArgumentException For an unsafe conversion.
-     * @throws RuntimeException For a safe but unimplemented conversion.
+     * @throws RuntimeException If compilation or GPU execution fails.
      */
     public function astype(string $dtype): CudaArray {}
     /** Element dtype name, e.g. float32. */

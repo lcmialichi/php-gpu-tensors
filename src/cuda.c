@@ -50,6 +50,8 @@ static PHP_GINIT_FUNCTION(cuda)
 {
     cuda_globals->memory_size = "3G";
     cuda_globals->fusion_scope = NULL;
+    cuda_globals->fusion_cache = NULL;
+    cuda_globals->fusion_pending = 0;
 }
 
 PHP_MINIT_FUNCTION(cuda)

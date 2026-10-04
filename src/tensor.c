@@ -99,8 +99,8 @@ tensor_t *tensor_cast(tensor_t *tensor, dtype_t new_dtype)
         return NULL;
     }
 
-    CUDA_THROW_RUNTIME("Casting between tensor dtypes is not implemented");
-    return NULL;
+    if (fusion_active()) return fusion_cast(tensor, new_dtype);
+    return fusion_cast_eager(tensor, new_dtype);
 }
 
 tensor_t *cuda_tensor_create_with_dtype(int *shape, int ndims, dtype_t dtype)
@@ -473,6 +473,7 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
 
 int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, float scalar_value)
 {
+    if (!fusion_check_tensor_mutation(tensor)) return FAILURE;
     size_t byte_offset = element_offset * tensor->element_size;
 
     void *gpu_destination = (char *)tensor->data + byte_offset;
@@ -488,6 +489,7 @@ int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, float scalar
 
 int cuda_tensor_set_tensor(tensor_t *base_tensor, size_t element_offset, tensor_t *tensor)
 {
+    if (!fusion_check_tensor_mutation(base_tensor)) return FAILURE;
     if (base_tensor->element_size != tensor->element_size)
     {
         return FAILURE;
@@ -682,11 +684,7 @@ void cuda_tensor_destroy(tensor_t *tensor)
     {
         if (tensor->base_tensor)
         {
-            tensor->base_tensor->ref_count--;
-            if (tensor->base_tensor->ref_count <= 0)
-            {
-                cuda_tensor_destroy(tensor->base_tensor);
-            }
+            cuda_tensor_destroy(tensor->base_tensor);
         }
 
         if (tensor->slices)

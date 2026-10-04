@@ -122,6 +122,11 @@ if test "$PHP_CUDA" != "no"; then
     src/operations.c \
     src/compiler_ce.c \
     src/fusion.c \
+    src/fusion_capture.c \
+    src/fusion_plan.c \
+    src/fusion_codegen.c \
+    src/fusion_execute.c \
+    src/fusion_cache.c \
     src/module_ce.c"
 
     PHP_NEW_EXTENSION(cuda, $SRC_FILES, $ext_shared)

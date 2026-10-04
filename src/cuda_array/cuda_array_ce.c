@@ -58,7 +58,8 @@ static dtype_t parse_dtype_param(zend_string *dtype_str)
 
 ZEND_METHOD(CudaArray, __construct)
 {
-    if (fusion_active() && Z_CUDA_ARRAY_P(ZEND_THIS)->tensor_handle && !fusion_check_mutation())
+    if (Z_CUDA_ARRAY_P(ZEND_THIS)->tensor_handle &&
+        !fusion_check_tensor_mutation(Z_CUDA_ARRAY_P(ZEND_THIS)->tensor_handle))
         RETURN_THROWS();
     zval *data;
     zend_string *dtype_str = NULL;
@@ -196,12 +197,15 @@ ZEND_METHOD(CudaArray, where)
             CUDA_THROW_INVALID("where expects condition, x and y to be CudaArray objects");
             RETURN_THROWS();
         }
-        cuda_array_obj *object = php_cuda_array_fetch_valid_object(Z_OBJ_P(values[index]));
+        cuda_array_obj *object = fusion_active()
+            ? php_cuda_array_fetch_deferred_object(Z_OBJ_P(values[index]))
+            : php_cuda_array_fetch_valid_object(Z_OBJ_P(values[index]));
         if (!object) RETURN_THROWS();
         tensors[index] = object->tensor_handle;
     }
 
-    tensor_t *result = cuda_tensor_where(tensors[0], tensors[1], tensors[2]);
+    tensor_t *result = fusion_active() ? fusion_where(tensors[0], tensors[1], tensors[2])
+        : cuda_tensor_where(tensors[0], tensors[1], tensors[2]);
     if (!result) RETURN_THROWS();
     create_result_object(return_value, result);
 }
@@ -250,7 +254,7 @@ ZEND_METHOD(CudaArray, __serialize)
 
 ZEND_METHOD(CudaArray, __unserialize)
 {
-    if (!fusion_check_mutation()) RETURN_THROWS();
+    if (!fusion_check_tensor_mutation(Z_CUDA_ARRAY_P(ZEND_THIS)->tensor_handle)) RETURN_THROWS();
     HashTable *data;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
@@ -1564,7 +1568,8 @@ static zval *cuda_array_read_dimension(zend_object *object, zval *offset, int ty
 
 static void cuda_array_write_dimension(zend_object *object, zval *offset, zval *value)
 {
-    if (!fusion_check_mutation()) return;
+    if (!fusion_check_tensor_mutation(((cuda_array_obj *)((char *)object - XtOffsetOf(cuda_array_obj, obj)))->tensor_handle))
+        return;
     cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(object);
     if (!this_obj) return;
     if (offset == NULL)

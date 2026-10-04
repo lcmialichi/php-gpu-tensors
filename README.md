@@ -128,6 +128,7 @@ $graph = Fusion::compile(
 $result = $graph->run($tensorA, $tensorB, $tensorC);
 $other = $graph->run($otherA, $otherB, $otherC);
 print_r($graph->getStats());
+print_r($graph->getPlan());
 echo $graph->getSource();
 ```
 
@@ -138,25 +139,30 @@ CUDA context. Input values and pointers can change between executions; keep
 the device/context alive until the graph is released. Tensors captured by a
 closure are retained by the graph; use callback parameters for replaceable inputs.
 
-Addition, subtraction, multiplication, division and comparison methods fuse
+Addition, subtraction, multiplication, division, unary operations and comparison methods fuse
 into elementwise kernels, with broadcasting, strided/view inputs, scalar
 operands and dtype promotion. Each node converts to its own result dtype,
 preserving intermediate rounding/narrowing. Generated kernels use the eager
-backend's fast-math settings but disable cross-node FMA contraction. Explicit `astype()` retains its existing restriction to
-the same dtype; fusion does not enable unsupported eager casts.
+backend's fast-math settings but disable cross-node FMA contraction. `where()`,
+safe explicit `astype()` conversions and reshape/transpose index transformations
+also fuse. Safe casts work in eager execution too, using the same generated
+conversion kernel; unsafe narrowing retains the existing rejection policy.
 
-Reductions, `matmul()` (currently float32), unary operations and powers are
-execution boundaries using existing kernels. Reshape/flatten and transpose
-are view boundaries. All generated elementwise kernels in a plan are compiled
+Reductions, `matmul()` (currently float32) and powers are execution boundaries
+using existing kernels. All generated elementwise kernels in a plan are compiled
 together through the existing `Compiler` NVRTC infrastructure, then executed in
-dependency order around these boundaries. Large expressions split at a
-32-operation kernel budget. Capture is limited to 512 nodes. This is an
-expression graph, not CUDA Graph capture/replay.
+dependency order around these boundaries. Expressions split at a weighted
+cost budget of 32 (math functions, index transforms and float64 have higher
+cost). Shared expensive expressions can be materialized instead of recomputed.
+Pure repeated binary/unary/cast nodes are deduplicated, and unreachable nodes
+are not included in compiled plans. Capture is limited to 512 nodes.
 
 Callbacks can return tensors or nested arrays of tensors, preserving array keys.
-Multiple outputs can use separate kernels; fusion does not promise one kernel
-for an entire callback. `getStats()` exposes planned fused kernels, boundary
-steps, intermediate buffer count and successful replay count. For
+Up to four adjacent independent outputs with the same shape can share a kernel.
+Other outputs use separate kernels; fusion does not promise one kernel for an
+entire callback. `getPlan()` reports step kinds, output counts and the reason
+for each materialization. `getStats()` exposes planned fused kernels, boundary
+steps, intermediate buffer count, scratch reuse and successful replay count. For
 `$a + $b * $c`, the plan has one fused kernel and no intermediate data buffers.
 
 During `run()`, CPU reads, slicing, serialization and operations not captured
@@ -167,8 +173,63 @@ Shape, stride and dtype queries do not execute kernels. Nested capture, Fiber
 switching, tensor mutation (including compound assignments), custom kernel
 launches and device changes/reset are prohibited during capture. Exceptions
 restore eager execution; escaped tensors from an aborted capture cannot be read.
-`run()` is synchronous and compiles each captured plan; prefer `compile()` and
-replay to amortize JIT compilation.
+`run()` remains synchronous. Generated PTX is cached per PHP request/thread,
+with LRU eviction at 16 entries or 16 MiB. Keys include generated source
+(operations, constants, dtypes and layouts), compute capability and CUDA
+driver/runtime versions, not input pointers. `Fusion::getCacheStats()` reports
+hits, misses, compilations and evictions. `Fusion::clearCache()` drops PTX
+without invalidating existing graphs. `compile()` also avoids repeated planning
+and module loading during replay.
+
+### Streams, asynchronous execution and CUDA Graph
+
+Plans containing only generated kernels run on a private nonblocking stream.
+Intermediate storage can be reused after its last consumer; returned outputs
+always have independent storage across replays.
+
+```php
+$graph = Fusion::compile(
+    fn($a, $b, $c) => ($a + $b * $c)->sqrt(),
+    [$tensorA, $tensorB, $tensorC],
+    cudaGraph: true
+);
+$pending = $graph->runAsync($tensorA, $tensorB, $tensorC);
+$finished = $pending->isFinished(); // Query without waiting.
+$result = $pending->wait();        // Synchronize and retrieve outputs.
+```
+
+`cudaGraph: true` opts into a CUDA Graph executable for compatible plans.
+Kernel parameters are updated for new input/output pointers before each launch.
+`getStats()['backend']` is `cuda-graph`, `stream` or `native`.
+Plans with native reduction, matmul or power boundaries retain the synchronous
+native executor, with the explicit reason in `incompatibility`; they do not
+silently hide CUDA failures behind fallback. `runAsync()` rejects these plans.
+Adapting native kernels to nonblocking streams is a remaining limitation.
+
+Stream plans allow concurrent `runAsync()` calls. A CUDA Graph executable
+allows only one outstanding replay: call `wait()` (or release the execution)
+before replaying that graph again. A completion query alone does not release
+the execution's retained resources. Inputs and closure-captured tensors remain
+alive until completion is collected. While an execution is outstanding, tensor
+mutation, custom kernel launches and device changes/reset are blocked.
+Inputs must be ready before submission; independent custom async producer
+streams still require their existing synchronization contract.
+
+Repeated `wait()` calls return the same outputs. Destroying a pending
+`FusionExecution` synchronizes before releasing storage. Execution submission
+preallocates tensors and can incur allocation/metadata-copy synchronization;
+asynchronous kernel submission does not imply a zero-blocking PHP call.
+
+Run the focused comparison of eager, cached scoped, stream replay and CUDA
+Graph replay with:
+
+```sh
+php -n -d extension=./cuda_build-8.3/modules/cuda.so \
+  examples/07_fusion_graph.php --benchmark --elements=65536 --iterations=100
+```
+
+The example validates output bytes, reports cold/cache compilation costs and
+end-to-end timings, and does not assume CUDA Graph is faster for every workload.
 
 ## PHP GPU Computing for Machine Learning
 
@@ -259,8 +320,8 @@ or `wait()`. Keep tensors alive until asynchronous work finishes. See
 
 The annotated signatures are in [class stubs](stubs/cuda.stub.php) and
 [device function stubs](stubs/cuda_methods.stub.php); runnable examples live
-in [examples](examples/README.md). `astype()` currently supports only the
-same dtype. GPU data has no CPU fallback. The project does not yet provide a
+in [examples](examples/README.md). `astype()` supports safe dtype conversions.
+GPU data has no CPU fallback. The project does not yet provide a
 stable API. Kernel fusion is experimental and explicitly opt-in.
 
 ## Contribute

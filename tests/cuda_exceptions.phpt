@@ -20,9 +20,9 @@ try {
 }
 
 try {
-    (new Cuda\CudaArray([1.0]))->astype('float64');
-} catch (Cuda\RuntimeException $error) {
-    echo "unsupported cast\n";
+    (new Cuda\CudaArray([1.0]))->astype('int32');
+} catch (Cuda\InvalidArgumentException $error) {
+    echo "unsafe cast\n";
 }
 
 try {
@@ -36,5 +36,5 @@ bool(true)
 bool(true)
 bool(true)
 invalid dtype
-unsupported cast
+unsafe cast
 out of memory
