@@ -11,13 +11,17 @@ at runtime with NVRTC. Optionally fuse tensor expressions and replay compiled
 plans, including asynchronous execution and CUDA Graph for compatible plans.
 No Python runtime required.
 
-**Status:** beta, targeting PHP 8.1 through 8.5 on Linux, with NTS and experimental
-ZTS support. The core API has a frozen `0.1.0` baseline; Fusion is experimental
-and explicitly opt-in. The current implementation passed 41 GPU tests
+**Status:** `0.1.0-beta.4`, supporting PHP 8.1 through 8.5 on Linux in NTS and
+ZTS modes. Tensor operations, Python-style slicing, JIT compilation and optional
+Fusion execution are part of the extension's public API. The core API has a
+frozen `0.1.0` baseline; eager execution remains the default, and Fusion is
+explicitly opt-in. All ten PHP version/thread-mode combinations passed builds
+and CPU/API checks for this release. The current implementation passed 41 GPU tests
 on PHP 8.3 NTS with an NVIDIA GeForce MX570 A, including gradient/lifetime
 regressions, plus an Optdigits training check. Earlier tensor/JIT validation covered
 PHP 8.5 NTS/ZTS and PHP 8.1 ZTS on an RTX A2000; it does not validate the latest
-Fusion changes on those builds. Beta status does not imply production readiness.
+Fusion changes on those builds. Build/CPU checks do not substitute for GPU
+runtime validation on each PHP version and thread mode.
 
 ## Start here
 
@@ -50,9 +54,9 @@ The extension is published as
 [`lcmialichi/php-gpu-tensors`](https://packagist.org/packages/lcmialichi/php-gpu-tensors).
 Release `0.1.0-beta.4` adds optional Fusion replay, reduced execution overhead
 and Python-style slicing. CI builds PHP 8.1-8.5 in both NTS and ZTS modes;
-GPU validation of these latest features is on PHP 8.3 NTS. For the latest
-Fusion APIs and training example described here, build the current repository
-source rather than assuming an older published release includes them.
+GPU validation of these latest features is on PHP 8.3 NTS. Use this release or
+newer for the Fusion APIs and training example described here; older releases
+may not include them.
 
 PIE builds the native extension for the selected PHP installation; it does not
 install an NVIDIA driver or CUDA Toolkit. Those must already be available on
@@ -206,7 +210,7 @@ by compatible native operations. `getStats()` exposes planned fused kernels, bou
 steps, intermediate buffer count, scratch reuse and successful replay count. For
 `$a + $b * $c`, the plan has one fused kernel and no intermediate data buffers.
 
-During `run()`, CPU reads, slicing, serialization and operations not captured
+During `run()`, CPU reads, legacy slicing (`__invoke()` and `[]`), serialization and operations not captured
 by the planner materialize their required inputs and continue eager execution;
 later elementwise operations can form a new segment. During `compile()`, reads
 of placeholder data are rejected rather than specializing on example values.
@@ -422,9 +426,10 @@ or `wait()`. Keep tensors alive until asynchronous work finishes. See
 The annotated signatures are in [class stubs](stubs/cuda.stub.php) and
 [device function stubs](stubs/cuda_methods.stub.php); runnable examples live
 in [examples](examples/README.md). `astype()` supports safe dtype conversions.
-GPU data has no CPU fallback. The core API baseline is frozen, but the project
-remains beta and does not yet promise production stability. Kernel fusion is
-experimental and explicitly opt-in. Matmul/reduction plans support async replay,
+GPU data has no CPU fallback. The core API baseline is frozen, and the current
+release is beta. Kernel fusion is an optional execution mode: existing code
+continues to use eager execution unless capture is explicitly enabled.
+Matmul/reduction plans support async replay,
 but not CUDA Graph yet; power boundaries still require synchronous execution.
 
 ## Contribute
