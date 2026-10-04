@@ -73,7 +73,9 @@ Focus: **expanding capabilities**
 - [x] CUDA Graph backend for replaying compatible multi-kernel fusion plans
 - [x] Fused unaries, selection, safe casts, layout transforms and grouped outputs
 - [x] Bounded PTX cache and private-stream async fusion execution
-- [ ] Adapt native reduction/matmul/power boundaries to private streams and CUDA Graph
+- [x] Adapt native reduction/matmul boundaries to private streams
+- [x] Reuse mixed-plan scratch and avoid repeated device metadata transfers
+- [ ] Adapt power boundaries to private streams and native boundaries to CUDA Graph
 - [ ] Public, comparable benchmark suite
 
 ## Long Term (1+ year)

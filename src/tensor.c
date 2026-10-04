@@ -171,19 +171,6 @@ tensor_t *cuda_tensor_create_with_dtype(int *shape, int ndims, dtype_t dtype)
     }
 
     tensor->ref_count = 1;
-    if (ndims > 0)
-    {
-        tensor->d_shape = cuda_mem_alloc(ndims * sizeof(int));
-        tensor->d_strides = cuda_mem_alloc(ndims * sizeof(size_t));
-        if (!tensor->d_shape || !tensor->d_strides)
-            return handle_allocation_failure(tensor, "Failed to allocate tensor metadata", cudaErrorMemoryAllocation);
-
-        cudaError_t status = cudaMemcpy(tensor->d_shape, tensor->shape, ndims * sizeof(int), cudaMemcpyHostToDevice);
-        if (status == cudaSuccess)
-            status = cudaMemcpy(tensor->d_strides, tensor->strides, ndims * sizeof(size_t), cudaMemcpyHostToDevice);
-        if (status != cudaSuccess)
-            return handle_allocation_failure(tensor, "Failed to copy tensor metadata", status);
-    }
 
     return tensor;
 }
@@ -337,19 +324,27 @@ static tensor_t *handle_allocation_failure(tensor_t *tensor, const char *message
 
 int lazy_copy_metadata_to_gpu(tensor_t *t)
 {
+    if (t->ndims == 0) return 1;
     if (t->d_shape && t->d_strides)
         return 1;
 
     int *shape = t->d_shape ? t->d_shape : cuda_mem_alloc(t->ndims * sizeof(int));
     size_t *strides = t->d_strides ? t->d_strides : cuda_mem_alloc(t->ndims * sizeof(size_t));
-    if (!shape || !strides ||
-        cudaMemcpy(shape, t->shape, t->ndims * sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess ||
-        cudaMemcpy(strides, t->strides, t->ndims * sizeof(size_t), cudaMemcpyHostToDevice) != cudaSuccess)
+    cudaError_t status = cudaSuccess;
+    if (shape && strides)
+    {
+        status = cudaMemcpy(shape, t->shape, t->ndims * sizeof(int), cudaMemcpyHostToDevice);
+        if (status == cudaSuccess)
+            status = cudaMemcpy(strides, t->strides, t->ndims * sizeof(size_t), cudaMemcpyHostToDevice);
+    }
+    if (!shape || !strides || status != cudaSuccess)
     {
         if (!t->d_shape && shape)
             cuda_mem_free(shape);
         if (!t->d_strides && strides)
             cuda_mem_free(strides);
+        if (!shape || !strides) CUDA_THROW_OOM("Failed to allocate tensor device metadata");
+        else CUDA_THROW_RUNTIME("Failed to upload tensor metadata: %s", cudaGetErrorString(status));
         return 0;
     }
 

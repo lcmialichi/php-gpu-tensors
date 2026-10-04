@@ -8,6 +8,7 @@
 extern "C"
 {
 #endif
+    /* Shape and strides are host descriptors, copied into kernel parameters. */
     void launch_unary_op(
         void *base,
         void *result,

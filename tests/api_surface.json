@@ -1728,6 +1728,23 @@
                         }
                     ],
                     "returnType": "Cuda\\FusionExecution"
+                },
+                "setProfiling": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "enabled",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "void"
                 }
             }
         },

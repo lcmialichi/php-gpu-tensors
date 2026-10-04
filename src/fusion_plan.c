@@ -17,6 +17,12 @@ size_t fusion_find(fusion_plan *plan, tensor_t *tensor)
     return SIZE_MAX;
 }
 
+int fusion_preallocated(fusion_plan *plan, fusion_step *step)
+{
+    fusion_kind kind = plan->items[step->root].tensor->fusion->kind;
+    return step->name[0] || kind == FUSION_MATMUL || kind == FUSION_REDUCE || kind == FUSION_ARG_REDUCE;
+}
+
 static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
 {
     size_t id = fusion_find(plan, tensor);
@@ -28,7 +34,7 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
     if (node && node->c) c = fusion_collect(plan, node->c);
     id = plan->count++;
     plan->items = erealloc(plan->items, plan->count * sizeof(fusion_item));
-    plan->items[id] = (fusion_item){ .tensor = tensor };
+    plan->items[id] = (fusion_item){ .tensor = tensor, .a = a, .b = b, .c = c, .slot = id };
     if (node && node->kind != FUSION_INPUT)
     {
         if (fusion_inline(tensor))
@@ -95,7 +101,7 @@ static void fusion_schedule(fusion_plan *plan, size_t id)
     step->roots = emalloc(sizeof(size_t));
     step->roots[0] = id;
     step->root_count = 1;
-    if (fusion_inline(item->tensor))
+    if (fusion_inline(item->tensor) && !item->alias)
     {
         snprintf(step->name, sizeof(step->name), "fusion_%zu", plan->kernel_count++);
     }
@@ -116,6 +122,8 @@ void fusion_plan_free(fusion_plan *plan)
     if (plan->graph_exec) fusion_cleanup_error("Destroying graph executable", cuGraphExecDestroy(plan->graph_exec));
     if (plan->cuda_graph) fusion_cleanup_error("Destroying CUDA graph", cuGraphDestroy(plan->cuda_graph));
     if (plan->graph_nodes) efree(plan->graph_nodes);
+    if (plan->sync_stream) fusion_cleanup_error("Destroying replay stream", cuStreamDestroy(plan->sync_stream));
+    if (plan->sync_ready) fusion_cleanup_error("Destroying replay readiness event", cuEventDestroy(plan->sync_ready));
     if (plan->module)
     {
         CUresult error = cuModuleUnload(plan->module);
@@ -125,11 +133,19 @@ void fusion_plan_free(fusion_plan *plan)
     for (size_t i = 0; i < plan->step_count; i++)
     {
         if (plan->steps[i].leaves) efree(plan->steps[i].leaves);
+        if (plan->steps[i].arguments) efree(plan->steps[i].arguments);
         efree(plan->steps[i].roots);
+    }
+    if (plan->workspace)
+    {
+        for (size_t i = 0; i < plan->count; i++)
+            cuda_tensor_destroy(plan->workspace[i]);
+        efree(plan->workspace);
     }
     if (plan->steps) efree(plan->steps);
     if (plan->items) efree(plan->items);
     if (plan->inputs) efree(plan->inputs);
+    if (plan->input_examples) efree(plan->input_examples);
     if (plan->source) zend_string_release(plan->source);
     if (pushed) fusion_cleanup_error("Restoring module context", cuCtxPopCurrent(&popped));
     efree(plan);
@@ -210,19 +226,88 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
             plan->items[i].cut = 1;
             plan->items[i].reason = "shared-expensive-expression";
         }
+    for (size_t i = 0; i < plan->count; i++)
+    {
+        fusion_item *item = &plan->items[i];
+        fusion_node *node = item->tensor->fusion;
+        if (!node || node->kind != FUSION_VIEW || !item->cut || item->output) continue;
+        tensor_t *parent = plan->items[item->a].tensor;
+        if (parent->fusion && parent->fusion->kind != FUSION_INPUT && !plan->items[item->a].cut) continue;
+        int compatible = 1;
+        for (size_t j = 0; j < plan->count; j++)
+        {
+            fusion_item *consumer = &plan->items[j];
+            if (consumer->a != i && consumer->b != i && consumer->c != i) continue;
+            fusion_node *operation = consumer->tensor->fusion;
+            if (!operation || (operation->kind != FUSION_MATMUL &&
+                operation->kind != FUSION_REDUCE && operation->kind != FUSION_ARG_REDUCE))
+                compatible = 0;
+            if (operation && (operation->kind == FUSION_REDUCE || operation->kind == FUSION_ARG_REDUCE) &&
+                operation->parameter == -1 && !is_contiguous(item->tensor))
+                compatible = 0;
+        }
+        if (compatible) { item->alias = 1; item->reason = "native-layout-alias"; }
+    }
     for (size_t i = 0; i < root_count; i++)
         fusion_schedule(plan, fusion_find(plan, roots[i]));
     fusion_group_outputs(plan);
 
     plan->stream_compatible = 1;
+    plan->graph_compatible = 1;
     for (size_t i = 0; i < plan->step_count; i++)
-        if (!plan->steps[i].name[0])
+        if (!plan->steps[i].name[0] && !plan->items[plan->steps[i].root].alias)
         {
-            plan->stream_compatible = 0;
-            plan->incompatibility = plan->items[plan->steps[i].root].reason;
-            break;
+            plan->native_steps++;
+            plan->graph_compatible = 0;
+            if (!fusion_preallocated(plan, &plan->steps[i]))
+            {
+                plan->stream_compatible = 0;
+                plan->incompatibility = plan->items[plan->steps[i].root].reason;
+            }
         }
     fusion_generate_source(plan);
+    for (size_t i = 0; i < plan->step_count; i++)
+    {
+        fusion_step *step = &plan->steps[i];
+        for (size_t j = 0; j < step->leaf_count; j++)
+            plan->items[step->leaves[j]].last_use = i;
+        if (!step->name[0])
+        {
+            fusion_item *item = &plan->items[step->root];
+            if (item->a != SIZE_MAX) plan->items[item->a].last_use = i;
+            if (item->b != SIZE_MAX) plan->items[item->b].last_use = i;
+            if (item->c != SIZE_MAX) plan->items[item->c].last_use = i;
+        }
+    }
+    for (size_t i = plan->count; i > 0; i--)
+    {
+        fusion_item *item = &plan->items[i - 1];
+        if (item->alias && plan->items[item->a].last_use < item->last_use)
+            plan->items[item->a].last_use = item->last_use;
+    }
+    for (size_t i = 0; i < plan->step_count; i++)
+    {
+        fusion_step *step = &plan->steps[i];
+        fusion_item *item = &plan->items[step->root];
+        if (item->output || step->root_count != 1 || !fusion_preallocated(plan, step)) continue;
+        for (size_t j = 0; j < i; j++)
+        {
+            fusion_item *previous = &plan->items[plan->steps[j].root];
+            if (previous->output || plan->steps[j].root_count != 1 || !fusion_preallocated(plan, &plan->steps[j]) ||
+                previous->last_use >= i ||
+                previous->tensor->dtype != item->tensor->dtype ||
+                previous->tensor->ndims != item->tensor->ndims ||
+                memcmp(previous->tensor->shape, item->tensor->shape, item->tensor->ndims * sizeof(int)))
+                continue;
+            int in_use = 0;
+            for (size_t k = 0; k < i; k++)
+            {
+                fusion_item *used = &plan->items[plan->steps[k].root];
+                if (used->slot == previous->slot && used->last_use >= i) in_use = 1;
+            }
+            if (!in_use) { item->slot = previous->slot; break; }
+        }
+    }
     const char **names = plan->kernel_count ? emalloc(plan->kernel_count * sizeof(char *)) : NULL;
     size_t name_count = 0;
     for (size_t i = 0; i < plan->step_count; i++)

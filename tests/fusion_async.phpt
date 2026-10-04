@@ -39,17 +39,22 @@ $a[0] = 7;
 check($a->toArray()[0] === 7.0);
 echo "destruction waited\n";
 $native = Fusion::compile(fn($x) => ($x + 1)->sum() * 2, [$a], cudaGraph: true);
-check($native->getStats()['backend'] === 'native');
-check($native->getStats()['incompatibility'] === 'native-reduction');
-try { $native->runAsync($a); echo "MISSED\n"; }
-catch (Cuda\RuntimeException $error) { echo "unsupported async rejected\n"; }
+check($native->getStats()['backend'] === 'stream');
+check($native->getStats()['incompatibility'] === null);
+check($native->getStats()['cudaGraphIncompatibility'] === 'native-graph-not-supported');
+check($native->runAsync($a)->wait()->toArray() === [34.0]);
+echo "native async completed\n";
 check($native->run($a)->toArray() === [34.0]);
 echo "native replay preserved\n";
+$power = Fusion::compile(fn($x) => $x->power(2) + 1, [$a]);
+try { $power->runAsync($a); echo "MISSED\n"; }
+catch (Cuda\RuntimeException $error) { echo "unsupported power async rejected\n"; }
 ?>
 --EXPECT--
 mutation blocked
 reset blocked
 concurrent replay completed
 destruction waited
-unsupported async rejected
+native async completed
 native replay preserved
+unsupported power async rejected

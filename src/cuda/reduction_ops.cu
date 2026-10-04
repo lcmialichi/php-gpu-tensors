@@ -11,7 +11,7 @@ extern "C" void launch_reduction(
     int *result_shape,
     size_t *input_strides,
     int result_ndims, int axis,
-    size_t total_elements_out, size_t input_base_offset)
+    size_t total_elements_out, size_t input_base_offset, cudaStream_t stream)
 {
     if (op_type == OP_REDUCE_MEAN)
     {
@@ -29,7 +29,7 @@ extern "C" void launch_reduction(
                     axis,
                     total_elements_out,
                     input_base_offset,
-                    input_shape[axis]);
+                    input_shape[axis], stream);
             });
         }
         else
@@ -46,7 +46,7 @@ extern "C" void launch_reduction(
                     axis,
                     total_elements_out,
                     input_base_offset,
-                    input_shape[axis]);
+                    input_shape[axis], stream);
             });
         }
         return;
@@ -65,7 +65,7 @@ extern "C" void launch_reduction(
                 axis,
                 total_elements_out,
                 input_base_offset,
-                1);
+                1, stream);
         });
     });
 }
@@ -77,7 +77,7 @@ extern "C" void launch_arg_reduction(
     int *result_shape,
     size_t *input_strides,
     int result_ndims, int axis,
-    size_t total_elements_out, size_t input_base_offset)
+    size_t total_elements_out, size_t input_base_offset, cudaStream_t stream)
 {
     DISPATCH_DTYPE(dtype, {
         DISPATCH_OP_ARG_REDUCTION(op_type, {
@@ -89,7 +89,7 @@ extern "C" void launch_arg_reduction(
                 input_strides,
                 axis,
                 total_elements_out,
-                input_base_offset);
+                input_base_offset, stream);
         });
     });
 }

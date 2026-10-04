@@ -41,6 +41,8 @@ final class FusionGraph
     public function getSource(): string {}
     /** Execution steps and the reason for each materialization boundary. */
     public function getPlan(): array {}
+    /** Enable/reset optional phase timing for synchronous run(); counters remain available when disabled. */
+    public function setProfiling(bool $enabled): void {}
 }
 
 /** Pending fusion result; destruction waits before releasing tensors. */

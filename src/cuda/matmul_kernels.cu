@@ -82,7 +82,7 @@ static int blas_matrix_layout(int rows, int cols, size_t stride_row, size_t stri
 static int blas_matmul_2d(float *a, float *b, float *c,
                           int rows, int inner, int cols,
                           size_t a_row, size_t a_col, size_t b_row, size_t b_col,
-                          size_t c_row, size_t c_col)
+                          size_t c_row, size_t c_col, cudaStream_t stream)
 {
     if ((double)rows * inner * cols < 500000 || c_col != 1 || c_row != (size_t)cols)
         return 0;
@@ -94,6 +94,7 @@ static int blas_matmul_2d(float *a, float *b, float *c,
 
     cublasHandle_t handle = get_blas_handle();
     if (!handle) return 0;
+    if (cublasSetStream(handle, stream) != CUBLAS_STATUS_SUCCESS) return 0;
     cublasStatus_t status;
     if (rows == 1 && cols == 1 && inner >= 4096 && a_col <= INT_MAX && b_row <= INT_MAX)
     {
@@ -153,7 +154,7 @@ static int blas_batch_stride(const int *shape, const size_t *strides, int ndims,
     return 1;
 }
 
-static int blas_matmul_batched(const MatMulParamsND *params)
+static int blas_matmul_batched(const MatMulParamsND *params, cudaStream_t stream)
 {
     if (params->ndC < 3 || (double)params->M * params->N * params->K * params->total_batches < 500000)
         return 0;
@@ -176,6 +177,7 @@ static int blas_matmul_batched(const MatMulParamsND *params)
 
     cublasHandle_t handle = get_blas_handle();
     if (!handle) return 0;
+    if (cublasSetStream(handle, stream) != CUBLAS_STATUS_SUCCESS) return 0;
     const float alpha = 1.0f, beta = 0.0f;
     cublasStatus_t status = cublasSgemmStridedBatched(handle, op_b, op_a,
         params->N, params->M, params->K,
@@ -283,20 +285,19 @@ extern "C" int cuda_batched_matmul_nd_launcher(
     float *a, float *b, float *c,
     int *shape_a, size_t *stride_a, int nd_a,
     int *shape_b, size_t *stride_b, int nd_b,
-    int *shape_c, size_t *stride_c, int nd_c)
+    int *shape_c, size_t *stride_c, int nd_c, cudaStream_t stream)
 {
     if (nd_a < 2 || nd_b < 2 || nd_c < 2 ||
         nd_a > MAX_DIMS || nd_b > MAX_DIMS || nd_c > MAX_DIMS)
         return 0;
 
     MatMulParamsND params = {};
-    if (cudaMemcpy(params.shapeA, shape_a, nd_a * sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess ||
-        cudaMemcpy(params.strideA, stride_a, nd_a * sizeof(size_t), cudaMemcpyDeviceToHost) != cudaSuccess ||
-        cudaMemcpy(params.shapeB, shape_b, nd_b * sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess ||
-        cudaMemcpy(params.strideB, stride_b, nd_b * sizeof(size_t), cudaMemcpyDeviceToHost) != cudaSuccess ||
-        cudaMemcpy(params.shapeC, shape_c, nd_c * sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess ||
-        cudaMemcpy(params.strideC, stride_c, nd_c * sizeof(size_t), cudaMemcpyDeviceToHost) != cudaSuccess)
-        return 0;
+    memcpy(params.shapeA, shape_a, nd_a * sizeof(int));
+    memcpy(params.strideA, stride_a, nd_a * sizeof(size_t));
+    memcpy(params.shapeB, shape_b, nd_b * sizeof(int));
+    memcpy(params.strideB, stride_b, nd_b * sizeof(size_t));
+    memcpy(params.shapeC, shape_c, nd_c * sizeof(int));
+    memcpy(params.strideC, stride_c, nd_c * sizeof(size_t));
 
     if (params.shapeA[nd_a - 1] != params.shapeB[nd_b - 2])
         return 0;
@@ -328,13 +329,13 @@ extern "C" int cuda_batched_matmul_nd_launcher(
     params.total_batches = batches;
 
 #ifdef HAVE_CUBLAS
-    if (blas_matmul_batched(&params))
+    if (blas_matmul_batched(&params, stream))
         return 1;
 #endif
 
     dim3 block(TILE_SIZE, TILE_SIZE);
     dim3 grid = cuda_grid_2d(cols, rows, TILE_SIZE, TILE_SIZE, batches);
-    matmul_nd_tiled_kernel<<<grid, block>>>(params);
+    matmul_nd_tiled_kernel<<<grid, block, 0, stream>>>(params);
     return cuda_launch_status() == cudaSuccess;
 }
 
@@ -342,7 +343,7 @@ extern "C" int cuda_matmul_launcher(float *a, float *b, float *c,
                                      int m, int n, int k,
                                      size_t a_stride0, size_t a_stride1,
                                      size_t b_stride0, size_t b_stride1,
-                                     size_t c_stride0, size_t c_stride1)
+                                     size_t c_stride0, size_t c_stride1, cudaStream_t stream)
 {
     if (m <= 0 || n <= 0 || k <= 0)
         return 0;
@@ -350,13 +351,13 @@ extern "C" int cuda_matmul_launcher(float *a, float *b, float *c,
 #ifdef HAVE_CUBLAS
     if (blas_matmul_2d(a, b, c, m, n, k,
                        a_stride0, a_stride1, b_stride0, b_stride1,
-                       c_stride0, c_stride1))
+                       c_stride0, c_stride1, stream))
         return 1;
 #endif
 
     dim3 block(32, 32);
     dim3 grid = cuda_grid_2d(k, m, 32, 32);
-    matmul_kernel<<<grid, block>>>(a, b, c, m, n, k,
+    matmul_kernel<<<grid, block, 0, stream>>>(a, b, c, m, n, k,
                                    a_stride0, a_stride1, b_stride0, b_stride1,
                                    c_stride0, c_stride1);
     return cuda_launch_status() == cudaSuccess;

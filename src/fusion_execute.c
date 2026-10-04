@@ -1,4 +1,6 @@
 #include "fusion_internal.h"
+#include "matmul_kernels.h"
+#include "reduction_ops.h"
 void fusion_cleanup_error(const char *operation, CUresult error)
 {
     if (error != CUDA_SUCCESS)
@@ -29,50 +31,135 @@ int fusion_context_check(fusion_plan *plan)
     return 1;
 }
 
-static int fusion_prepare_buffers(fusion_plan *plan, tensor_t **values, int reusable)
+static int fusion_prepare_buffers(fusion_plan *plan, tensor_t **values, fusion_buffer_mode mode)
 {
-    size_t *last = ecalloc(plan->count, sizeof(size_t));
-    for (size_t i = 0; i < plan->step_count; i++)
-        for (size_t j = 0; j < plan->steps[i].leaf_count; j++)
-            last[plan->steps[i].leaves[j]] = i;
+    int reusable = mode != FUSION_BUFFERS_FRESH;
+    int persistent = mode == FUSION_BUFFERS_WORKSPACE;
+    if (persistent && !plan->workspace) plan->workspace = ecalloc(plan->count, sizeof(tensor_t *));
     for (size_t i = 0; i < plan->step_count; i++)
     {
         fusion_step *step = &plan->steps[i];
+        if (!fusion_preallocated(plan, step)) continue;
         for (size_t output = 0; output < step->root_count; output++)
         {
             size_t id = step->roots[output];
             tensor_t *tensor = plan->items[id].tensor;
             tensor_t *result = NULL;
-            if (reusable && !plan->items[id].output)
+            if (persistent && !plan->items[id].output)
             {
-                for (size_t j = 0; j < i; j++)
+                size_t slot = plan->items[id].slot;
+                result = plan->workspace[slot];
+                if (!result)
                 {
-                    size_t previous = plan->steps[j].root;
-                    tensor_t *candidate = values[previous];
-                    if (!candidate || plan->items[previous].output || last[previous] >= i ||
-                        candidate->dtype != tensor->dtype || candidate->ndims != tensor->ndims ||
-                        memcmp(candidate->shape, tensor->shape, tensor->ndims * sizeof(int))) continue;
-                    int in_use = 0;
-                    for (size_t k = 0; k < i; k++)
-                        if (values[plan->steps[k].root] == candidate &&
-                            last[plan->steps[k].root] >= i) in_use = 1;
-                    if (in_use) continue;
-                    result = candidate;
-                    result->ref_count++;
-                    plan->buffer_reuses++;
-                    break;
+                    result = cuda_tensor_create_empty_with_dtype(tensor->shape, tensor->ndims, tensor->dtype);
+                    if (!result) return 0;
+                    plan->workspace[slot] = result;
+                    plan->tensor_allocations++;
                 }
+                else plan->buffer_reuses++;
+                result->ref_count++;
             }
-            if (!result) result = cuda_tensor_create_empty_with_dtype(tensor->shape, tensor->ndims, tensor->dtype);
-            if (!result) { efree(last); return 0; }
+            else if (reusable && !plan->items[id].output && plan->items[id].slot != id)
+            {
+                result = values[plan->items[id].slot];
+                if (result) { result->ref_count++; plan->buffer_reuses++; }
+            }
+            if (!result)
+            {
+                result = cuda_tensor_create_empty_with_dtype(tensor->shape, tensor->ndims, tensor->dtype);
+                if (!result) return 0;
+                plan->tensor_allocations++;
+            }
             values[id] = result;
         }
     }
-    efree(last);
     return 1;
 }
 
-int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, int reusable)
+static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t **values, CUstream stream)
+{
+    fusion_item *item = &plan->items[step->root];
+    fusion_node *node = item->tensor->fusion;
+    tensor_t *a = values[item->a];
+    tensor_t *b = item->b != SIZE_MAX ? values[item->b] : NULL;
+    tensor_t *result = values[step->root];
+    if (node->kind == FUSION_MATMUL)
+    {
+        int ok = a->ndims == 2 && b->ndims == 2
+            ? cuda_matmul_launcher(a->data, b->data, result->data,
+                                  a->shape[0], a->shape[1], b->shape[1],
+                                  a->strides[0], a->strides[1], b->strides[0], b->strides[1],
+                                  result->strides[0], result->strides[1], (cudaStream_t)stream)
+            : cuda_batched_matmul_nd_launcher(a->data, b->data, result->data,
+                                             a->shape, a->strides, a->ndims,
+                                             b->shape, b->strides, b->ndims,
+                                             result->shape, result->strides, result->ndims, (cudaStream_t)stream);
+        if (!ok)
+        {
+            CUDA_THROW_RUNTIME("Fusion matmul submission failed");
+            return 0;
+        }
+        return 1;
+    }
+    int axis = node->parameter;
+    if (axis == -1 && (a->total_size == 0 || a->total_size > INT_MAX))
+    {
+        CUDA_THROW_INVALID("Global fusion reduction requires between 1 and INT_MAX elements");
+        return 0;
+    }
+    if (axis == -1 && !is_contiguous(a))
+    {
+        CUDA_THROW_RUNTIME("Global fusion reduction requires contiguous input storage");
+        return 0;
+    }
+    int shape[] = {axis == -1 ? (int)a->total_size : 0};
+    size_t stride[] = {1};
+    if (node->kind == FUSION_ARG_REDUCE)
+        launch_arg_reduction(a->data, result->data, a->dtype, node->op,
+                             axis == -1 ? shape : a->shape, axis == -1 ? 1 : a->ndims,
+                             result->shape, axis == -1 ? stride : a->strides,
+                             result->ndims, axis == -1 ? 0 : axis, result->total_size, 0, (cudaStream_t)stream);
+    else
+        launch_reduction(a->data, result->data, a->dtype, node->op,
+                         axis == -1 ? shape : a->shape, axis == -1 ? 1 : a->ndims,
+                         result->shape, axis == -1 ? stride : a->strides,
+                         result->ndims, axis == -1 ? 0 : axis, result->total_size, 0, (cudaStream_t)stream);
+    cudaError_t error = cudaGetLastError();
+    if (error != cudaSuccess)
+    {
+        CUDA_THROW_RUNTIME("Fusion reduction submission failed: %s", cudaGetErrorString(error));
+        return 0;
+    }
+    return 1;
+}
+
+static int fusion_alias_view(fusion_plan *plan, fusion_step *step, tensor_t **values)
+{
+    tensor_t *tensor = plan->items[step->root].tensor;
+    fusion_node *node = tensor->fusion;
+    tensor_t *source = values[plan->items[step->root].a];
+    size_t strides[MAX_DIMS];
+    if (node->op == OP_TRANSPOSE)
+        for (int d = 0; d < tensor->ndims; d++) strides[d] = source->strides[node->axes[d]];
+    else
+    {
+        if (!is_contiguous(source))
+        {
+            CUDA_THROW_RUNTIME("Fusion reshape alias requires contiguous source storage");
+            return 0;
+        }
+        size_t stride = 1;
+        for (int d = tensor->ndims - 1; d >= 0; d--)
+        {
+            strides[d] = stride;
+            stride *= tensor->shape[d];
+        }
+    }
+    values[step->root] = cuda_tensor_create_view(source, tensor->shape, strides, tensor->ndims, 0, tensor->total_size);
+    return values[step->root] != NULL;
+}
+
+int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, fusion_buffer_mode mode)
 {
     if (!fusion_context_check(plan)) return 0;
     if (!plan->stream_compatible)
@@ -80,12 +167,14 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, int re
         CUDA_THROW_RUNTIME("Asynchronous fusion requires a stream-compatible plan: %s", plan->incompatibility);
         return 0;
     }
-    if (!fusion_prepare_buffers(plan, values, reusable)) return 0;
-    CUevent ready = NULL;
-    CUresult error = cuEventCreate(&ready, CU_EVENT_DISABLE_TIMING);
+    if (!fusion_prepare_buffers(plan, values, mode)) return 0;
+    int pooled = mode == FUSION_BUFFERS_WORKSPACE;
+    CUevent ready = pooled ? plan->sync_ready : NULL;
+    CUresult error = ready ? CUDA_SUCCESS : cuEventCreate(&ready, CU_EVENT_DISABLE_TIMING);
+    if (pooled && error == CUDA_SUCCESS) plan->sync_ready = ready;
     if (error == CUDA_SUCCESS) error = cuEventRecord(ready, NULL);
     if (error == CUDA_SUCCESS) error = cuStreamWaitEvent(stream, ready, 0);
-    if (ready) fusion_cleanup_error("Destroying readiness event", cuEventDestroy(ready));
+    if (ready && !pooled) fusion_cleanup_error("Destroying readiness event", cuEventDestroy(ready));
     if (error != CUDA_SUCCESS)
     {
         CUDA_THROW_RUNTIME("Cannot order fusion stream after input work (CUDA error %d)", error);
@@ -107,9 +196,19 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, int re
     for (size_t i = 0; i < plan->step_count; i++)
     {
         fusion_step *step = &plan->steps[i];
+        if (plan->items[step->root].alias)
+        {
+            if (!fusion_alias_view(plan, step, values)) return 0;
+            continue;
+        }
+        if (!step->name[0])
+        {
+            if (!fusion_native_submit(plan, step, values, stream)) return 0;
+            continue;
+        }
         tensor_t *result = values[step->root];
         if (!result->total_size) continue;
-        void **args = emalloc((step->leaf_count + step->root_count) * sizeof(void *));
+        void **args = step->arguments;
         for (size_t j = 0; j < step->leaf_count; j++)
             args[j] = &values[step->leaves[j]]->data;
         for (size_t j = 0; j < step->root_count; j++)
@@ -134,7 +233,6 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, int re
             else error = cuGraphExecKernelNodeSetParams(plan->graph_exec, plan->graph_nodes[i], &parameters);
         }
         else error = cuLaunchKernel(step->function, (unsigned int)blocks, 1, 1, 256, 1, 1, 0, stream, args, NULL);
-        efree(args);
         if (error != CUDA_SUCCESS)
         {
             if (constructing) fusion_graph_discard(plan);
@@ -171,39 +269,36 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
     cudaError_t runtime_error;
     if (plan->stream_compatible)
     {
-        CUstream stream = NULL;
-        error = cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING);
+        int persistent = plan->compiled;
+        CUstream stream = persistent ? plan->sync_stream : NULL;
+        error = stream ? CUDA_SUCCESS : cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING);
         if (error != CUDA_SUCCESS)
         {
             CUDA_THROW_RUNTIME("Cannot create fusion execution stream (CUDA error %d)", error);
             return 0;
         }
-        int ok = fusion_enqueue(plan, values, stream, 0);
+        if (persistent) plan->sync_stream = stream;
+        int ok = fusion_enqueue(plan, values, stream, persistent ? FUSION_BUFFERS_WORKSPACE : FUSION_BUFFERS_FRESH);
         error = cuStreamSynchronize(stream);
-        fusion_cleanup_error("Destroying execution stream", cuStreamDestroy(stream));
+        plan->synchronizations++;
+        if (!persistent) fusion_cleanup_error("Destroying execution stream", cuStreamDestroy(stream));
         if (error != CUDA_SUCCESS && !EG(exception))
             CUDA_THROW_RUNTIME("Fusion stream failed (CUDA error %d)", error);
         if (ok && error == CUDA_SUCCESS) plan->executions++;
         return ok && error == CUDA_SUCCESS;
     }
+    if (!fusion_prepare_buffers(plan, values, plan->compiled ? FUSION_BUFFERS_WORKSPACE : FUSION_BUFFERS_FRESH)) return 0;
     for (size_t i = 0; i < plan->step_count; i++)
     {
         fusion_step *step = &plan->steps[i];
         tensor_t *tensor = plan->items[step->root].tensor;
         fusion_node *node = tensor->fusion;
-        tensor_t *result = NULL;
+        tensor_t *result = values[step->root];
         if (step->name[0])
         {
-            for (size_t j = 0; j < step->root_count; j++)
-            {
-                tensor_t *output = plan->items[step->roots[j]].tensor;
-                values[step->roots[j]] = cuda_tensor_create_empty_with_dtype(output->shape, output->ndims, output->dtype);
-                if (!values[step->roots[j]]) return 0;
-            }
-            result = values[step->root];
             if (result->total_size)
             {
-                void **args = emalloc((step->leaf_count + step->root_count) * sizeof(void *));
+                void **args = step->arguments;
                 for (size_t j = 0; j < step->leaf_count; j++)
                     args[j] = &values[step->leaves[j]]->data;
                 for (size_t j = 0; j < step->root_count; j++)
@@ -211,7 +306,6 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
                 size_t blocks = (result->total_size - 1) / 256 + 1;
                 if (blocks > 65535) blocks = 65535;
                 error = cuLaunchKernel(step->function, (unsigned int)blocks, 1, 1, 256, 1, 1, 0, NULL, args, NULL);
-                efree(args);
                 if (error != CUDA_SUCCESS)
                 {
                     CUDA_THROW_RUNTIME("Fused kernel launch failed (CUDA error %d)", error);
@@ -219,11 +313,20 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
                 }
             }
         }
+        else if (fusion_preallocated(plan, step))
+        {
+            if (!fusion_native_submit(plan, step, values, NULL)) return 0;
+        }
+        else if (plan->items[step->root].alias)
+        {
+            if (!fusion_alias_view(plan, step, values)) return 0;
+            result = values[step->root];
+        }
         else
         {
-            tensor_t *source = values[fusion_find(plan, node->a)];
+            tensor_t *source = values[plan->items[step->root].a];
             tensor_t *a = source;
-            tensor_t *b = node->b ? values[fusion_find(plan, node->b)] : NULL;
+            tensor_t *b = node->b ? values[plan->items[step->root].b] : NULL;
             tensor_t a_view, b_view;
             if (node->kind == FUSION_BINARY || node->kind == FUSION_REDUCE ||
                 node->kind == FUSION_ARG_REDUCE)
@@ -283,6 +386,7 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
         values[step->root] = result;
     }
     runtime_error = cudaDeviceSynchronize();
+    plan->synchronizations++;
     if (runtime_error != cudaSuccess)
     {
         CUDA_THROW_RUNTIME("Fusion synchronization failed: %s", cudaGetErrorString(runtime_error));

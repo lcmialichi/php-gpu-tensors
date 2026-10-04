@@ -13,9 +13,9 @@ No Python runtime required.
 
 **Status:** beta, targeting PHP 8.1 through 8.5 on Linux, with NTS and experimental
 ZTS support. The core API has a frozen `0.1.0` baseline; Fusion is experimental
-and explicitly opt-in. The current Fusion implementation passed 38 GPU tests
-on PHP 8.3 NTS with an NVIDIA GeForce MX570 A, plus a separate real-training
-regression and Optdigits training check. Earlier tensor/JIT validation covered
+and explicitly opt-in. The current Fusion implementation passed 40 GPU tests
+on PHP 8.3 NTS with an NVIDIA GeForce MX570 A, including gradient/lifetime
+regressions, plus an Optdigits training check. Earlier tensor/JIT validation covered
 PHP 8.5 NTS/ZTS and PHP 8.1 ZTS on an RTX A2000; it does not validate the latest
 Fusion changes on those builds. Beta status does not imply production readiness.
 
@@ -152,7 +152,8 @@ Callbacks can return tensors or nested arrays of tensors, preserving array keys.
 Up to four adjacent independent outputs with the same shape can share a kernel.
 Other outputs use separate kernels; fusion does not promise one kernel for an
 entire callback. `getPlan()` reports step kinds, output counts and the reason
-for each materialization. `getStats()` exposes planned fused kernels, boundary
+for each materialization, including zero-copy `view` steps for layouts consumed
+by compatible native operations. `getStats()` exposes planned fused kernels, boundary
 steps, intermediate buffer count, scratch reuse and successful replay count. For
 `$a + $b * $c`, the plan has one fused kernel and no intermediate data buffers.
 
@@ -174,9 +175,15 @@ and module loading during replay.
 
 ### Streams, asynchronous execution and CUDA Graph
 
-Plans containing only generated kernels run on a private nonblocking stream.
-Intermediate storage can be reused after its last consumer; returned outputs
-always have independent storage across replays.
+Plans containing generated kernels, matmul and reductions run on a private
+nonblocking stream. Reduction descriptors are kernel parameters rather than
+shared global state, so concurrent replays cannot overwrite each other's shapes.
+Synchronous compiled replay keeps a reusable stream, readiness event and scratch
+workspace; async replays use separate scratch storage. Slots are planned by last consumer,
+including native consumers and aliased views. Returned outputs always have
+independent storage across replays.
+Scratch remains allocated until the graph is released and counts toward the
+configured GPU memory budget.
 
 ```php
 $graph = Fusion::compile(
@@ -192,10 +199,13 @@ $result = $pending->wait();        // Synchronize and retrieve outputs.
 `cudaGraph: true` opts into a CUDA Graph executable for compatible plans.
 Kernel parameters are updated for new input/output pointers before each launch.
 `getStats()['backend']` is `cuda-graph`, `stream` or `native`.
-Plans with native reduction, matmul or power boundaries retain the synchronous
-native executor, with the explicit reason in `incompatibility`; they do not
-silently hide CUDA failures behind fallback. `runAsync()` rejects these plans.
-Adapting native kernels to nonblocking streams is a remaining limitation.
+CUDA Graph currently supports generated-kernel plans only. Matmul/reduction
+plans can use streams and `runAsync()`, but requesting CUDA Graph does not
+enable a graph executable for them. Check `cudaGraphCompatible` and
+`cudaGraphIncompatibility` to distinguish graph support from `asyncCompatible`.
+Power boundaries still require the synchronous native executor, report the
+reason in `incompatibility`, and reject `runAsync()`. CUDA failures are reported
+rather than hidden behind fallback.
 
 Stream plans allow concurrent `runAsync()` calls. A CUDA Graph executable
 allows only one outstanding replay: call `wait()` (or release the execution)
@@ -208,8 +218,27 @@ streams still require their existing synchronization contract.
 
 Repeated `wait()` calls return the same outputs. Destroying a pending
 `FusionExecution` synchronizes before releasing storage. Execution submission
-preallocates tensors and can incur allocation/metadata-copy synchronization;
+preallocates tensors and can incur allocation synchronization;
 asynchronous kernel submission does not imply a zero-blocking PHP call.
+Device shape/stride metadata is allocated lazily, only for kernels that need
+it. Generated kernels, reductions, unaries and matmul use compiled or host
+descriptors instead of uploading metadata for every result tensor.
+
+For optional synchronous replay phase timing:
+
+```php
+$graph->setProfiling(true); // Enable timing and reset phase totals.
+$result = $graph->run($tensorA, $tensorB, $tensorC);
+print_r($graph->getStats());
+$graph->setProfiling(false); // Disable timing and reset phase totals.
+```
+
+`profiledExecutions`, `bindTimeNs`, `executeTimeNs` and `collectTimeNs` accumulate
+successful synchronous `run()` calls only. Execution timing includes preparation,
+submission and waiting; it is not isolated GPU kernel time. Profiling is off by
+default. `tensorAllocations` counts replay-created data tensors, not pool cache
+misses or CUDA allocation calls. `workspaceBuffers` counts retained scratch slots;
+`bufferReuses` and `synchronizations` are cumulative replay counters.
 
 Run the focused comparison of eager, cached scoped, stream replay and CUDA
 Graph replay with:
@@ -229,9 +258,10 @@ without custom CUDA source or environment switches. Packed float32 batches are
 uploaded once with `fromBuffer()` and kept on the GPU, including their transpose
 views. Forward, stable softmax cross-entropy, backward and clipped SGD are
 compiled once per batch shape and replayed with new parameter tensors.
-Matmul/reduction boundaries use the synchronous native backend; the elementwise
-segments use generated fused kernels. Loss is transferred only on reporting
-epochs, and inference transfers only predicted class indices.
+Matmul/reduction boundaries and generated elementwise kernels share the private
+stream, with one final synchronization per successful training replay.
+Loss is transferred only on reporting epochs, and inference transfers only
+predicted class indices.
 
 ```sh
 php -n -d extension=./cuda_build-8.3/modules/cuda.so fused.php \
@@ -244,6 +274,8 @@ accuracy. Omit `--no-save` to save parameters after successful evaluation;
 `--load-model` explicitly evaluates the compatible saved model instead of
 training. Dataset and model files are ignored by Git. The script reports
 one-time uploads, compilation, fused/native step counts and training throughput.
+It also reports throughput by epoch block. Add `--profile` to print per-plan
+timing, allocation, scratch and synchronization counters after training.
 [`fusion_training.phpt`](tests/fusion_training.phpt) checks a complete training
 step against eager execution, CPU loss and finite-difference gradients, including
 large-logit stability and retained outputs across replays.
@@ -343,8 +375,8 @@ The annotated signatures are in [class stubs](stubs/cuda.stub.php) and
 in [examples](examples/README.md). `astype()` supports safe dtype conversions.
 GPU data has no CPU fallback. The core API baseline is frozen, but the project
 remains beta and does not yet promise production stability. Kernel fusion is
-experimental and explicitly opt-in; plans with native matmul/reduction/power
-boundaries currently execute synchronously.
+experimental and explicitly opt-in. Matmul/reduction plans support async replay,
+but not CUDA Graph yet; power boundaries still require synchronous execution.
 
 ## Contribute
 

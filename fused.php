@@ -174,7 +174,7 @@ final class NeuralNetwork
         };
     }
 
-    public function train(DatasetManager $dataset, int $epochs, int $batchSize, float $learningRate): void
+    public function train(DatasetManager $dataset, int $epochs, int $batchSize, float $learningRate, bool $profile = false): void
     {
         if ($epochs < 1 || $batchSize < 1 || $dataset->trainSamples < 1 ||
             !is_finite($learningRate) || $learningRate <= 0) {
@@ -207,6 +207,10 @@ final class NeuralNetwork
                 Fusion::compile($this->trainingExpression($rows, $learningRate, true), $inputs),
             ];
             $stats = $plans[$rows][0]->getStats();
+            if ($profile) {
+                $plans[$rows][0]->setProfiling(true);
+                $plans[$rows][1]->setProfiling(true);
+            }
             if ($stats['fusedKernels'] < 1) {
                 throw new RuntimeException('Training did not produce any fused kernels.');
             }
@@ -216,6 +220,8 @@ final class NeuralNetwork
         printf("Plan compilation: %.2f ms\n", (hrtime(true) - $start) / 1e6);
         echo "Training with compiled Fusion replay (no custom kernels)...\n";
         $start = hrtime(true);
+        $blockStart = $start;
+        $blockEpoch = 0;
         $steps = 0;
         for ($epoch = 0; $epoch < $epochs; $epoch++) {
             $report = $epoch % 50 === 0 || $epoch === $epochs - 1;
@@ -233,11 +239,24 @@ final class NeuralNetwork
                     throw new RuntimeException('Training diverged: non-finite cross-entropy.');
                 }
                 printf("Epoch %4d: cross-entropy %.5f\n", $epoch + 1, $loss);
+                $now = hrtime(true);
+                printf("  Block %d-%d: %.3f ms/step\n", $blockEpoch + 1, $epoch + 1,
+                    ($now - $blockStart) / 1e6 / (($epoch + 1 - $blockEpoch) * count($batches)));
+                $blockStart = $now;
+                $blockEpoch = $epoch + 1;
             }
         }
         $seconds = (hrtime(true) - $start) / 1e9;
         printf("Training: %.2f s, %.2f ms/step, %.0f samples/s (%d steps).\n",
             $seconds, $seconds * 1000 / $steps, $dataset->trainSamples * $epochs / $seconds, $steps);
+        if ($profile) {
+            foreach ($plans as $rows => $pair) {
+                foreach ($pair as $withLoss => $plan) {
+                    echo json_encode(['batch' => $rows, 'withLoss' => (bool)$withLoss,
+                        'stats' => $plan->getStats()], JSON_THROW_ON_ERROR), PHP_EOL;
+                }
+            }
+        }
     }
 
     public function evaluate(DatasetManager $dataset): float
@@ -296,7 +315,7 @@ function runFusedTraining(): void
     if (!extension_loaded('cuda') || cuda_get_device_count() < 1) {
         throw new RuntimeException('Training requires the CUDA extension and a visible NVIDIA GPU.');
     }
-    $options = getopt('', ['epochs:', 'batch-size:', 'learning-rate:', 'load-model', 'no-save']);
+    $options = getopt('', ['epochs:', 'batch-size:', 'learning-rate:', 'load-model', 'no-save', 'profile']);
     $epochs = filter_var($options['epochs'] ?? 1000, FILTER_VALIDATE_INT);
     $batchSize = filter_var($options['batch-size'] ?? 256, FILTER_VALIDATE_INT);
     $learningRate = filter_var($options['learning-rate'] ?? 0.05, FILTER_VALIDATE_FLOAT);
@@ -312,7 +331,7 @@ function runFusedTraining(): void
     if (array_key_exists('load-model', $options)) {
         $network->loadModel($modelPath, $modelVersion);
     } else {
-        $network->train($dataset, $epochs, $batchSize, $learningRate);
+        $network->train($dataset, $epochs, $batchSize, $learningRate, array_key_exists('profile', $options));
     }
     $network->evaluate($dataset);
     if (!array_key_exists('load-model', $options) && !array_key_exists('no-save', $options)) {

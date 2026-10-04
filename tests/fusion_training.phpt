@@ -56,7 +56,7 @@ $network = new NeuralNetwork(2, 3, 2);
 $expression = $network->trainingExpression(2, 0.05, true);
 $graph = Fusion::compile($expression, $inputs);
 check($graph->getStats()['fusedKernels'] > 0);
-check($graph->getStats()['backend'] === 'native');
+check($graph->getStats()['backend'] === 'stream');
 $fused = $graph->run(...$inputs);
 $eager = $expression(...$inputs);
 foreach ($fused as $index => $output) {
@@ -115,6 +115,15 @@ $next = $graph->run($x, $x->transpose(), $y, ...array_slice($fused, 0, 4));
 check($fused[0]->toArray() === $retained);
 check($next[0]->toArray() !== $retained);
 echo "replay replaced weights without mutating prior outputs\n";
+$one = $graph->runAsync(...$inputs);
+$two = $graph->runAsync(...$inputs);
+$asyncFirst = $one->wait();
+$asyncSecond = $two->wait();
+foreach ($fused as $index => $output) {
+    check($asyncFirst[$index]->toArray() === $output->toArray());
+    check($asyncSecond[$index]->toArray() === $output->toArray());
+}
+echo "concurrent full training replay checked\n";
 $path = tempnam(sys_get_temp_dir(), 'fusion-training-');
 if ($path === false) throw new RuntimeException('Cannot create model test file.');
 try {
@@ -143,4 +152,5 @@ all parameter gradients matched finite differences
 large logits remained stable
 clipping and NaN-gradient policy preserved
 replay replaced weights without mutating prior outputs
+concurrent full training replay checked
 model round-trip and version check passed

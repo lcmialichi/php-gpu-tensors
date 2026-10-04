@@ -246,6 +246,7 @@ int fusion_generate_source(fusion_plan *plan)
         unsigned char *seen = ecalloc(plan->count, 1);
         for (size_t j = 0; j < step->root_count; j++)
             fusion_gather(plan, step, step->roots[j], seen);
+        step->arguments = emalloc((step->leaf_count + step->root_count) * sizeof(void *));
         memset(seen, 0, plan->count);
         for (size_t j = 0; j < step->root_count; j++)
             fusion_emit_node(plan, step, step->roots[j], &source, seen);

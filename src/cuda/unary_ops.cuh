@@ -3,6 +3,7 @@
 
 #include <cuda_runtime.h>
 #include "launch_config.cuh"
+#include <string.h>
 
 #define MAX_DIMS 10
 struct UnaryParams
@@ -12,14 +13,13 @@ struct UnaryParams
     int ndims;
 };
 
-__constant__ UnaryParams d_unary_params;
-
 template <typename T, typename Op>
 __global__ void unary_kernel_strided(
     const T *base,
     T *result,
     size_t base_offset,
-    size_t total_size)
+    size_t total_size,
+    UnaryParams d_unary_params)
 {
     size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= total_size)
@@ -51,19 +51,19 @@ void launch_unary_op_kernel(
     if (total_size == 0)
         return;
 
-    UnaryParams h_params;
+    UnaryParams h_params = {};
 
-    cudaMemcpy(h_params.shape, shape, ndims * sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_params.strides, strides, ndims * sizeof(size_t), cudaMemcpyDeviceToHost);
+    memcpy(h_params.shape, shape, ndims * sizeof(int));
+    memcpy(h_params.strides, strides, ndims * sizeof(size_t));
 
     h_params.ndims = ndims;
 
-    cudaMemcpyToSymbol(d_unary_params, &h_params, sizeof(UnaryParams));
     unary_kernel_strided<T, Op><<<cuda_grid_1d(total_size), 256>>>(
         base,
         result,
         base_offset,
-        total_size);
+        total_size,
+        h_params);
 }
 
 #endif

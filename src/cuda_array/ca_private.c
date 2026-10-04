@@ -174,11 +174,6 @@ tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
     CUDA_CHECK_AND_RETURN_NULL(a);
     if (fusion_active()) return fusion_unary(a, operation_type);
     if (!fusion_materialize(a)) return NULL;
-    if (!lazy_copy_metadata_to_gpu(a))
-    {
-        CUDA_THROW_RUNTIME("Failed to prepare unary operation metadata");
-        return NULL;
-    }
 
     tensor_t *result = resolve_result_tensor(a);
     if (!result)
@@ -187,8 +182,9 @@ tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
         return NULL;
     }
 
-    launch_unary_op(a->data, result->data, 0, a->dtype, operation_type, a->d_shape, a->d_strides, a->ndims, a->total_size);
-    cudaError_t status = cudaDeviceSynchronize();
+    launch_unary_op(a->data, result->data, 0, a->dtype, operation_type, a->shape, a->strides, a->ndims, a->total_size);
+    cudaError_t status = cudaGetLastError();
+    if (status == cudaSuccess) status = cudaDeviceSynchronize();
     if (status != cudaSuccess)
     {
         CUDA_THROW_RUNTIME("Unary operation failed: %s", cudaGetErrorString(status));
@@ -230,9 +226,10 @@ tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t ope
         result->ndims,
         axis,
         total_elements_out,
-        input->offset);
+        input->offset, NULL);
 
-    err = cudaDeviceSynchronize();
+    err = cudaGetLastError();
+    if (err == cudaSuccess) err = cudaDeviceSynchronize();
     if (err != cudaSuccess)
     {
         CUDA_THROW_RUNTIME("Failed to synchronize device after reduction: %s", cudaGetErrorString(err));
@@ -266,9 +263,10 @@ tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operati
         return NULL;
 
     launch_reduction(input->data, result->data, input->dtype, operation_type, input->shape, input->ndims,
-                     result_shape_arr, input->strides, result_ndims, axis, total_elements_out, input->offset);
+                     result_shape_arr, input->strides, result_ndims, axis, total_elements_out, input->offset, NULL);
 
-    cudaError_t err = cudaDeviceSynchronize();
+    cudaError_t err = cudaGetLastError();
+    if (err == cudaSuccess) err = cudaDeviceSynchronize();
     if (err != cudaSuccess)
     {
         CUDA_THROW_RUNTIME("Failed to synchronize device after reduction: %s", cudaGetErrorString(err));
@@ -435,9 +433,9 @@ tensor_t *cuda_tensor_matmul_nd(tensor_t *a, tensor_t *b)
 
     int status = cuda_batched_matmul_nd_launcher(
         a->data, b->data, result->data,
-        a->d_shape, a->d_strides, a->ndims,
-        b->d_shape, b->d_strides, b->ndims,
-        result->d_shape, result->d_strides, result->ndims);
+        a->shape, a->strides, a->ndims,
+        b->shape, b->strides, b->ndims,
+        result->shape, result->strides, result->ndims, NULL);
 
     if (status == 0 || !result->data)
     {
@@ -457,9 +455,6 @@ tensor_t *cuda_tensor_matmul(tensor_t *a, tensor_t *b)
     {
         return NULL;
     }
-
-    if (!lazy_copy_metadata_to_gpu(a) || !lazy_copy_metadata_to_gpu(b))
-        return NULL;
 
     if (a->ndims != 2 || b->ndims != 2)
     {
@@ -484,7 +479,7 @@ tensor_t *cuda_tensor_matmul(tensor_t *a, tensor_t *b)
         a->shape[0], a->shape[1], b->shape[1],
         a->strides[0], a->strides[1],
         b->strides[0], b->strides[1],
-        result->strides[0], result->strides[1]);
+        result->strides[0], result->strides[1], NULL);
 
     if (status == 0)
     {

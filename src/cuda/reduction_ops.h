@@ -2,6 +2,7 @@
 #define REDUCTION_OPS_H
 
 #include <stddef.h>
+#include <cuda_runtime_api.h>
 #include "../operations.h"
 
 #ifdef __cplusplus
@@ -15,7 +16,7 @@ extern "C"
         int *result_shape,
         size_t *input_strides,
         int result_ndims, int axis,
-        size_t total_elements_out, size_t input_base_offset);
+        size_t total_elements_out, size_t input_base_offset, cudaStream_t stream);
 
     void launch_arg_reduction(
         void *input, int *output,
@@ -24,7 +25,7 @@ extern "C"
         int *result_shape,
         size_t *input_strides,
         int result_ndims, int axis,
-        size_t total_elements_out, size_t input_base_offset);
+        size_t total_elements_out, size_t input_base_offset, cudaStream_t stream);
 
 #ifdef __cplusplus
 }

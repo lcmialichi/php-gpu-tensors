@@ -2,6 +2,7 @@
 #include "cuda_array_ce.h"
 #include "zend_interfaces.h"
 #include "zend_fibers.h"
+#include <time.h>
 
 typedef struct
 {
@@ -34,6 +35,17 @@ typedef struct
 #define Z_FUSION_EXECUTION_P(zv) ((fusion_execution *)((char *)Z_OBJ_P(zv) - XtOffsetOf(fusion_execution, std)))
 
 #define Z_FUSION_GRAPH_P(zv) ((fusion_graph *)((char *)Z_OBJ_P(zv) - XtOffsetOf(fusion_graph, std)))
+
+static uint64_t fusion_time(void)
+{
+    struct timespec timestamp;
+    if (clock_gettime(CLOCK_MONOTONIC, &timestamp) != 0)
+    {
+        CUDA_THROW_RUNTIME("Cannot read the fusion profiling clock");
+        return 0;
+    }
+    return (uint64_t)timestamp.tv_sec * UINT64_C(1000000000) + (uint64_t)timestamp.tv_nsec;
+}
 
 static int fusion_materialize_roots(tensor_t **roots, size_t count)
 {
@@ -322,12 +334,17 @@ ZEND_METHOD(Fusion, compile)
     if (ok && !plan) ok = 0;
     if (ok)
     {
-        plan->use_cuda_graph = cuda_graph && plan->stream_compatible;
+        plan->use_cuda_graph = cuda_graph && plan->graph_compatible;
         plan->cuda_graph_requested = cuda_graph;
+        plan->compiled = 1;
         plan->input_count = count;
         plan->inputs = count ? emalloc(count * sizeof(size_t)) : NULL;
+        plan->input_examples = count ? emalloc(count * sizeof(tensor_t *)) : NULL;
         for (size_t i = 0; i < count; i++)
+        {
             plan->inputs[i] = fusion_find(plan, input_tensors[i]);
+            plan->input_examples[i] = input_tensors[i];
+        }
         object_init_ex(return_value, fusion_graph_ce);
         fusion_graph *graph = Z_FUSION_GRAPH_P(return_value);
         graph->scope = scope;
@@ -404,16 +421,7 @@ static tensor_t **fusion_bind(fusion_graph *graph, zval *inputs, int count)
             break;
         }
         tensor_t *tensor = Z_CUDA_ARRAY_P(input)->tensor_handle;
-        tensor_t *example = NULL;
-        for (size_t j = 0; j < graph->scope->count; j++)
-        {
-            fusion_node *node = graph->scope->nodes[j]->fusion;
-            if (node && node->kind == FUSION_INPUT && node->parameter == i)
-            {
-                example = graph->scope->nodes[j];
-                break;
-            }
-        }
+        tensor_t *example = plan->input_examples[i];
         if (!fusion_materialize(tensor)) { ok = 0; break; }
         if (tensor->dtype != example->dtype || tensor->ndims != example->ndims ||
             (tensor->ndims && (memcmp(tensor->shape, example->shape, tensor->ndims * sizeof(int)) ||
@@ -460,6 +468,7 @@ static int fusion_execution_finish(fusion_execution *execution)
     }
     if (!fusion_context_check(plan)) return 0;
     CUresult synchronization = execution->stream ? cuStreamSynchronize(execution->stream) : CUDA_SUCCESS;
+    if (execution->stream) plan->synchronizations++;
     if (execution->error == CUDA_SUCCESS) execution->error = synchronization;
     execution->finished = 1;
     if (execution->error == CUDA_SUCCESS)
@@ -508,7 +517,7 @@ static int fusion_start(zval *graph_value, tensor_t **values, zval *result)
     if (error == CUDA_SUCCESS) error = cuEventCreate(&execution->event, CU_EVENT_DISABLE_TIMING);
     plan->pending++;
     CUDA_G(fusion_pending)++;
-    int ok = error == CUDA_SUCCESS && fusion_enqueue(plan, values, execution->stream, 1);
+    int ok = error == CUDA_SUCCESS && fusion_enqueue(plan, values, execution->stream, FUSION_BUFFERS_LOCAL);
     if (ok) error = cuEventRecord(execution->event, execution->stream);
     if (!ok || error != CUDA_SUCCESS)
     {
@@ -527,30 +536,37 @@ ZEND_METHOD(FusionGraph, run)
         Z_PARAM_VARIADIC('*', inputs, count)
     ZEND_PARSE_PARAMETERS_END();
     fusion_graph *graph = Z_FUSION_GRAPH_P(ZEND_THIS);
+    fusion_plan *plan = graph->plan;
+    uint64_t start = plan && plan->profiling ? fusion_time() : 0;
+    if (EG(exception)) RETURN_THROWS();
     tensor_t **values = fusion_bind(graph, inputs, count);
     if (!values) RETURN_THROWS();
-    if (graph->plan->stream_compatible)
+    uint64_t bound = start ? fusion_time() : 0;
+    if (EG(exception))
     {
-        zval execution_value;
-        ZVAL_UNDEF(&execution_value);
-        int ok = fusion_start(ZEND_THIS, values, &execution_value);
-        if (ok)
-        {
-            fusion_execution *execution = Z_FUSION_EXECUTION_P(&execution_value);
-            ok = fusion_execution_finish(execution);
-            if (ok) ZVAL_COPY(return_value, &execution->result);
-        }
-        if (!Z_ISUNDEF(execution_value)) zval_ptr_dtor(&execution_value);
-        if (!ok) RETURN_THROWS();
+        fusion_unbind(plan, values);
+        RETURN_THROWS();
     }
-    else
+    uint64_t executed = 0;
+    int ok = fusion_execute(graph->plan, values);
+    if (start) executed = fusion_time();
+    if (ok) fusion_copy_outputs(return_value, &graph->outputs, graph->plan, values);
+    if (!ok)
     {
-        int ok = fusion_execute(graph->plan, values);
-        if (ok) fusion_copy_outputs(return_value, &graph->outputs, graph->plan, values);
         cudaError_t error = cudaDeviceSynchronize();
-        if (error != cudaSuccess) CUDA_THROW_RUNTIME("Fusion cleanup failed: %s", cudaGetErrorString(error));
-        fusion_unbind(graph->plan, values);
-        if (!ok || EG(exception)) RETURN_THROWS();
+        if (error != cudaSuccess && !EG(exception))
+            CUDA_THROW_RUNTIME("Fusion cleanup failed: %s", cudaGetErrorString(error));
+    }
+    fusion_unbind(graph->plan, values);
+    if (!ok || EG(exception)) RETURN_THROWS();
+    if (start)
+    {
+        uint64_t collected = fusion_time();
+        if (EG(exception)) RETURN_THROWS();
+        plan->bind_ns += bound - start;
+        plan->execute_ns += executed - bound;
+        plan->collect_ns += collected - executed;
+        plan->profiled_executions++;
     }
 }
 
@@ -615,6 +631,23 @@ ZEND_METHOD(Fusion, clearCache)
     fusion_cache_shutdown();
 }
 
+ZEND_METHOD(FusionGraph, setProfiling)
+{
+    zend_bool enabled;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_BOOL(enabled)
+    ZEND_PARSE_PARAMETERS_END();
+    fusion_plan *plan = Z_FUSION_GRAPH_P(ZEND_THIS)->plan;
+    if (!plan || plan->pending)
+    {
+        CUDA_THROW_RUNTIME("Profiling requires an initialized graph without pending executions");
+        RETURN_THROWS();
+    }
+    plan->profiling = enabled;
+    plan->profiled_executions = 0;
+    plan->bind_ns = plan->execute_ns = plan->collect_ns = 0;
+}
+
 ZEND_METHOD(FusionGraph, getStats)
 {
     ZEND_PARSE_PARAMETERS_NONE();
@@ -622,24 +655,48 @@ ZEND_METHOD(FusionGraph, getStats)
     array_init(return_value);
     add_assoc_long(return_value, "nodes", plan ? plan->count : 0);
     add_assoc_long(return_value, "fusedKernels", plan ? plan->kernel_count : 0);
-    add_assoc_long(return_value, "boundaries", plan ? plan->step_count - plan->kernel_count : 0);
+    size_t boundaries = 0, aliases = 0;
+    if (plan)
+        for (size_t i = 0; i < plan->step_count; i++)
+        {
+            if (plan->items[plan->steps[i].root].alias) aliases++;
+            else if (!plan->steps[i].name[0]) boundaries++;
+        }
+    add_assoc_long(return_value, "boundaries", boundaries);
+    add_assoc_long(return_value, "viewAliases", aliases);
     add_assoc_long(return_value, "executions", plan ? plan->executions : 0);
     add_assoc_long(return_value, "executionSteps", plan ? plan->step_count : 0);
     size_t intermediates = 0;
     if (plan)
         for (size_t i = 0; i < plan->step_count; i++)
-            if (!plan->items[plan->steps[i].root].output) intermediates++;
+            if (!plan->items[plan->steps[i].root].output && !plan->items[plan->steps[i].root].alias) intermediates++;
     add_assoc_long(return_value, "intermediateBuffers", intermediates);
     add_assoc_bool(return_value, "cacheHit", plan && plan->cache_hit);
     add_assoc_string(return_value, "backend", plan && plan->use_cuda_graph ? "cuda-graph" :
                      plan && plan->stream_compatible ? "stream" : "native");
     add_assoc_bool(return_value, "asyncCompatible", plan && plan->stream_compatible);
+    add_assoc_bool(return_value, "cudaGraphCompatible", plan && plan->graph_compatible);
+    if (plan && !plan->graph_compatible)
+        add_assoc_string(return_value, "cudaGraphIncompatibility", plan->incompatibility ? plan->incompatibility : "native-graph-not-supported");
+    else add_assoc_null(return_value, "cudaGraphIncompatibility");
     if (plan && plan->incompatibility) add_assoc_string(return_value, "incompatibility", plan->incompatibility);
     else add_assoc_null(return_value, "incompatibility");
     add_assoc_long(return_value, "graphLaunches", plan ? plan->graph_launches : 0);
     add_assoc_long(return_value, "bufferReuses", plan ? plan->buffer_reuses : 0);
     add_assoc_long(return_value, "pending", plan ? plan->pending : 0);
     add_assoc_bool(return_value, "cudaGraphRequested", plan && plan->cuda_graph_requested);
+    add_assoc_long(return_value, "tensorAllocations", plan ? plan->tensor_allocations : 0);
+    add_assoc_long(return_value, "synchronizations", plan ? plan->synchronizations : 0);
+    size_t scratch = 0;
+    if (plan && plan->workspace)
+        for (size_t i = 0; i < plan->count; i++)
+            if (plan->workspace[i]) scratch++;
+    add_assoc_long(return_value, "workspaceBuffers", scratch);
+    add_assoc_bool(return_value, "profiling", plan && plan->profiling);
+    add_assoc_long(return_value, "profiledExecutions", plan ? plan->profiled_executions : 0);
+    add_assoc_long(return_value, "bindTimeNs", plan ? plan->bind_ns : 0);
+    add_assoc_long(return_value, "executeTimeNs", plan ? plan->execute_ns : 0);
+    add_assoc_long(return_value, "collectTimeNs", plan ? plan->collect_ns : 0);
 }
 
 ZEND_METHOD(FusionGraph, getPlan)
@@ -655,7 +712,8 @@ ZEND_METHOD(FusionGraph, getPlan)
         array_init(&entry);
         add_assoc_long(&entry, "step", i);
         add_assoc_long(&entry, "root", step->root);
-        add_assoc_string(&entry, "kind", step->name[0] ? "fused" : "native");
+        add_assoc_string(&entry, "kind", plan->items[step->root].alias ? "view" :
+                         step->name[0] ? "fused" : "native");
         add_assoc_string(&entry, "reason", plan->items[step->root].reason ?
                          plan->items[step->root].reason : "dependency");
         add_assoc_long(&entry, "inputs", step->leaf_count);
@@ -761,6 +819,9 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_finished, 0, 0, _IS_BOOL,
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_clear, 0, 0, IS_VOID, 0)
 ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_profiling, 0, 1, IS_VOID, 0)
+    ZEND_ARG_TYPE_INFO(0, enabled, _IS_BOOL, 0)
+ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_graph_run, 0, 0, IS_MIXED, 0)
     ZEND_ARG_VARIADIC_OBJ_INFO(0, inputs, Cuda\\CudaArray, 0)
 ZEND_END_ARG_INFO()
@@ -782,6 +843,7 @@ static const zend_function_entry fusion_graph_methods[] = {
     ZEND_ME(FusionGraph, run, arginfo_fusion_graph_run, ZEND_ACC_PUBLIC)
     ZEND_ME(FusionGraph, runAsync, arginfo_fusion_graph_async, ZEND_ACC_PUBLIC)
     ZEND_ME(FusionGraph, getStats, arginfo_fusion_stats, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionGraph, setProfiling, arginfo_fusion_profiling, ZEND_ACC_PUBLIC)
     ZEND_ME(FusionGraph, getPlan, arginfo_fusion_stats, ZEND_ACC_PUBLIC)
     ZEND_ME(FusionGraph, getSource, arginfo_fusion_source, ZEND_ACC_PUBLIC)
     ZEND_FE_END

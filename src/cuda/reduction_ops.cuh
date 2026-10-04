@@ -23,24 +23,13 @@ struct ReductionParams
     size_t output_strides[MAX_DIMS];
 };
 
-__constant__ ReductionParams d_reduce_params;
-
-__device__ size_t get_linear_index(const int *coords)
-{
-    size_t index = 0;
-    for (int i = 0; i < d_reduce_params.ndims; ++i)
-    {
-        index += (size_t)coords[i] * d_reduce_params.d_strides[i];
-    }
-    return index;
-}
-
 template <typename InputT, typename AccumT, typename Op>
 __global__ void reduce_kernel(
     const InputT *__restrict__ input,
     AccumT *__restrict__ result,
     size_t input_base_offset,
-    size_t divisor)
+    size_t divisor,
+    ReductionParams d_reduce_params)
 {
     extern __shared__ char sdata_raw[];
     AccumT *sdata = (AccumT *)sdata_raw;
@@ -102,7 +91,8 @@ template <typename T, typename Op>
 __global__ void arg_reduce_kernel(
     const T *__restrict__ input,
     int *__restrict__ result_idx,
-    size_t input_base_offset)
+    size_t input_base_offset,
+    ReductionParams d_reduce_params)
 {
     extern __shared__ char sdata_raw[];
     T *sdata_vals = (T *)sdata_raw;
@@ -187,12 +177,12 @@ void launch_reduce_op_kernel(InputT *input, AccumT *result,
                              int *result_shape, size_t *input_strides, int result_ndims,
                              int axis,
                              size_t total_elements_out, size_t input_base_offset,
-                             size_t divisor)
+                             size_t divisor, cudaStream_t stream)
 {
     if (total_elements_out == 0)
         return;
 
-    ReductionParams h_params;
+    ReductionParams h_params = {};
     h_params.ndims = input_ndims;
     h_params.reduce_axis = axis;
     h_params.total_elements_out = total_elements_out;
@@ -200,19 +190,12 @@ void launch_reduce_op_kernel(InputT *input, AccumT *result,
     memcpy(h_params.d_shape, input_shape, input_ndims * sizeof(int));
     memcpy(h_params.d_strides, input_strides, input_ndims * sizeof(size_t));
 
-    cudaMemcpyToSymbol(d_reduce_params, &h_params, sizeof(ReductionParams));
-
-    int minGridSize;
-    int threads;
-
-    cudaOccupancyMaxPotentialBlockSize(&minGridSize, &threads, reduce_kernel<InputT, AccumT, Op>, 0, 0);
+    int threads = REDUCTION_BLOCK_SIZE;
 
     size_t shared_mem_size = (threads / 32) * sizeof(AccumT);
 
-    reduce_kernel<InputT, AccumT, Op><<<total_elements_out, threads, shared_mem_size>>>(
-        input, result, input_base_offset, divisor);
-
-    cudaDeviceSynchronize();
+    reduce_kernel<InputT, AccumT, Op><<<total_elements_out, threads, shared_mem_size, stream>>>(
+        input, result, input_base_offset, divisor, h_params);
 }
 
 template <typename T, typename Op>
@@ -220,12 +203,12 @@ void launch_arg_reduce_kernel(T *input, int *result_idx,
                               int *input_shape, int input_ndims,
                               size_t *input_strides,
                               int axis,
-                              size_t total_elements_out, size_t input_base_offset)
+                              size_t total_elements_out, size_t input_base_offset, cudaStream_t stream)
 {
     if (total_elements_out == 0)
         return;
 
-    ReductionParams h_params;
+    ReductionParams h_params = {};
     h_params.ndims = input_ndims;
     h_params.reduce_axis = axis;
     h_params.total_elements_out = total_elements_out;
@@ -233,16 +216,7 @@ void launch_arg_reduce_kernel(T *input, int *result_idx,
     memcpy(h_params.d_shape, input_shape, input_ndims * sizeof(int));
     memcpy(h_params.d_strides, input_strides, input_ndims * sizeof(size_t));
 
-    cudaMemcpyToSymbol(d_reduce_params, &h_params, sizeof(ReductionParams));
-
-    int minGridSize, blockSize;
-    cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize,
-                                       arg_reduce_kernel<T, Op>, 0, 0);
-
-    int threads = (blockSize >= 512) ? 512 : (blockSize >= 256) ? 256
-                                                                : 128;
-    if (threads < 32)
-        threads = 32;
+    int threads = REDUCTION_BLOCK_SIZE;
 
     int num_warps = threads / 32;
 
@@ -252,8 +226,6 @@ void launch_arg_reduce_kernel(T *input, int *result_idx,
 
     int blocks = (int)total_elements_out;
 
-    arg_reduce_kernel<T, Op><<<blocks, threads, shared_mem_size>>>(
-        input, result_idx, input_base_offset);
-
-    cudaDeviceSynchronize();
+    arg_reduce_kernel<T, Op><<<blocks, threads, shared_mem_size, stream>>>(
+        input, result_idx, input_base_offset, h_params);
 }
