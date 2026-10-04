@@ -59,10 +59,10 @@ int tensor_import_shape(zval *shape_array, int shape[MAX_DIMS], size_t *elements
     zval *dimension;
     ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(shape_array), dimension)
     {
-        if (Z_TYPE_P(dimension) != IS_LONG || Z_LVAL_P(dimension) <= 0 || Z_LVAL_P(dimension) > INT_MAX ||
-            *elements > SIZE_MAX / (size_t)Z_LVAL_P(dimension))
+        if (Z_TYPE_P(dimension) != IS_LONG || Z_LVAL_P(dimension) < 0 || Z_LVAL_P(dimension) > INT_MAX ||
+            (Z_LVAL_P(dimension) && *elements > SIZE_MAX / (size_t)Z_LVAL_P(dimension)))
         {
-            CUDA_THROW_INVALID("Shape dimensions must be positive integers within supported limits");
+            CUDA_THROW_INVALID("Shape dimensions must be nonnegative integers within supported limits");
             return 0;
         }
         shape[index++] = (int)Z_LVAL_P(dimension);

@@ -141,16 +141,22 @@ tensor_t *cuda_tensor_create_from_host_buffer(int *shape, int ndims, dtype_t dty
 
 int cuda_tensor_get_scalar_value(tensor_t *t, float *result_val, int index)
 {
-    size_t byte_offset = (size_t)index * t->element_size;
-    void *gpu_source_ptr = (void *)((char *)t->data + byte_offset);
-    if (byte_offset >= (size_t)t->total_size * t->element_size)
+    if (index < 0) index += t->shape[0];
+    if (index < 0 || index >= t->shape[0])
     {
         CUDA_THROW_INVALID("Index out of bounds.");
         return FAILURE;
     }
-
+    size_t byte_offset = (size_t)index * t->strides[0] * t->element_size;
+    void *gpu_source_ptr = (char *)t->data + byte_offset;
+    union {
+        float f32; double f64;
+        int8_t i8; int16_t i16; int32_t i32; int64_t i64;
+        uint8_t u8; uint16_t u16; uint32_t u32; uint64_t u64;
+        bool boolean;
+    } value;
     cudaError_t status = cudaMemcpy(
-        result_val,
+        &value,
         gpu_source_ptr,
         t->element_size,
         cudaMemcpyDeviceToHost);
@@ -160,7 +166,23 @@ int cuda_tensor_get_scalar_value(tensor_t *t, float *result_val, int index)
         CUDA_THROW_RUNTIME("Failed to copy scalar data from GPU: %s", cudaGetErrorString(status));
         return FAILURE;
     }
-
+    switch (t->dtype)
+    {
+        case DTYPE_FLOAT32: *result_val = value.f32; break;
+        case DTYPE_FLOAT64: *result_val = (float)value.f64; break;
+        case DTYPE_INT8: *result_val = (float)value.i8; break;
+        case DTYPE_INT16: *result_val = (float)value.i16; break;
+        case DTYPE_INT32: *result_val = (float)value.i32; break;
+        case DTYPE_INT64: *result_val = (float)value.i64; break;
+        case DTYPE_UINT8: *result_val = (float)value.u8; break;
+        case DTYPE_UINT16: *result_val = (float)value.u16; break;
+        case DTYPE_UINT32: *result_val = (float)value.u32; break;
+        case DTYPE_UINT64: *result_val = (float)value.u64; break;
+        case DTYPE_BOOL: *result_val = value.boolean ? 1.0f : 0.0f; break;
+        default:
+            CUDA_THROW_INVALID("Unsupported scalar dtype");
+            return FAILURE;
+    }
     return SUCCESS;
 }
 

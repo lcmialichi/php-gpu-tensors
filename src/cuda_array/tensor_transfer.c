@@ -67,14 +67,12 @@ static void build_php_array(zval *result, const void *data, int dim, const tenso
 
 void tensor_to_php_array(zval *result, const tensor_t *tensor)
 {
-    const tensor_t *base = tensor->is_view ? tensor->base_tensor : tensor;
-    void *host_data = emalloc(base->total_size * tensor->element_size);
-
-    cudaError_t status = cudaMemcpy(
-        host_data,
-        base->data,
-        base->total_size * tensor->element_size,
-        cudaMemcpyDeviceToHost);
+    size_t span = tensor->total_size ? 1 : 0;
+    for (int d = 0; span && d < tensor->ndims; d++)
+        span += (size_t)(tensor->shape[d] - 1) * tensor->strides[d];
+    void *host_data = emalloc(span * tensor->element_size);
+    cudaError_t status = span ? cudaMemcpy(host_data, tensor->data,
+        span * tensor->element_size, cudaMemcpyDeviceToHost) : cudaSuccess;
 
     if (status != cudaSuccess)
     {
@@ -83,8 +81,16 @@ void tensor_to_php_array(zval *result, const tensor_t *tensor)
         return;
     }
 
-    size_t offset_elements = tensor->offset / tensor->element_size;
-    build_php_array(result, host_data, 0, tensor, offset_elements);
+    tensor_t descriptor = *tensor;
+    int scalar_shape[] = {1};
+    size_t scalar_stride[] = {1};
+    if (!descriptor.ndims)
+    {
+        descriptor.ndims = 1;
+        descriptor.shape = scalar_shape;
+        descriptor.strides = scalar_stride;
+    }
+    build_php_array(result, host_data, 0, &descriptor, 0);
     efree(host_data);
 }
 
@@ -101,7 +107,12 @@ tensor_t *tensor_copy_to_host(const tensor_t *tensor)
         memcpy(host_tensor->shape, tensor->shape, sizeof(int) * tensor->ndims);
 
         host_tensor->strides = emalloc(sizeof(size_t) * tensor->ndims);
-        memcpy(host_tensor->strides, tensor->strides, sizeof(size_t) * tensor->ndims);
+        size_t stride = 1;
+        for (int d = tensor->ndims - 1; d >= 0; d--)
+        {
+            host_tensor->strides[d] = stride;
+            stride *= tensor->shape[d];
+        }
     }
 
     host_tensor->total_size = 1;
@@ -123,8 +134,28 @@ tensor_t *tensor_copy_to_host(const tensor_t *tensor)
         return NULL;
     }
 
-    cudaError_t status = cudaMemcpy(host_tensor->data, tensor->data,
-                                   host_tensor->allocated_size, cudaMemcpyDeviceToHost);
+    size_t span = tensor->total_size ? 1 : 0;
+    for (int d = 0; span && d < tensor->ndims; d++)
+        span += (size_t)(tensor->shape[d] - 1) * tensor->strides[d];
+    int contiguous = 1;
+    for (int d = 0; tensor->total_size && d < tensor->ndims; d++)
+        if (tensor->shape[d] > 1 && tensor->strides[d] != host_tensor->strides[d]) contiguous = 0;
+    void *storage = contiguous ? host_tensor->data : emalloc(span * tensor->element_size);
+    cudaError_t status = span ? cudaMemcpy(storage, tensor->data,
+                                   span * tensor->element_size, cudaMemcpyDeviceToHost) : cudaSuccess;
+    if (status == cudaSuccess && !contiguous)
+        for (size_t i = 0; i < tensor->total_size; i++)
+        {
+            size_t remaining = i, offset = 0;
+            for (int d = tensor->ndims - 1; d >= 0; d--)
+            {
+                offset += (remaining % tensor->shape[d]) * tensor->strides[d];
+                remaining /= tensor->shape[d];
+            }
+            memcpy((char *)host_tensor->data + i * tensor->element_size,
+                   (char *)storage + offset * tensor->element_size, tensor->element_size);
+        }
+    if (!contiguous) efree(storage);
     if (status != cudaSuccess)
     {
         efree(host_tensor->data);

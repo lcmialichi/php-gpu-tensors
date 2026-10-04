@@ -17,19 +17,27 @@ typedef void (*dtype_getter_t)(void *ptr, zval *rv);
 
 static zend_always_inline void get_f32(void *p, zval *rv) { ZVAL_DOUBLE(rv, (double)*(float *)p); }
 static zend_always_inline void get_f64(void *p, zval *rv) { ZVAL_DOUBLE(rv, *(double *)p); }
+static zend_always_inline void get_i8(void *p, zval *rv) { ZVAL_LONG(rv, (zend_long)*(int8_t *)p); }
+static zend_always_inline void get_i16(void *p, zval *rv) { ZVAL_LONG(rv, (zend_long)*(int16_t *)p); }
 static zend_always_inline void get_i32(void *p, zval *rv) { ZVAL_LONG(rv, (zend_long) * (int32_t *)p); }
 static zend_always_inline void get_i64(void *p, zval *rv) { ZVAL_LONG(rv, (zend_long) * (int64_t *)p); }
 static zend_always_inline void get_u8(void *p, zval *rv) { ZVAL_LONG(rv, (zend_long) * (uint8_t *)p); }
 static zend_always_inline void get_u16(void *p, zval *rv) { ZVAL_LONG(rv, (zend_long) * (uint16_t *)p); }
+static zend_always_inline void get_u32(void *p, zval *rv) { ZVAL_LONG(rv, (zend_long)*(uint32_t *)p); }
+static zend_always_inline void get_u64(void *p, zval *rv) { ZVAL_LONG(rv, (zend_long)*(uint64_t *)p); }
 static zend_always_inline void get_bool(void *p, zval *rv) { ZVAL_BOOL(rv, *(uint8_t *)p != 0); }
 
 static const dtype_getter_t dtype_getters[] = {
     [DTYPE_FLOAT32] = get_f32,
     [DTYPE_FLOAT64] = get_f64,
+    [DTYPE_INT8] = get_i8,
+    [DTYPE_INT16] = get_i16,
     [DTYPE_INT32] = get_i32,
     [DTYPE_INT64] = get_i64,
     [DTYPE_UINT8] = get_u8,
     [DTYPE_UINT16] = get_u16,
+    [DTYPE_UINT32] = get_u32,
+    [DTYPE_UINT64] = get_u64,
     [DTYPE_BOOL] = get_bool,
 };
 
@@ -233,6 +241,14 @@ void *allocate_for_dtype(dtype_t dtype, size_t count)
 
 static void contiguous_array_to_php_array(contiguous_array_object *obj, zval *return_value)
 {
+    if (obj->ndims == 0)
+    {
+        array_init_size(return_value, 1);
+        zval value;
+        dtype_getters[obj->dtype](obj->cached_data_ptr, &value);
+        add_next_index_zval(return_value, &value);
+        return;
+    }
     if (obj->ndims == 1)
     {
         array_init_size(return_value, obj->total_elements);

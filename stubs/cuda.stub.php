@@ -182,6 +182,8 @@ class CudaArray
     public function __unserialize(array $data): void {}
     /** Slice a tensor (integer, null for full dimension, or [start,end] range). */
     public function __invoke(int|null|array ...$slices): CudaArray {}
+    /** Python-style, stop-exclusive slicing; integers remove axes. Returns a shared view outside Fusion. */
+    public function slice(int|string|array|null ...$selectors): CudaArray {}
     /** Return shape, dtype, and count for debugging. */
     public function __debugInfo(): array {}
     /**

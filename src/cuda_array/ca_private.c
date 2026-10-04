@@ -55,6 +55,7 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
         return NULL;
     }
 
+    if (!total_elements) return result;
     if (a->data == NULL || b->data == NULL || result->data == NULL)
     {
         cuda_tensor_destroy(result);
@@ -67,7 +68,7 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
                      a_strides, a->ndims,
                      b_strides, b->ndims,
                      result_shape, result_dims,
-                     total_elements, a->offset, b->offset);
+                     total_elements, 0, 0);
 
     cudaError_t status = cudaDeviceSynchronize();
     if (status != cudaSuccess)
@@ -203,8 +204,10 @@ tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t ope
     size_t total_elements_out;
 
     int result_ndims = calculate_reduction_shape(input, axis, result_shape_arr, &total_elements_out);
-    if (total_elements_out == 0 && result_ndims > 0)
+    if (result_ndims <= 0) return NULL;
+    if (total_elements_out && input->shape[axis] == 0)
     {
+        CUDA_THROW_INVALID("Arg reduction has no identity for an empty axis");
         return NULL;
     }
 
@@ -226,7 +229,7 @@ tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t ope
         result->ndims,
         axis,
         total_elements_out,
-        input->offset, NULL);
+        0, NULL);
 
     err = cudaGetLastError();
     if (err == cudaSuccess) err = cudaDeviceSynchronize();
@@ -248,8 +251,11 @@ tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operati
     size_t total_elements_out;
 
     int result_ndims = calculate_reduction_shape(input, axis, result_shape_arr, &total_elements_out);
-    if (total_elements_out == 0 && result_ndims > 0)
+    if (result_ndims <= 0) return NULL;
+    if (total_elements_out && input->shape[axis] == 0 &&
+        (operation_type == OP_REDUCE_MAX || operation_type == OP_REDUCE_MIN))
     {
+        CUDA_THROW_INVALID("Min/max reduction has no identity for an empty axis");
         return NULL;
     }
 
@@ -263,7 +269,7 @@ tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operati
         return NULL;
 
     launch_reduction(input->data, result->data, input->dtype, operation_type, input->shape, input->ndims,
-                     result_shape_arr, input->strides, result_ndims, axis, total_elements_out, input->offset, NULL);
+                     result_shape_arr, input->strides, result_ndims, axis, total_elements_out, 0, NULL);
 
     cudaError_t err = cudaGetLastError();
     if (err == cudaSuccess) err = cudaDeviceSynchronize();
@@ -308,11 +314,6 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
             }
             wildcard_index = i;
         }
-        else if (new_shape[i] == 0)
-        {
-            CUDA_THROW_INVALID("Reshape dimension cannot be 0.");
-            return NULL;
-        }
         else
         {
             new_size_known *= new_shape[i];
@@ -321,6 +322,11 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
 
     if (wildcard_index != -1)
     {
+        if (!new_size_known)
+        {
+            CUDA_THROW_INVALID("Cannot infer reshape dimension with zero known elements");
+            return NULL;
+        }
         if (original_size % new_size_known != 0)
         {
             CUDA_THROW_INVALID("Cannot reshape array of size %zu into shape with known elements %zu.", original_size, new_size_known);
@@ -402,7 +408,7 @@ tensor_t *cuda_tensor_transpose(tensor_t *tensor, int *axis, int axis_len)
         new_shape,
         new_strides,
         tensor->ndims,
-        tensor->offset,
+        0,
         tensor->total_size);
 
     return transposed ? transposed : NULL;
@@ -437,7 +443,7 @@ tensor_t *cuda_tensor_matmul_nd(tensor_t *a, tensor_t *b)
         b->shape, b->strides, b->ndims,
         result->shape, result->strides, result->ndims, NULL);
 
-    if (status == 0 || !result->data)
+    if (status == 0)
     {
         cuda_tensor_destroy(result);
         return NULL;

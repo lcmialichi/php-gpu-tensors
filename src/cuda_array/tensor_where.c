@@ -19,7 +19,9 @@ static int where_project_strides(const tensor_t *tensor, const int *shape, int n
 
 tensor_t *cuda_tensor_where(tensor_t *condition, tensor_t *on_true, tensor_t *on_false)
 {
-    if (!condition || !on_true || !on_false || !condition->data || !on_true->data || !on_false->data)
+    if (!condition || !on_true || !on_false ||
+        (condition->total_size && !condition->data) ||
+        (on_true->total_size && !on_true->data) || (on_false->total_size && !on_false->data))
     {
         CUDA_THROW_INVALID("where expects initialized CudaArray operands");
         return NULL;
@@ -56,14 +58,14 @@ tensor_t *cuda_tensor_where(tensor_t *condition, tensor_t *on_true, tensor_t *on
         {
             int source_axis = axis - (ndims - inputs[input]->ndims);
             int size = source_axis < 0 ? 1 : inputs[input]->shape[source_axis];
-            if (size <= 0 || (size != 1 && dimension != 1 && size != dimension))
+            if (size < 0 || (size != 1 && dimension != 1 && size != dimension))
             {
                 CUDA_THROW_INVALID("where operands have incompatible shapes");
                 return NULL;
             }
-            if (size > dimension) dimension = size;
+            if (dimension == 1) dimension = size;
         }
-        if (total > SIZE_MAX / (size_t)dimension)
+        if (dimension && total > SIZE_MAX / (size_t)dimension)
         {
             CUDA_THROW_INVALID("where result size exceeds supported limits");
             return NULL;
@@ -90,6 +92,7 @@ tensor_t *cuda_tensor_where(tensor_t *condition, tensor_t *on_true, tensor_t *on
     fast_path = fast_path && is_contiguous(condition) && is_contiguous(on_true) && is_contiguous(on_false);
     tensor_t *result = cuda_tensor_create_empty_with_dtype(shape, ndims, on_true->dtype);
     if (!result) return NULL;
+    if (!total) return result;
 
     cudaError_t status = launch_where_kernel(condition, on_true, on_false, result,
                                               condition_strides, true_strides, false_strides, fast_path);

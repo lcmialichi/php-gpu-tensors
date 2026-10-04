@@ -37,6 +37,10 @@ typedef struct fusion_node
     scalar_value_t scalar;
     int parameter;
     int axes[MAX_DIMS];
+    size_t slice_offset;
+    size_t slice_strides[MAX_DIMS];
+    int slice_starts[MAX_DIMS];
+    int slice_steps[MAX_DIMS];
 } fusion_node;
 
 typedef struct fusion_scope

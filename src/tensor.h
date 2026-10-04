@@ -97,7 +97,7 @@ extern "C"
     tensor_t *cuda_tensor_create_view(tensor_t *base_tensor, int *shape, size_t *strides, int dims, size_t offset, size_t total_size);
     tensor_t *cuda_tensor_create_dim_view(tensor_t *base_tensor, slice_info_t *slices, int num_slices);
 
-    int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, float scalar_value);
+    int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, scalar_value_t scalar_value);
     int cuda_tensor_set_tensor(tensor_t *base_tensor, size_t element_offset, tensor_t *tensor);
 
     int tensor_can_cast_to(const tensor_t *tensor, dtype_t new_dtype);

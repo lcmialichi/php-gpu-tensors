@@ -305,14 +305,16 @@ extern "C" int cuda_batched_matmul_nd_launcher(
     int rows = params.shapeA[nd_a - 2];
     int cols = params.shapeB[nd_b - 1];
     int inner = params.shapeA[nd_a - 1];
-    if (rows <= 0 || cols <= 0 || inner <= 0 ||
+    if (rows < 0 || cols < 0 || inner < 0 ||
         params.shapeC[nd_c - 2] != rows || params.shapeC[nd_c - 1] != cols)
         return 0;
+    if (!rows || !cols) return 1;
 
     int batches = 1;
     for (int i = 0; i < nd_c - 2; i++)
     {
-        if (params.shapeC[i] <= 0 || batches > 65535 / params.shapeC[i])
+        if (!params.shapeC[i]) return 1;
+        if (params.shapeC[i] < 0 || batches > 65535 / params.shapeC[i])
             return 0;
         batches *= params.shapeC[i];
     }
@@ -329,7 +331,7 @@ extern "C" int cuda_batched_matmul_nd_launcher(
     params.total_batches = batches;
 
 #ifdef HAVE_CUBLAS
-    if (blas_matmul_batched(&params, stream))
+    if (inner && blas_matmul_batched(&params, stream))
         return 1;
 #endif
 
@@ -345,11 +347,12 @@ extern "C" int cuda_matmul_launcher(float *a, float *b, float *c,
                                      size_t b_stride0, size_t b_stride1,
                                      size_t c_stride0, size_t c_stride1, cudaStream_t stream)
 {
-    if (m <= 0 || n <= 0 || k <= 0)
+    if (m < 0 || n < 0 || k < 0)
         return 0;
+    if (!m || !k) return 1;
 
 #ifdef HAVE_CUBLAS
-    if (blas_matmul_2d(a, b, c, m, n, k,
+    if (n && blas_matmul_2d(a, b, c, m, n, k,
                        a_stride0, a_stride1, b_stride0, b_stride1,
                        c_stride0, c_stride1, stream))
         return 1;

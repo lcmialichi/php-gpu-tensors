@@ -21,6 +21,7 @@ ZEND_METHOD(CudaArray, where);
 ZEND_METHOD(CudaArray, __serialize);
 ZEND_METHOD(CudaArray, __unserialize);
 ZEND_METHOD(CudaArray, __invoke);
+ZEND_METHOD(CudaArray, slice);
 ZEND_METHOD(CudaArray, __debugInfo);
 
 ZEND_METHOD(CudaArray, zeros);

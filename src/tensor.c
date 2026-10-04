@@ -7,6 +7,8 @@
 #include "operations.h"
 #include "cuda_exceptions.h"
 #include "fusion.h"
+#include "tensor_transfer.h"
+#include <math.h>
 
 static int cuda_is_initialized = 0;
 static tensor_t *handle_allocation_failure(tensor_t *tensor, const char *message, cudaError_t err_code);
@@ -41,6 +43,7 @@ int is_contiguous(tensor_t *tensor)
 {
     if (!tensor)
         return 0;
+    if (!tensor->total_size) return 1;
 
     if (tensor->is_contiguous_cached != -1)
     {
@@ -105,7 +108,7 @@ tensor_t *tensor_cast(tensor_t *tensor, dtype_t new_dtype)
 
 tensor_t *cuda_tensor_create_with_dtype(int *shape, int ndims, dtype_t dtype)
 {
-    if (!shape || ndims < 0 || ndims > MAX_DIMS || dtype >= DTYPE_COUNT)
+    if ((!shape && ndims > 0) || ndims < 0 || ndims > MAX_DIMS || dtype >= DTYPE_COUNT)
     {
         return NULL;
     }
@@ -260,7 +263,7 @@ tensor_t *cuda_tensor_create_view(tensor_t *base_tensor, int *shape, size_t *str
 
     view->is_view = 1;
     view->offset = offset;
-    view->data = (float *)((char *)base_tensor->data + byte_offset);
+    view->data = base_tensor->data ? (char *)base_tensor->data + byte_offset : NULL;
     view->total_size = total_size;
     view->ref_count = 1;
     view->ndims = dims;
@@ -378,7 +381,7 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
         }
     }
 
-    size_t element_offset = base_tensor->is_view ? (base_tensor->offset / base_tensor->element_size) : 0;
+    size_t element_offset = 0;
 
     int view_shape[MAX_DIMS];
     size_t view_strides[MAX_DIMS];
@@ -442,20 +445,10 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
     for (int i = 0; i < view_ndims; ++i)
         view_total *= (size_t)view_shape[i];
 
-    size_t base_total = base_tensor->total_size;
-    if (element_offset >= base_total)
-    {
-        CUDA_THROW_INVALID("Slice offset %zu out of bounds (base size %zu)", element_offset, base_total);
-        return NULL;
-    }
-    if (element_offset + view_total > base_total)
-    {
-        CUDA_THROW_INVALID("Slice region (offset %zu length %zu) out of bounds (base size %zu)",
-                         element_offset, view_total, base_total);
-        return NULL;
-    }
-
-    tensor_t *view = cuda_tensor_create_view(base_tensor, view_shape, view_strides, view_ndims, element_offset, view_total);
+    tensor_t *view = cuda_tensor_create_view(base_tensor, view_shape, view_strides, view_ndims,
+                                            view_total ? element_offset : 0, view_total);
+    if (!view) return NULL;
+    view->offset = 0;
     if (num_slices > 0)
     {
         view->num_slices = num_slices;
@@ -466,14 +459,60 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
     return view;
 }
 
-int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, float scalar_value)
+int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, scalar_value_t scalar)
 {
     if (!fusion_check_tensor_mutation(tensor)) return FAILURE;
+    if (!tensor->total_size)
+    {
+        CUDA_THROW_INVALID("Cannot write a scalar into empty tensor storage");
+        return FAILURE;
+    }
     size_t byte_offset = element_offset * tensor->element_size;
 
     void *gpu_destination = (char *)tensor->data + byte_offset;
-
-    cudaError_t err = cudaMemcpy(gpu_destination, &scalar_value, tensor->element_size, cudaMemcpyHostToDevice);
+    long double scalar_value;
+    if (scalar.dtype == DTYPE_INT64) scalar_value = (long double)scalar.v.i64;
+    else if (scalar.dtype == DTYPE_FLOAT64) scalar_value = (long double)scalar.v.f64;
+    else
+    {
+        CUDA_THROW_INVALID("Scalar assignment expects an integer or float");
+        return FAILURE;
+    }
+    union {
+        float f32; double f64;
+        int8_t i8; int16_t i16; int32_t i32; int64_t i64;
+        uint8_t u8; uint16_t u16; uint32_t u32; uint64_t u64;
+        bool boolean;
+    } value;
+    if (dtype_is_integer(tensor->dtype))
+    {
+        int bits = (int)(tensor->element_size * 8);
+        int signed_type = dtype_is_signed(tensor->dtype);
+        long double limit = ldexpl(1.0L, bits - signed_type);
+        if (!isfinite(scalar_value) || scalar_value < (signed_type ? -limit : 0) || scalar_value >= limit)
+        {
+            CUDA_THROW_INVALID("Scalar value is outside the destination dtype range");
+            return FAILURE;
+        }
+    }
+    switch (tensor->dtype)
+    {
+        case DTYPE_FLOAT32: value.f32 = (float)scalar_value; break;
+        case DTYPE_FLOAT64: value.f64 = (double)scalar_value; break;
+        case DTYPE_INT8: value.i8 = (int8_t)scalar_value; break;
+        case DTYPE_INT16: value.i16 = (int16_t)scalar_value; break;
+        case DTYPE_INT32: value.i32 = (int32_t)scalar_value; break;
+        case DTYPE_INT64: value.i64 = (int64_t)scalar_value; break;
+        case DTYPE_UINT8: value.u8 = (uint8_t)scalar_value; break;
+        case DTYPE_UINT16: value.u16 = (uint16_t)scalar_value; break;
+        case DTYPE_UINT32: value.u32 = (uint32_t)scalar_value; break;
+        case DTYPE_UINT64: value.u64 = (uint64_t)scalar_value; break;
+        case DTYPE_BOOL: value.boolean = scalar_value != 0; break;
+        default:
+            CUDA_THROW_INVALID("Unsupported scalar dtype");
+            return FAILURE;
+    }
+    cudaError_t err = cudaMemcpy(gpu_destination, &value, tensor->element_size, cudaMemcpyHostToDevice);
 
     if (err != cudaSuccess)
     {
@@ -490,8 +529,35 @@ int cuda_tensor_set_tensor(tensor_t *base_tensor, size_t element_offset, tensor_
         return FAILURE;
     }
 
-    void *dest_ptr = (char *)base_tensor->data + element_offset * base_tensor->element_size;
     size_t total_bytes = tensor->total_size * tensor->element_size;
+    if (!total_bytes) return SUCCESS;
+    void *dest_ptr = (char *)base_tensor->data + element_offset * base_tensor->element_size;
+    if (!is_contiguous(base_tensor) || !is_contiguous(tensor))
+    {
+        /* Stage the source so overlapping strided assignments cannot overwrite unread values. */
+        tensor_t *host = tensor_copy_to_host(tensor);
+        if (!host) return FAILURE;
+        cudaError_t status = cudaSuccess;
+        for (size_t i = 0; i < tensor->total_size && status == cudaSuccess; i++)
+        {
+            size_t remaining = i, offset = element_offset;
+            for (int d = tensor->ndims - 1; d >= 0; d--)
+            {
+                offset += (remaining % tensor->shape[d]) * base_tensor->strides[d + 1];
+                remaining /= tensor->shape[d];
+            }
+            status = cudaMemcpy((char *)base_tensor->data + offset * base_tensor->element_size,
+                                (char *)host->data + i * tensor->element_size,
+                                tensor->element_size, cudaMemcpyHostToDevice);
+        }
+        cuda_tensor_destroy(host);
+        if (status != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Strided tensor assignment failed: %s", cudaGetErrorString(status));
+            return FAILURE;
+        }
+        return SUCCESS;
+    }
 
     cudaError_t err = cudaMemcpy(dest_ptr,
                                  tensor->data,
@@ -531,7 +597,7 @@ tensor_t *cuda_tensor_create_dim_view(tensor_t *base_tensor, slice_info_t *slice
         }
     }
 
-    size_t element_offset = base_tensor->is_view ? (base_tensor->offset / base_tensor->element_size) : 0;
+    size_t element_offset = 0;
 
     int view_shape[MAX_DIMS];
     size_t view_strides[MAX_DIMS];
@@ -608,20 +674,10 @@ tensor_t *cuda_tensor_create_dim_view(tensor_t *base_tensor, slice_info_t *slice
     for (int i = 0; i < view_ndims; ++i)
         view_total *= (size_t)view_shape[i];
 
-    size_t base_total = base_tensor->total_size;
-    if (element_offset >= base_total)
-    {
-        CUDA_THROW_INVALID("Slice offset %zu out of bounds (base size %zu)", element_offset, base_total);
-        return NULL;
-    }
-    if (element_offset + view_total > base_total)
-    {
-        CUDA_THROW_INVALID("Slice region (offset %zu length %zu) out of bounds (base size %zu)",
-                         element_offset, view_total, base_total);
-        return NULL;
-    }
-
-    tensor_t *view = cuda_tensor_create_view(base_tensor, view_shape, view_strides, view_ndims, element_offset, view_total);
+    tensor_t *view = cuda_tensor_create_view(base_tensor, view_shape, view_strides, view_ndims,
+                                            view_total ? element_offset : 0, view_total);
+    if (!view) return NULL;
+    view->offset = 0;
     if (num_slices > 0)
     {
         view->num_slices = num_slices;

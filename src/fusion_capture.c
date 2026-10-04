@@ -214,12 +214,12 @@ tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y)
         {
             int axis = d - (ndims - operands[i]->ndims);
             int size = axis < 0 ? 1 : operands[i]->shape[axis];
-            if (size <= 0 || (size != 1 && dimension != 1 && size != dimension))
+            if (size < 0 || (size != 1 && dimension != 1 && size != dimension))
             {
                 CUDA_THROW_INVALID("where operands have incompatible shapes");
                 return NULL;
             }
-            if (size > dimension) dimension = size;
+            if (dimension == 1) dimension = size;
         }
         shape[d] = dimension;
     }
@@ -244,6 +244,14 @@ tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg)
     }
     else ndims = calculate_reduction_shape(a, axis, shape, &total);
     if (ndims <= 0) return NULL;
+    size_t output_size = 1;
+    for (int d = 0; d < ndims; d++) output_size *= shape[d];
+    if (output_size && (axis == -1 ? !a->total_size : a->shape[axis] == 0) &&
+        (arg || op == OP_REDUCE_MAX || op == OP_REDUCE_MIN))
+    {
+        CUDA_THROW_INVALID("Min/max and arg reductions have no identity for an empty axis");
+        return NULL;
+    }
     dtype_t dtype = arg ? DTYPE_INT32 :
         op == OP_REDUCE_MEAN ?
             (a->dtype == DTYPE_FLOAT64 || dtype_is_integer(a->dtype) || a->dtype == DTYPE_BOOL
@@ -279,6 +287,25 @@ tensor_t *fusion_view(tensor_t *a, operation_type_t op, int *shape, size_t *stri
         memcpy(tensor->strides, strides, ndims * sizeof(size_t));
         tensor->is_contiguous_cached = -1;
         if (axes) memcpy(tensor->fusion->axes, axes, ndims * sizeof(int));
+    }
+    return tensor;
+}
+
+tensor_t *fusion_slice(tensor_t *a, int *shape, size_t *strides, int ndims,
+                       int *axes, int *starts, int *steps)
+{
+    tensor_t *tensor = fusion_view(a, OP_SLICE, shape, strides, ndims, axes);
+    if (!tensor) return NULL;
+    fusion_node *node = tensor->fusion;
+    size_t logical_stride = 1;
+    for (int d = a->ndims - 1; d >= 0; d--)
+    {
+        node->slice_starts[d] = starts[d];
+        node->slice_steps[d] = steps[d];
+        node->slice_offset += (size_t)starts[d] * logical_stride;
+        for (int j = 0; j < ndims; j++)
+            if (axes[j] == d) node->slice_strides[j] = logical_stride * (size_t)steps[d];
+        logical_stride *= a->shape[d];
     }
     return tensor;
 }

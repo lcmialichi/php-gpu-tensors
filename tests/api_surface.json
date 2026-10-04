@@ -1418,6 +1418,23 @@
                     "parameters": [],
                     "returnType": "Cuda\\CudaArray"
                 },
+                "slice": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "selectors",
+                            "type": "array|string|int|null",
+                            "byReference": false,
+                            "variadic": true,
+                            "optional": true,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "Cuda\\CudaArray"
+                },
                 "sqrt": {
                     "static": false,
                     "abstract": false,

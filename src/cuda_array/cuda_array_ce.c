@@ -225,7 +225,7 @@ ZEND_METHOD(CudaArray, __serialize)
     size_t data_size = tensor->total_size * tensor->element_size;
     char *host_data = emalloc(data_size);
 
-    cudaError_t status = cudaMemcpy(host_data, tensor->data, data_size, cudaMemcpyDeviceToHost);
+    cudaError_t status = data_size ? cudaMemcpy(host_data, tensor->data, data_size, cudaMemcpyDeviceToHost) : cudaSuccess;
     if (status != cudaSuccess)
     {
         efree(host_data);
@@ -283,7 +283,8 @@ ZEND_METHOD(CudaArray, __unserialize)
     }
 
     int ndims = (int)Z_LVAL_P(ndims_zv);
-    if (ndims <= 0 || ndims > MAX_DIMS || zend_hash_num_elements(Z_ARRVAL_P(shape_zv)) != (uint32_t)ndims)
+    if (Z_LVAL_P(ndims_zv) < 0 || Z_LVAL_P(ndims_zv) > MAX_DIMS ||
+        zend_hash_num_elements(Z_ARRVAL_P(shape_zv)) != (uint32_t)ndims)
     {
         CUDA_THROW_INVALID("Invalid serialized CudaArray shape");
         RETURN_THROWS();
@@ -302,17 +303,23 @@ ZEND_METHOD(CudaArray, __unserialize)
     zval *dim_zv;
     ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(shape_zv), dim_zv)
     {
-        zend_long dim = zval_get_long(dim_zv);
-        if (dim <= 0)
+        if (Z_TYPE_P(dim_zv) != IS_LONG || Z_LVAL_P(dim_zv) < 0 || Z_LVAL_P(dim_zv) > INT_MAX ||
+            (Z_LVAL_P(dim_zv) && total_elements > SIZE_MAX / (size_t)Z_LVAL_P(dim_zv)))
         {
             CUDA_THROW_INVALID("Invalid serialized CudaArray dimension");
             RETURN_THROWS();
         }
+        zend_long dim = Z_LVAL_P(dim_zv);
         shape[i++] = (int)dim;
         total_elements *= (size_t)dim;
     }
     ZEND_HASH_FOREACH_END();
 
+    if (total_elements > SIZE_MAX / dtype_size(dtype))
+    {
+        CUDA_THROW_INVALID("Serialized CudaArray size overflow");
+        RETURN_THROWS();
+    }
     size_t expected_size = total_elements * dtype_size(dtype);
     if (Z_STRLEN_P(data_zv) != expected_size)
     {
@@ -781,7 +788,7 @@ ZEND_METHOD(CudaArray, reshape)
     size_t new_total_size = 1;
     for (int i = 0; i < new_ndims; i++)
     {
-        if (new_shape[i] <= 0)
+        if (new_shape[i] < 0)
         {
             CUDA_THROW_INVALID("Invalid dimension size: %d", new_shape[i]);
             RETURN_NULL();
@@ -857,11 +864,6 @@ ZEND_METHOD(CudaArray, getStrides)
     cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!obj) RETURN_THROWS();
     tensor_t *t = obj->tensor_handle;
-    if (!t->strides)
-    {
-        RETURN_NULL();
-    }
-
     array_init_size(return_value, t->ndims);
 
     for (int i = 0; i < t->ndims; i++)
@@ -875,11 +877,6 @@ ZEND_METHOD(CudaArray, getNdims)
     cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!obj) RETURN_THROWS();
     tensor_t *t = obj->tensor_handle;
-    if (!t->ndims)
-    {
-        RETURN_NULL();
-    }
-
     RETURN_LONG(t->ndims);
 }
 
@@ -970,6 +967,222 @@ ZEND_METHOD(CudaArray, toHost)
     }
 
     ZVAL_OBJ(return_value, host_obj);
+}
+
+typedef struct
+{
+    int index;
+    int has_start, has_stop;
+    zend_long start, stop, step;
+} ca_slice_selector;
+
+static void ca_slice_trim(const char **text, size_t *length)
+{
+    while (*length && (**text == ' ' || **text == '\t' || **text == '\n' || **text == '\r'))
+    {
+        (*text)++;
+        (*length)--;
+    }
+    while (*length && ((*text)[*length - 1] == ' ' || (*text)[*length - 1] == '\t' ||
+                      (*text)[*length - 1] == '\n' || (*text)[*length - 1] == '\r'))
+        (*length)--;
+}
+
+static int ca_slice_integer(const char *text, size_t length, zend_long *value)
+{
+    ca_slice_trim(&text, &length);
+    if (!length) return 0;
+    int negative = text[0] == '-';
+    if (text[0] == '-' || text[0] == '+') { text++; length--; }
+    if (!length) return 0;
+    zend_ulong limit = (zend_ulong)ZEND_LONG_MAX + (negative ? 1 : 0), number = 0;
+    for (size_t i = 0; i < length; i++)
+    {
+        if (text[i] < '0' || text[i] > '9') return 0;
+        unsigned int digit = text[i] - '0';
+        if (number > (limit - digit) / 10) return 0;
+        number = number * 10 + digit;
+    }
+    *value = negative ? (number == (zend_ulong)ZEND_LONG_MAX + 1 ? ZEND_LONG_MIN : -(zend_long)number)
+                      : (zend_long)number;
+    return 1;
+}
+
+static int ca_slice_text(const char *text, size_t length, ca_slice_selector *selector)
+{
+    memset(selector, 0, sizeof(*selector));
+    selector->step = 1;
+    ca_slice_trim(&text, &length);
+    if (!memchr(text, ':', length))
+    {
+        selector->index = selector->has_start = 1;
+        return ca_slice_integer(text, length, &selector->start);
+    }
+    size_t start = 0;
+    int field = 0;
+    for (size_t i = 0; i <= length; i++)
+    {
+        if (i != length && text[i] != ':') continue;
+        if (field >= 3) return 0;
+        const char *part = text + start;
+        size_t part_length = i - start;
+        ca_slice_trim(&part, &part_length);
+        if (part_length)
+        {
+            zend_long number;
+            if (!ca_slice_integer(part, part_length, &number)) return 0;
+            if (field == 0) { selector->start = number; selector->has_start = 1; }
+            else if (field == 1) { selector->stop = number; selector->has_stop = 1; }
+            else selector->step = number;
+        }
+        field++;
+        start = i + 1;
+    }
+    return 1;
+}
+
+static int ca_slice_value(zval *value, ca_slice_selector *selector)
+{
+    ZVAL_DEREF(value);
+    memset(selector, 0, sizeof(*selector));
+    selector->step = 1;
+    if (Z_TYPE_P(value) == IS_NULL) return 1;
+    if (Z_TYPE_P(value) == IS_LONG)
+    {
+        selector->index = selector->has_start = 1;
+        selector->start = Z_LVAL_P(value);
+        return 1;
+    }
+    if (Z_TYPE_P(value) == IS_STRING)
+        return ca_slice_text(Z_STRVAL_P(value), Z_STRLEN_P(value), selector);
+    if (Z_TYPE_P(value) != IS_ARRAY) return 0;
+    size_t count = zend_hash_num_elements(Z_ARRVAL_P(value));
+    if (count != 2 && count != 3) return 0;
+    for (size_t i = 0; i < count; i++)
+    {
+        zval *part = zend_hash_index_find(Z_ARRVAL_P(value), i);
+        if (!part) return 0;
+        ZVAL_DEREF(part);
+        if (Z_TYPE_P(part) == IS_NULL) continue;
+        if (Z_TYPE_P(part) != IS_LONG) return 0;
+        if (i == 0) { selector->start = Z_LVAL_P(part); selector->has_start = 1; }
+        else if (i == 1) { selector->stop = Z_LVAL_P(part); selector->has_stop = 1; }
+        else selector->step = Z_LVAL_P(part);
+    }
+    return 1;
+}
+
+static int ca_slice_bound(zend_long value, int size)
+{
+    if (value < 0) value += size;
+    if (value < 0) return 0;
+    if (value > size) return size;
+    return (int)value;
+}
+
+ZEND_METHOD(CudaArray, slice)
+{
+    zval *selectors;
+    int count;
+    ZEND_PARSE_PARAMETERS_START(0, -1)
+        Z_PARAM_VARIADIC('*', selectors, count)
+    ZEND_PARSE_PARAMETERS_END();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *source = object->tensor_handle;
+    if (!fusion_active() && !fusion_materialize(source)) RETURN_THROWS();
+    ca_slice_selector parsed[MAX_DIMS];
+    int parsed_count = 0;
+    zval *first = count ? &selectors[0] : NULL;
+    if (first) ZVAL_DEREF(first);
+    if (count == 1 && Z_TYPE_P(first) == IS_STRING)
+    {
+        const char *text = Z_STRVAL_P(first);
+        size_t length = Z_STRLEN_P(first), start = 0;
+        for (size_t i = 0; i <= length; i++)
+        {
+            if (i != length && text[i] != ',') continue;
+            if (parsed_count >= source->ndims ||
+                !ca_slice_text(text + start, i - start, &parsed[parsed_count]))
+            {
+                CUDA_THROW_INVALID("Invalid slice expression at axis %d", parsed_count);
+                RETURN_THROWS();
+            }
+            parsed_count++;
+            start = i + 1;
+        }
+    }
+    else
+    {
+        if (count > source->ndims)
+        {
+            CUDA_THROW_INVALID("Slice has %d selectors for %d axes", count, source->ndims);
+            RETURN_THROWS();
+        }
+        for (; parsed_count < count; parsed_count++)
+            if (!ca_slice_value(&selectors[parsed_count], &parsed[parsed_count]))
+            {
+                CUDA_THROW_INVALID("Invalid slice selector at axis %d", parsed_count);
+                RETURN_THROWS();
+            }
+    }
+    int shape[MAX_DIMS], axes[MAX_DIMS], starts[MAX_DIMS], steps[MAX_DIMS], ndims = 0;
+    size_t strides[MAX_DIMS], offset = 0, total = 1;
+    for (int d = 0; d < source->ndims; d++)
+    {
+        ca_slice_selector selector = { .step = 1 };
+        if (d < parsed_count) selector = parsed[d];
+        int size = source->shape[d];
+        if (selector.step <= 0 || selector.step > INT_MAX)
+        {
+            CUDA_THROW_INVALID("Slice step must be between 1 and INT_MAX; reverse slices are not supported");
+            RETURN_THROWS();
+        }
+        steps[d] = (int)selector.step;
+        if (selector.index)
+        {
+            zend_long index = selector.start;
+            if (index < 0) index += size;
+            if (index < 0 || index >= size)
+            {
+                CUDA_THROW_INVALID("Slice index out of bounds at axis %d (size %d)", d, size);
+                RETURN_THROWS();
+            }
+            starts[d] = (int)index;
+        }
+        else
+        {
+            starts[d] = selector.has_start ? ca_slice_bound(selector.start, size) : 0;
+            int stop = selector.has_stop ? ca_slice_bound(selector.stop, size) : size;
+            int length = stop > starts[d] ? 1 + (stop - starts[d] - 1) / steps[d] : 0;
+            if (source->strides[d] > SIZE_MAX / (size_t)steps[d])
+            {
+                CUDA_THROW_INVALID("Slice stride overflow at axis %d", d);
+                RETURN_THROWS();
+            }
+            axes[ndims] = d;
+            shape[ndims] = length;
+            strides[ndims++] = source->strides[d] * (size_t)steps[d];
+            total *= length;
+        }
+        if (starts[d] && source->strides[d] > (SIZE_MAX - offset) / (size_t)starts[d])
+        {
+            CUDA_THROW_INVALID("Slice offset overflow");
+            RETURN_THROWS();
+        }
+        offset += (size_t)starts[d] * source->strides[d];
+    }
+    tensor_t *view;
+    if (fusion_active())
+        view = fusion_slice(source, shape, strides, ndims, axes, starts, steps);
+    else
+    {
+        view = cuda_tensor_create_view(source, shape, strides, ndims, total ? offset : 0, total);
+        /* Storage pointers already include the slice displacement. */
+        if (view) view->offset = 0;
+    }
+    if (!view) RETURN_THROWS();
+    create_result_object(return_value, view);
 }
 
 ZEND_METHOD(CudaArray, __invoke)
@@ -1538,7 +1751,7 @@ static zval *cuda_array_read_dimension(zend_object *object, zval *offset, int ty
         float result_val;
         if (cuda_tensor_get_scalar_value(base_tensor, &result_val, slice_info_array[0].data.index) != SUCCESS)
         {
-            CUDA_THROW_RUNTIME("Failed to extract scalar value from GPU.");
+            if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to extract scalar value from GPU.");
             return &EG(uninitialized_zval);
         }
 
@@ -1558,7 +1771,7 @@ static zval *cuda_array_read_dimension(zend_object *object, zval *offset, int ty
 
     if (view_tensor == NULL)
     {
-        CUDA_THROW_RUNTIME("Failed to create tensor view during array access.");
+        if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to create tensor view during array access.");
         return &EG(uninitialized_zval);
     }
 
@@ -1600,10 +1813,11 @@ static void cuda_array_write_dimension(zend_object *object, zval *offset, zval *
 
         if (Z_TYPE_P(value) == IS_DOUBLE || Z_TYPE_P(value) == IS_LONG)
         {
-            float scalar_value = (Z_TYPE_P(value) == IS_DOUBLE) ? (float)Z_DVAL_P(value) : (float)Z_LVAL_P(value);
+            scalar_value_t scalar_value;
+            SCALAR_FROM_ZVAL(value, scalar_value);
             if (cuda_tensor_set_scalar(base_tensor, element_offset, scalar_value) != SUCCESS)
             {
-                CUDA_THROW_RUNTIME("Failed to write scalar value to GPU memory.");
+                if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to write scalar value to GPU memory.");
             }
         }
         else if (Z_TYPE_P(value) == IS_OBJECT && instanceof_function(Z_OBJCE_P(value), cuda_array_ce))
@@ -1629,7 +1843,7 @@ static void cuda_array_write_dimension(zend_object *object, zval *offset, zval *
 
             if (cuda_tensor_set_tensor(base_tensor, element_offset, src_tensor) != SUCCESS)
             {
-                CUDA_THROW_RUNTIME("Failed GPU memory copy during tensor assignment");
+                if (!EG(exception)) CUDA_THROW_RUNTIME("Failed GPU memory copy during tensor assignment");
             }
         }
         else

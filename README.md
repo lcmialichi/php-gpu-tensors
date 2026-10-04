@@ -13,7 +13,7 @@ No Python runtime required.
 
 **Status:** beta, targeting PHP 8.1 through 8.5 on Linux, with NTS and experimental
 ZTS support. The core API has a frozen `0.1.0` baseline; Fusion is experimental
-and explicitly opt-in. The current Fusion implementation passed 40 GPU tests
+and explicitly opt-in. The current implementation passed 41 GPU tests
 on PHP 8.3 NTS with an NVIDIA GeForce MX570 A, including gradient/lifetime
 regressions, plus an Optdigits training check. Earlier tensor/JIT validation covered
 PHP 8.5 NTS/ZTS and PHP 8.1 ZTS on an RTX A2000; it does not validate the latest
@@ -97,6 +97,53 @@ tensor methods. `mean()` reduces all values when called without an axis, or
 reduces one dimension when given an axis. It returns `float32` for `float32`
 input and `float64` for `float64`, integer, and boolean input.
 
+## Python-style slicing
+
+`CudaArray::slice()` accepts a comma-separated expression, or one selector per
+axis. Ranges have an exclusive stop, omitted bounds default to the axis limits,
+and negative indices/bounds count from the end. Range bounds are clipped to the
+axis size; individual indices outside the axis throw `InvalidArgumentException`.
+
+```php
+$batch = $tensor->slice('10:20, :');
+$columns = $tensor->slice(':, 2:8:2');
+$lastRows = $tensor->slice('-10:');
+$row = $tensor->slice(3);       // Removes the first axis.
+$oneRow = $tensor->slice('3:4'); // Keeps that axis with size 1.
+
+// Dynamic equivalents: [start, stop] or [start, stop, step].
+$batch = $tensor->slice([$start, $stop], null);
+$columns = $tensor->slice(null, [2, 8, 2]);
+```
+
+Integers remove axes; `null`, `':'`, omitted axes and `slice()` with no arguments
+select the full extent. A fully indexed tensor has shape `[]` and size 1;
+`toArray()` and `toHost()->toArray()` represent it as a one-element array.
+Steps must be positive integers no larger than `INT_MAX`. Zero/negative steps,
+ellipsis, new axes, index lists and executable expressions are not supported.
+Expressions are parsed as integers/ranges, never evaluated as PHP.
+
+Outside Fusion, slices are zero-copy views with shared storage: writes through a
+view affect its parent, and the parent remains alive while the view is retained.
+Host transfers pack strided views into contiguous host storage. Row assignments
+involving strided tensors stage the source on the host before writing, preserving
+overlapping-source correctness; this is not a GPU-only bulk scatter operation.
+Fusion captures
+slice index transformations without materializing during capture; returned
+compiled/scoped outputs use the existing independent-output storage contract.
+
+Empty ranges are supported, preserving the remaining shape: `[0, 4]` converts to
+`[]`, whereas `[3, 0]` converts to `[[], [], []]`. Elementwise operations, casts,
+transfers, reshape/transpose and matmul handle zero elements. Sum/product over an
+empty axis return 0/1; mean returns NaN. Min/max and arg reductions throw when an
+empty reduced axis would produce values, because no identity/index exists.
+An empty non-reduced output remains empty. Packed-buffer imports accept zero
+dimensions; materialized empty results support serialization.
+
+The legacy `__invoke()` and `[]` selection syntax remain unchanged, including
+their inclusive ranges. Do not interpret their bounds as the new exclusive
+`slice()` bounds.
+
 ## Optional kernel fusion
 
 Eager execution remains the default. `Fusion::run()` captures tensor operations
@@ -135,7 +182,7 @@ into elementwise kernels, with broadcasting, strided/view inputs, scalar
 operands and dtype promotion. Each node converts to its own result dtype,
 preserving intermediate rounding/narrowing. Generated kernels use the eager
 backend's fast-math settings but disable cross-node FMA contraction. `where()`,
-safe explicit `astype()` conversions and reshape/transpose index transformations
+safe explicit `astype()` conversions and reshape/transpose/slice index transformations
 also fuse. Safe casts work in eager execution too, using the same generated
 conversion kernel; unsafe narrowing retains the existing rejection policy.
 

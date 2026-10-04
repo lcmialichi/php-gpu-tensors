@@ -102,9 +102,9 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
         return 1;
     }
     int axis = node->parameter;
-    if (axis == -1 && (a->total_size == 0 || a->total_size > INT_MAX))
+    if (axis == -1 && a->total_size > INT_MAX)
     {
-        CUDA_THROW_INVALID("Global fusion reduction requires between 1 and INT_MAX elements");
+        CUDA_THROW_INVALID("Global fusion reduction exceeds INT_MAX elements");
         return 0;
     }
     if (axis == -1 && !is_contiguous(a))
@@ -139,8 +139,17 @@ static int fusion_alias_view(fusion_plan *plan, fusion_step *step, tensor_t **va
     fusion_node *node = tensor->fusion;
     tensor_t *source = values[plan->items[step->root].a];
     size_t strides[MAX_DIMS];
+    size_t offset = 0;
     if (node->op == OP_TRANSPOSE)
         for (int d = 0; d < tensor->ndims; d++) strides[d] = source->strides[node->axes[d]];
+    else if (node->op == OP_SLICE)
+    {
+        for (int d = 0; d < source->ndims; d++)
+            offset += (size_t)node->slice_starts[d] * source->strides[d];
+        for (int d = 0; d < tensor->ndims; d++)
+            strides[d] = source->strides[node->axes[d]] * (size_t)node->slice_steps[node->axes[d]];
+        if (!tensor->total_size) offset = 0;
+    }
     else
     {
         if (!is_contiguous(source))
@@ -155,7 +164,8 @@ static int fusion_alias_view(fusion_plan *plan, fusion_step *step, tensor_t **va
             stride *= tensor->shape[d];
         }
     }
-    values[step->root] = cuda_tensor_create_view(source, tensor->shape, strides, tensor->ndims, 0, tensor->total_size);
+    values[step->root] = cuda_tensor_create_view(source, tensor->shape, strides, tensor->ndims, offset, tensor->total_size);
+    if (values[step->root]) values[step->root]->offset = 0;
     return values[step->root] != NULL;
 }
 

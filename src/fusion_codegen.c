@@ -104,7 +104,7 @@ static void fusion_project(smart_str *source, tensor_t *parent, tensor_t *child,
         int axis = d - (parent->ndims - child->ndims);
         if (axis >= 0)
         {
-            if (child->shape[axis] != 1 && parent->shape[d] != 0)
+            if (child->shape[axis] != 1 && parent->shape[d] != 0 && divisor)
                 smart_str_append_printf(source, "%s+=((i/%zuULL)%%%dULL)*%zuULL;\n",
                                         name, divisor, parent->shape[d], stride);
             stride *= child->shape[axis];
@@ -173,7 +173,7 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
         {
             size_t stride = tensor->fusion && tensor->fusion->kind != FUSION_INPUT
                 ? divisor : tensor->strides[d];
-            if (tensor->shape[d])
+            if (tensor->shape[d] && divisor)
                 smart_str_append_printf(source, "offset+=((i/%zuULL)%%%dULL)*%zuULL;\n",
                                         divisor, tensor->shape[d], stride);
             divisor *= tensor->shape[d];
@@ -186,6 +186,18 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
     {
         if (node->op == OP_RESHAPE)
             smart_str_appends(source, "size_t ia=i;\n");
+        else if (node->op == OP_SLICE)
+        {
+            smart_str_append_printf(source, "size_t ia=%zuULL;\n", node->slice_offset);
+            size_t divisor = 1;
+            for (int d = tensor->ndims - 1; d >= 0; d--)
+            {
+                if (tensor->shape[d] && divisor)
+                    smart_str_append_printf(source, "ia+=((i/%zuULL)%%%dULL)*%zuULL;\n",
+                                            divisor, tensor->shape[d], node->slice_strides[d]);
+                divisor *= tensor->shape[d];
+            }
+        }
         else
         {
             smart_str_appends(source, "size_t ia=0;\n");
@@ -194,7 +206,7 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
             {
                 size_t stride = 1;
                 for (int j = node->axes[d] + 1; j < node->a->ndims; j++) stride *= node->a->shape[j];
-                if (tensor->shape[d])
+                if (tensor->shape[d] && divisor)
                     smart_str_append_printf(source, "ia+=((i/%zuULL)%%%dULL)*%zuULL;\n",
                                             divisor, tensor->shape[d], stride);
                 divisor *= tensor->shape[d];
@@ -248,14 +260,20 @@ int fusion_generate_source(fusion_plan *plan)
             fusion_gather(plan, step, step->roots[j], seen);
         step->arguments = emalloc((step->leaf_count + step->root_count) * sizeof(void *));
         memset(seen, 0, plan->count);
-        for (size_t j = 0; j < step->root_count; j++)
-            fusion_emit_node(plan, step, step->roots[j], &source, seen);
-        efree(seen);
         tensor_t *root = plan->items[step->root].tensor;
+        if (root->total_size)
+            for (size_t j = 0; j < step->root_count; j++)
+                fusion_emit_node(plan, step, step->roots[j], &source, seen);
+        efree(seen);
         smart_str_append_printf(&source, "extern \"C\" __global__ void %s(", step->name);
         fusion_params(&source, step, 1);
         for (size_t j = 0; j < step->root_count; j++)
             smart_str_append_printf(&source, "%svoid* out%zu", j ? "," : "", j);
+        if (!root->total_size)
+        {
+            smart_str_appends(&source, "){}\n");
+            continue;
+        }
         smart_str_append_printf(&source,
             "){for(size_t i=(size_t)blockIdx.x*blockDim.x+threadIdx.x;"
             "i<%zuULL;i+=(size_t)blockDim.x*gridDim.x){", root->total_size);
