@@ -7,6 +7,7 @@
 #include "module_arginfo.h"
 #include "kernel_types.h"
 #include "tensor.h"
+#include "fusion.h"
 #include <nvrtc.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -1313,6 +1314,7 @@ static zend_bool module_prepare_cuda_arguments(cuda_kernel_data *kernel, HashTab
             }
 
             tensor_t *tensor = array_obj->tensor_handle;
+            if (!fusion_check_mutation() || !fusion_materialize(tensor)) return 0;
             if (tensor->dtype != param->second_dtype)
             {
                 const char *expected = module_dtype_to_string(param->second_dtype);
@@ -1592,6 +1594,7 @@ ZEND_METHOD(CompiledModule, autoGrid)
 
 ZEND_METHOD(CompiledModule, launch)
 {
+    if (!fusion_check_mutation()) RETURN_THROWS();
     zend_string *kernel_name;
     zval *config_zv = NULL;
     zval *args_zv = NULL;
@@ -1665,6 +1668,7 @@ ZEND_METHOD(CompiledModule, launch)
 
 ZEND_METHOD(CompiledModule, launchAsync)
 {
+    if (!fusion_check_mutation()) RETURN_THROWS();
     zend_string *kernel_name;
     zval *config_zv = NULL;
     zval *args_zv = NULL;
@@ -1789,6 +1793,7 @@ ZEND_METHOD(CompiledModule, launchAsync)
 
 ZEND_METHOD(CompiledModule, launchAsyncBatch)
 {
+    if (!fusion_check_mutation()) RETURN_THROWS();
     zval *operations;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)

@@ -35,7 +35,7 @@ __global__ void unary_kernel_strided(
         offset += coord * d_unary_params.strides[d];
     }
 
-    result[base_offset + offset] = Op::apply(base[base_offset + offset]);
+    result[idx] = Op::apply(base[base_offset + offset]);
 }
 
 template <typename T, typename Op>

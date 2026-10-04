@@ -192,6 +192,12 @@
         __VA_ARGS__;                         \
         break;                               \
     }                                        \
+    case OP_NEG:                             \
+    {                                        \
+        typedef NegOpT<scalar_t> bin_op_t;   \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
     case OP_FLOOR:                           \
     {                                        \
         typedef FloorOpT<scalar_t> bin_op_t; \

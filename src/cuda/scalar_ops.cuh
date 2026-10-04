@@ -33,7 +33,7 @@ __global__ void scalar_kernel_strided(
     }
 
     const T base_val = fetch_and_cast<T>(base, base_dtype, offset);
-    result[base_offset + offset] = Op::apply(base_val, scalar);
+    result[idx] = Op::apply(base_val, scalar);
 }
 
 template <typename T, typename Op>
@@ -63,7 +63,7 @@ __global__ void inv_scalar_kernel_strided(
     }
 
     const T base_val = fetch_and_cast<T>(base, base_dtype, offset);
-    result[base_offset + offset] = Op::apply(scalar, base_val);
+    result[idx] = Op::apply(scalar, base_val);
 }
 
 template <typename T, typename Op>

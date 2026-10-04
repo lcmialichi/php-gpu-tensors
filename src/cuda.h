@@ -17,6 +17,7 @@ extern zend_module_entry cuda_module_entry;
 
 ZEND_BEGIN_MODULE_GLOBALS(cuda)
 char *memory_size;
+struct fusion_scope *fusion_scope;
 ZEND_END_MODULE_GLOBALS(cuda)
 
 ZEND_EXTERN_MODULE_GLOBALS(cuda);

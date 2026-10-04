@@ -18,8 +18,16 @@ __device__ __forceinline__ T fetch_and_cast(const void *data, const dtype_t type
         return static_cast<T>(static_cast<const int64_t *>(data)[idx]);
     case DTYPE_INT8:
         return static_cast<T>(static_cast<const int8_t *>(data)[idx]);
+    case DTYPE_INT16:
+        return static_cast<T>(static_cast<const int16_t *>(data)[idx]);
     case DTYPE_UINT8:
         return static_cast<T>(static_cast<const uint8_t *>(data)[idx]);
+    case DTYPE_UINT16:
+        return static_cast<T>(static_cast<const uint16_t *>(data)[idx]);
+    case DTYPE_UINT32:
+        return static_cast<T>(static_cast<const uint32_t *>(data)[idx]);
+    case DTYPE_UINT64:
+        return static_cast<T>(static_cast<const uint64_t *>(data)[idx]);
     case DTYPE_BOOL:
         return static_cast<T>(static_cast<const bool *>(data)[idx]);
     default:

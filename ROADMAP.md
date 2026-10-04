@@ -69,7 +69,8 @@ Focus: **expanding capabilities**
 
 ### Performance
 - [ ] Benchmark and improve existing pinned host transfers and stream usage
-- [ ] Automatic kernel fusion for chained expressions
+- [x] Opt-in elementwise kernel fusion with scoped capture and compiled replay
+- [ ] CUDA Graph backend for replaying multi-kernel fusion plans
 - [ ] Public, comparable benchmark suite
 
 ## Long Term (1+ year)

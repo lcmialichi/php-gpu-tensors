@@ -12,6 +12,7 @@ extern zend_class_entry *cuda_compiler_ce;
 #endif
 
 int compiler_init(void);
+int cuda_compile_generated_source(zend_string *source, const char **names, size_t count, zval *module);
 
 ZEND_METHOD(Compiler, __construct);
 ZEND_METHOD(Compiler, kernel);

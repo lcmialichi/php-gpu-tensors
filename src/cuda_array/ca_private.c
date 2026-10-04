@@ -11,10 +11,13 @@
 #include "php.h"
 #include "tensor.h"
 #include "cuda_exceptions.h"
+#include "fusion.h"
 
 tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_type)
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
+    if (fusion_active()) return fusion_binary(a, b, operation_type);
+    if (!fusion_materialize(a) || !fusion_materialize(b)) return NULL;
 
     int result_shape[MAX_DIMS];
     int result_dims;
@@ -79,6 +82,13 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
 tensor_t *cuda_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t operation_type)
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
+    if (fusion_active()) return fusion_scalar(a, scalar, operation_type, 0);
+    if (!fusion_materialize(a)) return NULL;
+    if (!is_contiguous(a) && !lazy_copy_metadata_to_gpu(a))
+    {
+        CUDA_THROW_RUNTIME("Failed to prepare scalar operation metadata");
+        return NULL;
+    }
     dtype_t promoted_type = promote_scalar_for_arithmetic(a->dtype, scalar.dtype, operation_type, scalar.is_neg);
 
     tensor_t *result = cuda_tensor_create_empty_dtype(a->shape, a->ndims, promoted_type);
@@ -116,6 +126,13 @@ tensor_t *cuda_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t op
 tensor_t *cuda_inv_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t operation_type)
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
+    if (fusion_active()) return fusion_scalar(a, scalar, operation_type, 1);
+    if (!fusion_materialize(a)) return NULL;
+    if (!is_contiguous(a) && !lazy_copy_metadata_to_gpu(a))
+    {
+        CUDA_THROW_RUNTIME("Failed to prepare inverse scalar operation metadata");
+        return NULL;
+    }
 
     dtype_t promoted_type = promote_scalar_for_arithmetic(a->dtype, scalar.dtype, operation_type, scalar.is_neg);
 
@@ -155,6 +172,13 @@ tensor_t *cuda_inv_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_
 tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
+    if (fusion_active()) return fusion_unary(a, operation_type);
+    if (!fusion_materialize(a)) return NULL;
+    if (!lazy_copy_metadata_to_gpu(a))
+    {
+        CUDA_THROW_RUNTIME("Failed to prepare unary operation metadata");
+        return NULL;
+    }
 
     tensor_t *result = resolve_result_tensor(a);
     if (!result)
@@ -163,7 +187,7 @@ tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
         return NULL;
     }
 
-    launch_unary_op(a->data, result->data, a->offset, a->dtype, operation_type, a->d_shape, a->d_strides, a->ndims, a->total_size);
+    launch_unary_op(a->data, result->data, 0, a->dtype, operation_type, a->d_shape, a->d_strides, a->ndims, a->total_size);
     cudaError_t status = cudaDeviceSynchronize();
     if (status != cudaSuccess)
     {
@@ -177,6 +201,8 @@ tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
 
 tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t operation_type)
 {
+    if (fusion_active()) return fusion_reduce(input, axis, operation_type, 1);
+    if (!fusion_materialize(input)) return NULL;
     int result_shape_arr[MAX_DIMS];
     size_t total_elements_out;
 
@@ -219,6 +245,8 @@ tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t ope
 
 tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operation_type)
 {
+    if (fusion_active()) return fusion_reduce(input, axis, operation_type, 0);
+    if (!fusion_materialize(input)) return NULL;
     int result_shape_arr[MAX_DIMS];
     size_t total_elements_out;
 
@@ -257,6 +285,7 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
     {
         return NULL;
     }
+    if (!fusion_active() && !fusion_materialize(original)) return NULL;
 
     size_t original_size = 1;
     for (int i = 0; i < original->ndims; i++)
@@ -322,6 +351,9 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
         new_strides[i] = new_strides[i + 1] * final_shape[i + 1];
     }
 
+    if (fusion_active())
+        return fusion_view(original, OP_RESHAPE, final_shape, new_strides, new_ndims, NULL);
+
     tensor_t *reshaped = cuda_tensor_create_view(
         original,
         final_shape,
@@ -339,6 +371,7 @@ tensor_t *cuda_tensor_transpose(tensor_t *tensor, int *axis, int axis_len)
     {
         return NULL;
     }
+    if (!fusion_active() && !fusion_materialize(tensor)) return NULL;
 
     if (axis_len != tensor->ndims)
     {
@@ -362,6 +395,9 @@ tensor_t *cuda_tensor_transpose(tensor_t *tensor, int *axis, int axis_len)
         new_shape[i] = tensor->shape[axis[i]];
         new_strides[i] = tensor->strides[axis[i]];
     }
+
+    if (fusion_active())
+        return fusion_view(tensor, OP_TRANSPOSE, new_shape, new_strides, ndims, axis);
 
     tensor_t *transposed = cuda_tensor_create_view(
         tensor,
@@ -415,6 +451,8 @@ tensor_t *cuda_tensor_matmul_nd(tensor_t *a, tensor_t *b)
 tensor_t *cuda_tensor_matmul(tensor_t *a, tensor_t *b)
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
+    if (fusion_active()) return fusion_matmul(a, b);
+    if (!fusion_materialize(a) || !fusion_materialize(b)) return NULL;
     if (a->ndims < 2 || b->ndims < 2)
     {
         return NULL;

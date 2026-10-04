@@ -13,6 +13,28 @@ class OutOfMemoryException extends RuntimeException {}
 /** NVRTC compilation failed. */
 class CompilationException extends RuntimeException {}
 
+/** Optional scoped elementwise fusion; eager operators remain the default. */
+final class Fusion
+{
+    private function __construct() {}
+    /** Execute once and return materialized tensor outputs; false uses eager execution. */
+    public static function run(callable $callback, bool $enabled = true): mixed {}
+    /** Trace with metadata-only inputs and compile all fused segments together. */
+    public static function compile(callable $callback, array $inputs): FusionGraph {}
+}
+
+/** Reusable synchronous plan specialized for input shapes, dtypes and strides. */
+final class FusionGraph
+{
+    private function __construct() {}
+    /** Execute with new tensor values without invoking the capture callback again. */
+    public function run(CudaArray ...$inputs): mixed {}
+    /** Planned kernels, execution boundaries, buffers and replay count. */
+    public function getStats(): array {}
+    /** Generated CUDA source for all fused segments. */
+    public function getSource(): string {}
+}
+
 /** Compile CUDA C++ source into PTX with NVRTC. */
 class Compiler
 {

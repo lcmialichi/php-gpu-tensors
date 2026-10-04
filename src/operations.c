@@ -154,21 +154,15 @@ static void calculate_tensor_strides(tensor_t *tensor,
                                      int result_dims,
                                      int *tensor_strides)
 {
-    long internal_stride = 1;
     for (int i = tensor->ndims - 1; i >= 0; i--)
     {
-        if (tensor->is_view)
-        {
-            tensor_strides[i] = (int)tensor->strides[i];
-        }
-        else if (tensor->shape[i] == 1)
+        if (tensor->shape[i] == 1)
         {
             tensor_strides[i] = 0;
         }
         else
         {
-            tensor_strides[i] = (int)internal_stride;
-            internal_stride *= tensor->shape[i];
+            tensor_strides[i] = (int)tensor->strides[i];
         }
     }
 }

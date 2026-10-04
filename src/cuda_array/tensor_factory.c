@@ -334,7 +334,7 @@ tensor_t *cuda_tensor_create(const int shape[], int ndims, const void *data, dty
 
 static tensor_t *cuda_tensor_create_on_host_impl(const int shape[], int ndims, void *data, dtype_t dtype, int pinned)
 {
-    tensor_t *tensor = (tensor_t *)emalloc(sizeof(tensor_t));
+    tensor_t *tensor = (tensor_t *)ecalloc(1, sizeof(tensor_t));
     if (!tensor)
         return NULL;
 

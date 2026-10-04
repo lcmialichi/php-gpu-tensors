@@ -106,6 +106,70 @@ tensor methods. `mean()` reduces all values when called without an axis, or
 reduces one dimension when given an axis. It returns `float32` for `float32`
 input and `float64` for `float64`, integer, and boolean input.
 
+## Optional kernel fusion
+
+Eager execution remains the default. `Fusion::run()` captures tensor operations
+inside a callback and returns materialized `CudaArray` outputs:
+
+```php
+use Cuda\Fusion;
+
+$result = Fusion::run(fn() => $tensorA + $tensorB * $tensorC);
+$eager = Fusion::run(fn() => $tensorA + $tensorB * $tensorC, enabled: false);
+```
+
+For repeated execution, compile a specialized plan once:
+
+```php
+$graph = Fusion::compile(
+    fn($a, $b, $c) => $a + $b * $c,
+    inputs: [$tensorA, $tensorB, $tensorC]
+);
+$result = $graph->run($tensorA, $tensorB, $tensorC);
+$other = $graph->run($otherA, $otherB, $otherC);
+print_r($graph->getStats());
+echo $graph->getSource();
+```
+
+Compilation invokes the callback once with metadata-only placeholders.
+Replay does not invoke PHP callback code again. Inputs must match the example
+shapes, dtypes and strides, and execution must use the compilation device and
+CUDA context. Input values and pointers can change between executions; keep
+the device/context alive until the graph is released. Tensors captured by a
+closure are retained by the graph; use callback parameters for replaceable inputs.
+
+Addition, subtraction, multiplication, division and comparison methods fuse
+into elementwise kernels, with broadcasting, strided/view inputs, scalar
+operands and dtype promotion. Each node converts to its own result dtype,
+preserving intermediate rounding/narrowing. Generated kernels use the eager
+backend's fast-math settings but disable cross-node FMA contraction. Explicit `astype()` retains its existing restriction to
+the same dtype; fusion does not enable unsupported eager casts.
+
+Reductions, `matmul()` (currently float32), unary operations and powers are
+execution boundaries using existing kernels. Reshape/flatten and transpose
+are view boundaries. All generated elementwise kernels in a plan are compiled
+together through the existing `Compiler` NVRTC infrastructure, then executed in
+dependency order around these boundaries. Large expressions split at a
+32-operation kernel budget. Capture is limited to 512 nodes. This is an
+expression graph, not CUDA Graph capture/replay.
+
+Callbacks can return tensors or nested arrays of tensors, preserving array keys.
+Multiple outputs can use separate kernels; fusion does not promise one kernel
+for an entire callback. `getStats()` exposes planned fused kernels, boundary
+steps, intermediate buffer count and successful replay count. For
+`$a + $b * $c`, the plan has one fused kernel and no intermediate data buffers.
+
+During `run()`, CPU reads, slicing, serialization and operations not captured
+by the planner materialize their required inputs and continue eager execution;
+later elementwise operations can form a new segment. During `compile()`, reads
+of placeholder data are rejected rather than specializing on example values.
+Shape, stride and dtype queries do not execute kernels. Nested capture, Fiber
+switching, tensor mutation (including compound assignments), custom kernel
+launches and device changes/reset are prohibited during capture. Exceptions
+restore eager execution; escaped tensors from an aborted capture cannot be read.
+`run()` is synchronous and compiles each captured plan; prefer `compile()` and
+replay to amortize JIT compilation.
+
 ## PHP GPU Computing for Machine Learning
 
 Use this PHP CUDA extension to build GPU-accelerated numerical steps into PHP
@@ -197,7 +261,7 @@ The annotated signatures are in [class stubs](stubs/cuda.stub.php) and
 [device function stubs](stubs/cuda_methods.stub.php); runnable examples live
 in [examples](examples/README.md). `astype()` currently supports only the
 same dtype. GPU data has no CPU fallback. The project does not yet provide a
-stable API or automatic kernel fusion.
+stable API. Kernel fusion is experimental and explicitly opt-in.
 
 ## Contribute
 

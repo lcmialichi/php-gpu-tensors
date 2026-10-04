@@ -14,12 +14,14 @@
 #include "concat_kernels.h"
 #include "tensor_import.h"
 #include "tensor_where.h"
+#include "fusion.h"
 
 zend_class_entry *cuda_array_ce;
 static zend_object_handlers cuda_array_handlers;
 
 static cuda_array_obj *php_cuda_array_fetch_object(zend_object *obj);
 static cuda_array_obj *php_cuda_array_fetch_valid_object(zend_object *obj);
+static cuda_array_obj *php_cuda_array_fetch_deferred_object(zend_object *obj);
 static zend_object *cuda_array_create_object(zend_class_entry *class_type);
 static void cuda_array_free_object(zend_object *object);
 static void create_result_object(zval *return_value, tensor_t *result_tensor);
@@ -56,6 +58,8 @@ static dtype_t parse_dtype_param(zend_string *dtype_str)
 
 ZEND_METHOD(CudaArray, __construct)
 {
+    if (fusion_active() && Z_CUDA_ARRAY_P(ZEND_THIS)->tensor_handle && !fusion_check_mutation())
+        RETURN_THROWS();
     zval *data;
     zend_string *dtype_str = NULL;
 
@@ -246,6 +250,7 @@ ZEND_METHOD(CudaArray, __serialize)
 
 ZEND_METHOD(CudaArray, __unserialize)
 {
+    if (!fusion_check_mutation()) RETURN_THROWS();
     HashTable *data;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
@@ -409,7 +414,7 @@ ZEND_METHOD(CudaArray, rand)
 
 ZEND_METHOD(CudaArray, transpose)
 {
-    cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!this_obj) RETURN_THROWS();
     tensor_t *tensor = this_obj->tensor_handle;
 
@@ -501,7 +506,7 @@ ZEND_METHOD(CudaArray, transpose)
 
 ZEND_METHOD(CudaArray, matmul)
 {
-    cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!this_obj) RETURN_THROWS();
     tensor_t *tensor_a = this_obj->tensor_handle;
 
@@ -511,7 +516,12 @@ ZEND_METHOD(CudaArray, matmul)
     Z_PARAM_OBJECT(other_array)
     ZEND_PARSE_PARAMETERS_END();
 
-    cuda_array_obj *other_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(other_array));
+    if (!instanceof_function(Z_OBJCE_P(other_array), cuda_array_ce))
+    {
+        CUDA_THROW_INVALID("Matrix multiplication operand must be a CudaArray");
+        RETURN_THROWS();
+    }
+    cuda_array_obj *other_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(other_array));
     if (!other_obj)
     {
         RETURN_THROWS();
@@ -681,7 +691,8 @@ ZEND_METHOD(CudaArray, astype)
     Z_PARAM_STR(dtype_str)
     ZEND_PARSE_PARAMETERS_END();
 
-    cuda_array_obj *obj = php_cuda_array_fetch_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
     if (!obj->tensor_handle)
     {
         CUDA_THROW_INVALID("Invalid tensor");
@@ -706,7 +717,8 @@ ZEND_METHOD(CudaArray, astype)
 
 ZEND_METHOD(CudaArray, dtype)
 {
-    cuda_array_obj *obj = php_cuda_array_fetch_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
     if (!obj->tensor_handle)
     {
         CUDA_THROW_INVALID("Invalid tensor");
@@ -730,7 +742,7 @@ ZEND_METHOD(CudaArray, reshape)
     Z_PARAM_ARRAY(new_shape_array)
     ZEND_PARSE_PARAMETERS_END();
 
-    cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!this_obj) RETURN_THROWS();
     int new_shape[10] = {0};
     int new_ndims = 0;
@@ -799,7 +811,7 @@ ZEND_METHOD(CudaArray, reshape)
 
 ZEND_METHOD(CudaArray, flatten)
 {
-    cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!this_obj) RETURN_THROWS();
     size_t total_size = 1;
     for (int i = 0; i < this_obj->tensor_handle->ndims; i++)
@@ -822,7 +834,7 @@ ZEND_METHOD(CudaArray, flatten)
 
 ZEND_METHOD(CudaArray, getShape)
 {
-    cuda_array_obj *obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!obj) RETURN_THROWS();
     array_init_size(return_value, zend_array_count(obj->shape));
 
@@ -838,7 +850,7 @@ ZEND_METHOD(CudaArray, getShape)
 
 ZEND_METHOD(CudaArray, getStrides)
 {
-    cuda_array_obj *obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!obj) RETURN_THROWS();
     tensor_t *t = obj->tensor_handle;
     if (!t->strides)
@@ -856,7 +868,7 @@ ZEND_METHOD(CudaArray, getStrides)
 
 ZEND_METHOD(CudaArray, getNdims)
 {
-    cuda_array_obj *obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!obj) RETURN_THROWS();
     tensor_t *t = obj->tensor_handle;
     if (!t->ndims)
@@ -869,7 +881,7 @@ ZEND_METHOD(CudaArray, getNdims)
 
 ZEND_METHOD(CudaArray, getSize)
 {
-    cuda_array_obj *obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!obj) RETURN_THROWS();
     tensor_t *t = obj->tensor_handle;
     if (!t->total_size)
@@ -1003,7 +1015,7 @@ ZEND_METHOD(CudaArray, __invoke)
 
 ZEND_METHOD(CudaArray, __debugInfo)
 {
-    cuda_array_obj *obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!obj) RETURN_THROWS();
     tensor_t *tensor = obj->tensor_handle;
     array_init(return_value);
@@ -1125,11 +1137,23 @@ static cuda_array_obj *php_cuda_array_fetch_object(zend_object *obj)
 
 static cuda_array_obj *php_cuda_array_fetch_valid_object(zend_object *obj)
 {
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(obj);
+    if (object && !fusion_materialize(object->tensor_handle)) return NULL;
+    return object;
+}
+
+static cuda_array_obj *php_cuda_array_fetch_deferred_object(zend_object *obj)
+{
     cuda_array_obj *this_obj = (cuda_array_obj *)((char *)obj - XtOffsetOf(cuda_array_obj, obj));
 
     if (!this_obj || this_obj->tensor_handle == NULL)
     {
         CUDA_THROW_RUNTIME("Attempting to access uninitialized tensor");
+        return NULL;
+    }
+    if (this_obj->tensor_handle->fusion_failed)
+    {
+        CUDA_THROW_RUNTIME("Tensor belongs to an aborted Fusion capture");
         return NULL;
     }
 
@@ -1229,7 +1253,7 @@ static void unary_operation_handler(INTERNAL_FUNCTION_PARAMETERS,
                                     const char *operation_name,
                                     operation_type_t operation_type)
 {
-    cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!this_obj) RETURN_THROWS();
 
     if (this_obj->tensor_handle == NULL)
@@ -1258,7 +1282,7 @@ static void reduction_operation_handler(INTERNAL_FUNCTION_PARAMETERS, const char
     Z_PARAM_LONG(axis_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!this_obj) RETURN_THROWS();
 
     if (this_obj->tensor_handle == NULL)
@@ -1269,6 +1293,14 @@ static void reduction_operation_handler(INTERNAL_FUNCTION_PARAMETERS, const char
 
     tensor_t *input_tensor = this_obj->tensor_handle;
     int axis = (int)axis_zv;
+
+    if (fusion_active() && axis == REDUCE_GLOBAL_FLAG)
+    {
+        tensor_t *result_tensor = fusion_reduce(input_tensor, -1, operation_type, return_arg);
+        if (!result_tensor) RETURN_THROWS();
+        create_result_object(return_value, result_tensor);
+        return;
+    }
 
     if (axis == REDUCE_GLOBAL_FLAG)
     {
@@ -1319,13 +1351,13 @@ static void binary_operation_handler(INTERNAL_FUNCTION_PARAMETERS, const char *o
     Z_PARAM_ZVAL(other_zv)
     ZEND_PARSE_PARAMETERS_END();
 
-    cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!this_obj) RETURN_THROWS();
     tensor_t *result_tensor = NULL;
 
     if (Z_TYPE_P(other_zv) == IS_OBJECT && instanceof_function(Z_OBJCE_P(other_zv), cuda_array_ce))
     {
-        cuda_array_obj *other_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(other_zv));
+        cuda_array_obj *other_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(other_zv));
         if (!other_obj) RETURN_THROWS();
 
         if (other_obj->tensor_handle == NULL)
@@ -1360,6 +1392,13 @@ static void binary_operation_handler(INTERNAL_FUNCTION_PARAMETERS, const char *o
 
 static zend_result cuda_array_do_operation(zend_uchar opcode, zval *result, zval *op1, zval *op2)
 {
+    if (fusion_active() && (result == op1 || result == op2 ||
+        opcode == ZEND_PRE_INC || opcode == ZEND_POST_INC ||
+        opcode == ZEND_PRE_DEC || opcode == ZEND_POST_DEC))
+    {
+        fusion_check_mutation();
+        return FAILURE;
+    }
     zend_bool define_value = 0;
     float op_value = 0.0f;
     const char *operation_name = NULL;
@@ -1405,7 +1444,7 @@ static zend_result cuda_array_do_operation(zend_uchar opcode, zval *result, zval
 
     if (Z_TYPE_P(op1) == IS_OBJECT && instanceof_function(Z_OBJCE_P(op1), cuda_array_ce))
     {
-        cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(op1));
+        cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(op1));
         if (!this_obj || this_obj->tensor_handle == NULL)
         {
             return FAILURE;
@@ -1413,7 +1452,7 @@ static zend_result cuda_array_do_operation(zend_uchar opcode, zval *result, zval
 
         if (Z_TYPE_P(op2) == IS_OBJECT && instanceof_function(Z_OBJCE_P(op2), cuda_array_ce))
         {
-            cuda_array_obj *other_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(op2));
+            cuda_array_obj *other_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(op2));
             if (!other_obj) return FAILURE;
             result_tensor = cuda_tensor_op(this_obj->tensor_handle, other_obj->tensor_handle, operation_type);
         }
@@ -1432,7 +1471,7 @@ static zend_result cuda_array_do_operation(zend_uchar opcode, zval *result, zval
     }
     else if (Z_TYPE_P(op2) == IS_OBJECT && Z_OBJCE_P(op2) == cuda_array_ce)
     {
-        cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(op2));
+        cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(op2));
         if (!this_obj || this_obj->tensor_handle == NULL)
         {
             return FAILURE;
@@ -1525,6 +1564,7 @@ static zval *cuda_array_read_dimension(zend_object *object, zval *offset, int ty
 
 static void cuda_array_write_dimension(zend_object *object, zval *offset, zval *value)
 {
+    if (!fusion_check_mutation()) return;
     cuda_array_obj *this_obj = php_cuda_array_fetch_valid_object(object);
     if (!this_obj) return;
     if (offset == NULL)

@@ -16,6 +16,7 @@
 #include "contiguous_array_ce.h"
 #include "matmul_kernels.h"
 #include "cuda_exceptions.h"
+#include "fusion.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(cuda);
 
@@ -48,6 +49,7 @@ PHP_INI_END()
 static PHP_GINIT_FUNCTION(cuda)
 {
     cuda_globals->memory_size = "3G";
+    cuda_globals->fusion_scope = NULL;
 }
 
 PHP_MINIT_FUNCTION(cuda)
@@ -68,6 +70,7 @@ PHP_MINIT_FUNCTION(cuda)
     compiler_init();
     module_init();
     contiguous_array_init();
+    fusion_init();
 
     if (!cuda_array_init(pool_size))
     {
@@ -122,6 +125,7 @@ ZEND_FUNCTION(cuda_get_device_info)
 
 ZEND_FUNCTION(cuda_set_device)
 {
+    if (!fusion_check_mutation()) RETURN_THROWS();
     zend_long device_id;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
@@ -171,6 +175,7 @@ ZEND_FUNCTION(cuda_get_memory_info)
 
 ZEND_FUNCTION(cuda_device_reset)
 {
+    if (!fusion_check_mutation()) RETURN_THROWS();
     cuda_blas_shutdown();
     if (!cuda_wrapper_device_reset())
     {
@@ -294,6 +299,7 @@ PHP_MSHUTDOWN_FUNCTION(cuda)
 
 PHP_RSHUTDOWN_FUNCTION(cuda)
 {
+    fusion_request_shutdown();
     cuda_blas_shutdown();
     return SUCCESS;
 }

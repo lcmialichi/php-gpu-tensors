@@ -1566,6 +1566,103 @@
             "final": false,
             "methods": []
         },
+        "Cuda\\Fusion": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "compile": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "callback",
+                            "type": "callable",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "inputs",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "Cuda\\FusionGraph"
+                },
+                "run": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "callback",
+                            "type": "callable",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "enabled",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": true
+                        }
+                    ],
+                    "returnType": "mixed"
+                }
+            }
+        },
+        "Cuda\\FusionGraph": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "getSource": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "getStats": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "run": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "inputs",
+                            "type": "Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": true,
+                            "optional": true,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "mixed"
+                }
+            }
+        },
         "Cuda\\InvalidArgumentException": {
             "parent": "Cuda\\Exception",
             "abstract": false,

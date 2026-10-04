@@ -11,6 +11,7 @@
 #define MAX_CONCAT_TENSORS 10
 
 struct _operation_t;
+struct fusion_node;
 
 typedef enum
 {
@@ -55,6 +56,8 @@ typedef struct tensor
     int host_pinned;
     int is_dirty;
     int is_contiguous_cached;
+    struct fusion_node *fusion;
+    int fusion_failed;
 } tensor_t;
 
 #ifdef __cplusplus

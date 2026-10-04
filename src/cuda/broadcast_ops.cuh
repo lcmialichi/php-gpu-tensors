@@ -106,6 +106,12 @@ static inline BroadcastParams setup_params(int *a_strides, int a_dims, int *b_st
     BroadcastParams h_params;
     h_params.dims = result_dims;
     h_params.is_contiguous = (a_dims == result_dims && b_dims == result_dims);
+    size_t expected_stride = 1;
+    for (int i = result_dims - 1; i >= 0 && h_params.is_contiguous; --i) {
+        if ((size_t)a_strides[i] != expected_stride || (size_t)b_strides[i] != expected_stride)
+            h_params.is_contiguous = false;
+        expected_stride *= result_shape[i];
+    }
 
     for (int i = 0; i < result_dims; i++) {
         int a_off = i - (result_dims - a_dims);

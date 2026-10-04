@@ -200,11 +200,11 @@ static char *compute_program_hash(cuda_compiler_object *compiler)
     ZEND_HASH_FOREACH_END();
 
     char config[256];
-    snprintf(config, sizeof(config), "target:%s:opt:%d:debug:%d:fastmath:%d",
+    snprintf(config, sizeof(config), "target:%s:opt:%d:debug:%d:fastmath:%d:strict:%d",
              compiler->target_device ? compiler->target_device : "default",
              (int)compiler->optimization_level,
              compiler->debug_mode,
-             compiler->fast_math);
+             compiler->fast_math, compiler->strict_math);
     smart_string_appendl(&program_hash_content, config, strlen(config));
 
     smart_string_0(&program_hash_content);
@@ -306,10 +306,14 @@ static int build_nvrtc_options(cuda_compiler_object *compiler, nvrtc_options_t *
             !nvrtc_options_add(options, "--ftz=true") ||
             !nvrtc_options_add(options, "--prec-div=false") ||
             !nvrtc_options_add(options, "--prec-sqrt=false") ||
-            !nvrtc_options_add(options, "--fmad=true"))
+            !nvrtc_options_add(options, compiler->strict_math ? "--fmad=false" : "--fmad=true"))
         {
             return 0;
         }
+    }
+    if (compiler->strict_math && !compiler->fast_math && !nvrtc_options_add(options, "--fmad=false"))
+    {
+        return 0;
     }
 
     /** @todo ensure the nvrtc version to enable this flag */
@@ -1370,6 +1374,41 @@ static zend_object *compiler_create_object(zend_class_entry *class_type)
     compiler->target_auto_detected = 0;
 
     return &compiler->std;
+}
+
+int cuda_compile_generated_source(zend_string *source, const char **names, size_t count, zval *module)
+{
+    int device;
+    struct cudaDeviceProp properties;
+    cudaError_t error = cudaGetDevice(&device);
+    if (error == cudaSuccess)
+        error = cudaGetDeviceProperties(&properties, device);
+    if (error != cudaSuccess)
+    {
+        CUDA_THROW_RUNTIME("Cannot select fusion compilation target: %s", cudaGetErrorString(error));
+        return 0;
+    }
+
+    zval compiler_zv;
+    object_init_ex(&compiler_zv, cuda_compiler_ce);
+    cuda_compiler_object *compiler = Z_CUDA_COMPILER_P(&compiler_zv);
+    compiler->global_source = estrndup(ZSTR_VAL(source), ZSTR_LEN(source));
+    compiler->global_source_len = ZSTR_LEN(source);
+    compiler->fast_math = 1;
+    compiler->strict_math = 1;
+    char target[32];
+    snprintf(target, sizeof(target), "sm_%d%d", properties.major, properties.minor);
+    compiler->target_device = estrdup(target);
+    for (size_t i = 0; i < count; i++)
+    {
+        cuda_kernel_data *kernel = ecalloc(1, sizeof(cuda_kernel_data));
+        kernel->name = zend_string_init(names[i], strlen(names[i]), 0);
+        kernel->parameters = ecalloc(1, sizeof(func_parameter_list_t));
+        zend_hash_add_ptr(compiler->kernels, kernel->name, kernel);
+    }
+    zend_call_method_with_0_params(Z_OBJ(compiler_zv), cuda_compiler_ce, NULL, "compile", module);
+    zval_ptr_dtor(&compiler_zv);
+    return !EG(exception) && Z_TYPE_P(module) == IS_OBJECT;
 }
 
 int compiler_init()

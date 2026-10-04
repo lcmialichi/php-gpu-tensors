@@ -6,6 +6,7 @@
 #include "memory_pool.h"
 #include "operations.h"
 #include "cuda_exceptions.h"
+#include "fusion.h"
 
 static int cuda_is_initialized = 0;
 static tensor_t *handle_allocation_failure(tensor_t *tensor, const char *message, cudaError_t err_code);
@@ -674,6 +675,8 @@ void cuda_tensor_destroy(tensor_t *tensor)
     {
         return;
     }
+
+    fusion_release_node(tensor);
 
     if (tensor->is_view)
     {

@@ -121,6 +121,7 @@ if test "$PHP_CUDA" != "no"; then
     src/cuda_array/tensor_where.c \
     src/operations.c \
     src/compiler_ce.c \
+    src/fusion.c \
     src/module_ce.c"
 
     PHP_NEW_EXTENSION(cuda, $SRC_FILES, $ext_shared)
