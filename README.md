@@ -48,7 +48,9 @@ PHP_BIN=php8.3 PHP_CONFIG=php-config8.3 ./run-tests.sh --require-gpu
 
 The extension is published as
 [`lcmialichi/php-gpu-tensors`](https://packagist.org/packages/lcmialichi/php-gpu-tensors).
-Release `0.1.0-beta.3` includes PHP 8.4/8.5 and ZTS support. For the latest
+Release `0.1.0-beta.4` adds optional Fusion replay, reduced execution overhead
+and Python-style slicing. CI builds PHP 8.1-8.5 in both NTS and ZTS modes;
+GPU validation of these latest features is on PHP 8.3 NTS. For the latest
 Fusion APIs and training example described here, build the current repository
 source rather than assuming an older published release includes them.
 

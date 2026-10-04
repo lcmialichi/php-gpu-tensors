@@ -10,48 +10,34 @@ permissions:
 
 jobs:
   build-and-cpu-tests:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.1', '8.2', '8.3', '8.4', '8.5']
+        mode: [cli, zts]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build extension and run CPU tests without a GPU
+      - name: Build extension and run CPU tests on PHP ${{ matrix.php }} ${{ matrix.mode }}
         run: |
+          docker build -f .github/docker/php-compat.Dockerfile \
+            --build-arg PHP_VERSION=${{ matrix.php }} \
+            --build-arg PHP_MODE=${{ matrix.mode }} -t php-cuda-compat .
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \
-            nvidia/cuda:12.3.2-devel-ubuntu22.04 \
+            php-cuda-compat \
             bash -euo pipefail -c '
-              export DEBIAN_FRONTEND=noninteractive
-              export TZ=Etc/UTC
-              apt-get update
-              apt-get install -y --no-install-recommends \
-                php8.1-cli php8.1-dev build-essential autoconf pkg-config libtool
               php tests/check_pie_package.php
+              php -n -l stubs/cuda.stub.php
               bash ./compile.sh
               bash ./run-tests.sh --cpu-only
             '
 
-  build-and-cpu-tests-zts:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build and test with PHP 8.5 ZTS
-        run: |
-          docker build -f .github/docker/php85-zts.Dockerfile -t php-cuda-zts .
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/workspace" \
-            -w /workspace \
-            php-cuda-zts \
-            bash -euo pipefail -c '
-              php tests/check_pie_package.php
-              PHP_BIN=/usr/local/bin/php PHPIZE=/usr/local/bin/phpize PHP_CONFIG=/usr/local/bin/php-config bash ./compile.sh
-              PHP_BIN=/usr/local/bin/php PHP_CONFIG=/usr/local/bin/php-config bash ./run-tests.sh --cpu-only
-            '
-
   draft-release:
     if: github.event.deleted != true && startsWith(github.ref, 'refs/tags/v')
-    needs: [build-and-cpu-tests, build-and-cpu-tests-zts]
+    needs: [build-and-cpu-tests]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
@@ -73,8 +59,14 @@ jobs:
             exit 1
           fi
 
-      - name: Create draft release with generated notes
+      - name: Publish release with generated notes
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft --generate-notes
+        run: |
+          FLAGS=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            FLAGS+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --generate-notes "${FLAGS[@]}"

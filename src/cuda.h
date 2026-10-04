@@ -5,7 +5,7 @@
 #include "operations.h"
 #include <cuda_runtime.h>
 
-#define PHP_CUDA_VERSION "0.1.0-beta.3"
+#define PHP_CUDA_VERSION "0.1.0-beta.4"
 #define PHP_CUDA_EXTNAME "cuda"
 
 extern zend_module_entry cuda_module_entry;
