@@ -1,525 +1,331 @@
 <?php
+declare(strict_types=1);
 
-use Cuda\Compiler;
 use Cuda\CudaArray;
+use Cuda\Fusion;
 
-class CLI
+final class DatasetManager
 {
-    public static function green(string $text): string
-    {
-        return "\033[32m" . $text . "\033[0m";
-    }
-    public static function red(string $text): string
-    {
-        return "\033[31m" . $text . "\033[0m";
-    }
-    public static function yellow(string $text): string
-    {
-        return "\033[33m" . $text . "\033[0m";
-    }
-    public static function blue(string $text): string
-    {
-        return "\033[34m" . $text . "\033[0m";
-    }
-    public static function magenta(string $text): string
-    {
-        return "\033[35m" . $text . "\033[0m";
-    }
-    public static function cyan(string $text): string
-    {
-        return "\033[36m" . $text . "\033[0m";
-    }
-    public static function bold(string $text): string
-    {
-        return "\033[1m" . $text . "\033[0m";
-    }
-}
-
-class DatasetManager
-{
-    private string $datasetPath;
-    private int $numClasses;
-
-    public array $trainX = [];
-    public array $trainY = [];
-    public array $testX = [];
-    public array $testTargets = [];
     public string $trainXBuffer = '';
     public string $trainYBuffer = '';
     public string $testXBuffer = '';
-
+    public array $testTargets = [];
     public int $trainSamples = 0;
     public int $testSamples = 0;
 
-    public function __construct(string $datasetPath, int $numClasses = 10)
-    {
-        $this->datasetPath = $datasetPath;
-        $this->numClasses = $numClasses;
-    }
+    public function __construct(
+        private string $datasetPath,
+        private int $numClasses = 10,
+        private int $inputFeatures = 64
+    ) {}
 
     public function loadDataset(float $trainRatio = 0.8): void
     {
-        $this->downloadIfNeeded();
-
-        echo CLI::blue("Parsing CSV dataset...\n");
-        $lines = file($this->datasetPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        $totalSamples = count($lines);
-        $this->trainSamples = (int) ($totalSamples * $trainRatio);
-        $this->testSamples = $totalSamples - $this->trainSamples;
-
-        $samples = [];
-        foreach ($lines as $line) {
-            $values = explode(',', $line);
-            $target = (int) array_pop($values);
-            $normalizedPixels = array_map(fn($v) => (float) $v / 16.0, $values);
-
-            $oneHot = array_fill(0, $this->numClasses, 0.0);
-            $oneHot[$target] = 1.0;
-
-            $samples[] = [$normalizedPixels, $oneHot, $target];
+        if ($trainRatio <= 0 || $trainRatio >= 1) {
+            throw new InvalidArgumentException('Training ratio must be between zero and one.');
         }
-
+        if (!is_file($this->datasetPath)) {
+            echo "Downloading Optdigits from UCI...\n";
+            $context = stream_context_create(['http' => ['timeout' => 30]]);
+            $data = file_get_contents(
+                'https://archive.ics.uci.edu/ml/machine-learning-databases/optdigits/optdigits.tra',
+                false,
+                $context
+            );
+            if ($data === false || file_put_contents($this->datasetPath, $data) !== strlen($data)) {
+                throw new RuntimeException('Unable to download and save the dataset.');
+            }
+        }
+        $file = fopen($this->datasetPath, 'rb');
+        if ($file === false) {
+            throw new RuntimeException('Unable to open the dataset.');
+        }
+        $samples = [];
+        try {
+            while (($line = fgets($file)) !== false) {
+                $line = trim($line);
+                if ($line === '') continue;
+                $values = explode(',', $line);
+                if (count($values) !== $this->inputFeatures + 1) {
+                    throw new RuntimeException('Invalid Optdigits row width.');
+                }
+                $label = array_pop($values);
+                if ($label === '' || strspn($label, '0123456789') !== strlen($label) || (int)$label >= $this->numClasses) {
+                    throw new RuntimeException('Invalid Optdigits class label.');
+                }
+                $pixels = [];
+                foreach ($values as $value) {
+                    if ($value === '' || strspn($value, '0123456789') !== strlen($value) || (int)$value > 16) {
+                        throw new RuntimeException('Invalid Optdigits pixel.');
+                    }
+                    $pixels[] = (int)$value / 16.0;
+                }
+                $target = (int)$label;
+                $oneHot = array_fill(0, $this->numClasses, 0.0);
+                $oneHot[$target] = 1.0;
+                $samples[] = [pack('g*', ...$pixels), pack('g*', ...$oneHot), $target];
+            }
+            if (!feof($file)) {
+                throw new RuntimeException('Unable to read the complete dataset.');
+            }
+        } finally {
+            fclose($file);
+        }
+        if (count($samples) < 2) {
+            throw new RuntimeException('The dataset must contain at least two samples.');
+        }
         mt_srand(1337);
         shuffle($samples);
-
-        foreach ($samples as $index => [$normalizedPixels, $oneHot, $target]) {
+        $this->trainSamples = max(1, min(count($samples) - 1, (int)(count($samples) * $trainRatio)));
+        $this->testSamples = count($samples) - $this->trainSamples;
+        $this->trainXBuffer = $this->trainYBuffer = $this->testXBuffer = '';
+        $this->testTargets = [];
+        foreach ($samples as $index => [$pixels, $oneHot, $target]) {
             if ($index < $this->trainSamples) {
-                foreach ($normalizedPixels as $pixel) $this->trainX[] = $pixel;
-                foreach ($oneHot as $label) $this->trainY[] = $label;
+                $this->trainXBuffer .= $pixels;
+                $this->trainYBuffer .= $oneHot;
             } else {
-                foreach ($normalizedPixels as $pixel) $this->testX[] = $pixel;
+                $this->testXBuffer .= $pixels;
                 $this->testTargets[] = $target;
             }
         }
-
-        if (getenv('FUSED_TRANSFER_MODE') === 'buffer') {
-            $this->trainXBuffer = pack('g*', ...$this->trainX);
-            $this->trainYBuffer = pack('g*', ...$this->trainY);
-            $this->testXBuffer = pack('g*', ...$this->testX);
-        }
-
-        echo CLI::green("Loaded {$this->trainSamples} training samples and {$this->testSamples} testing samples.\n\n");
-    }
-
-    private function downloadIfNeeded(): void
-    {
-        if (file_exists($this->datasetPath)) {
-            return;
-        }
-
-        echo CLI::yellow("⏳ Downloading Optdigits Dataset (8x8 digits) from UCI...\n");
-        $context = stream_context_create([
-            'http' => ['timeout' => 15],
-            "ssl" => [
-                "verify_peer" => false,
-                "verify_peer_name" => false,
-            ],
-        ]);
-
-        $csvData = file_get_contents("https://archive.ics.uci.edu/ml/machine-learning-databases/optdigits/optdigits.tra", false, $context);
-
-        if ($csvData === false) {
-            throw new RuntimeException("Failed to download dataset.");
-        }
-
-        file_put_contents($this->datasetPath, $csvData);
-        echo CLI::green("✅ Download complete.\n\n");
+        printf("Loaded %d training and %d test samples.\n", $this->trainSamples, $this->testSamples);
     }
 }
 
-class CudaKernelProvider
-{
-    private $module;
-
-    public function __construct()
-    {
-        $this->compileKernels();
-    }
-
-    private function compileKernels(): void
-    {
-        $compiler = new Compiler(source: $this->getKernelSource());
-
-        $compiler->kernel('relu_backward', [
-            ['name' => 'input', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'grad_output', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'grad_input', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'size', 'dtype' => 'int32']
-        ]);
-
-        $compiler->kernel('update_weights', [
-            ['name' => 'weights', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'gradients', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'lr', 'dtype' => 'float32'],
-            ['name' => 'size', 'dtype' => 'int32']
-        ]);
-        
-        $compiler->kernel('softmax_cross_entropy', [
-            ['name' => 'logits', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'target', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'probs', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'grad_logits', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'loss', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'rows', 'dtype' => 'int32'],
-            ['name' => 'classes', 'dtype' => 'int32']
-        ]);
-
-        $compiler->kernel('linear_forward_relu', [
-            ['name' => 'X', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'W', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'b', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'output', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'batchSize', 'dtype' => 'int32'],
-            ['name' => 'inFeatures', 'dtype' => 'int32'],
-            ['name' => 'outFeatures', 'dtype' => 'int32']
-        ]);
-
-        $compiler->kernel('linear_forward', [
-            ['name' => 'X', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'W', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'b', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'output', 'type' => 'array', 'dtype' => 'float32'],
-            ['name' => 'batchSize', 'dtype' => 'int32'],
-            ['name' => 'inFeatures', 'dtype' => 'int32'],
-            ['name' => 'outFeatures', 'dtype' => 'int32']
-        ]);
-
-        $this->module = $compiler->compile();
-        $this->module->initialize();
-    }
-
-    public function getModule()
-    {
-        return $this->module;
-    }
-
-    private function getKernelSource(): string
-    {
-        return <<<'CUDA'
-extern "C" {
-    __global__ void update_weights(float* weights, const float* gradients, float lr, int size) {
-        int i = blockIdx.x * blockDim.x + threadIdx.x;
-        if (i < size) {
-            float gradient = gradients[i];
-            if (gradient != gradient) return;
-            gradient = fminf(fmaxf(gradient, -5.0f), 5.0f);
-            weights[i] -= lr * gradient;
-        }
-    }
-    __global__ void relu_backward(const float* input, const float* grad_output, float* grad_input, int size) {
-        int i = blockIdx.x * blockDim.x + threadIdx.x;
-        if (i < size) { grad_input[i] = (input[i] > 0.0f) ? grad_output[i] : 0.0f; }
-    }
-    
-    __global__ void linear_forward_relu(const float* X, const float* W, const float* b, float* output, int batchSize, int inFeatures, int outFeatures) {
-        int i = blockIdx.x * blockDim.x + threadIdx.x;
-        int totalElements = batchSize * outFeatures;
-        
-        if (i < totalElements) {
-            int row = i / outFeatures;
-            int col = i % outFeatures;
-            
-            float sum = 0.0f;
-            for (int k = 0; k < inFeatures; k++) {
-                sum += X[row * inFeatures + k] * W[k * outFeatures + col];
-            }
-            sum += b[col];
-            output[i] = fmaxf(0.0f, sum); // ReLU imbutido no loop
-        }
-    }
-
-    __global__ void linear_forward(const float* X, const float* W, const float* b, float* output, int batchSize, int inFeatures, int outFeatures) {
-        int i = blockIdx.x * blockDim.x + threadIdx.x;
-        int totalElements = batchSize * outFeatures;
-        
-        if (i < totalElements) {
-            int row = i / outFeatures;
-            int col = i % outFeatures;
-            
-            float sum = 0.0f;
-            for (int k = 0; k < inFeatures; k++) {
-                sum += X[row * inFeatures + k] * W[k * outFeatures + col];
-            }
-            sum += b[col];
-            output[i] = sum;
-        }
-    }
-
-    __global__ void softmax_cross_entropy(const float* logits, const float* target, float* probs, float* grad_logits, float* loss, int rows, int classes) {
-        int row = blockIdx.x * blockDim.x + threadIdx.x;
-        if (row >= rows) return;
-
-        int base = row * classes;
-        float max_logit = logits[base];
-        for (int c = 1; c < classes; c++) {
-            max_logit = fmaxf(max_logit, logits[base + c]);
-        }
-
-        float sum_exp = 0.0f;
-        for (int c = 0; c < classes; c++) {
-            float p = expf(logits[base + c] - max_logit);
-            probs[base + c] = p;
-            sum_exp += p;
-        }
-
-        float row_loss = 0.0f;
-        for (int c = 0; c < classes; c++) {
-            float p = probs[base + c] / sum_exp;
-            float y = target[base + c];
-            probs[base + c] = p;
-            grad_logits[base + c] = (p - y) / (float)rows;
-            if (y > 0.0f) {
-                row_loss -= logf(fmaxf(p, 1.0e-7f));
-            }
-        }
-        loss[row] = row_loss;
-    }
-}
-CUDA;
-    }
-}
-
-class NeuralNetwork
+final class NeuralNetwork
 {
     private CudaArray $W1;
     private CudaArray $b1;
     private CudaArray $W2;
     private CudaArray $b2;
+    private CudaArray $zero;
+    private CudaArray $lower;
+    private CudaArray $upper;
 
-    private CudaKernelProvider $kernels;
-
-    private int $inputFeatures;
-    private int $hiddenNodes;
-    private int $numClasses;
-
-    public function __construct(CudaKernelProvider $kernels, int $inputFeatures = 64, int $hiddenNodes = 64, int $numClasses = 10)
-    {
-        $this->kernels = $kernels;
-        $this->inputFeatures = $inputFeatures;
-        $this->hiddenNodes = $hiddenNodes;
-        $this->numClasses = $numClasses;
+    public function __construct(
+        private int $inputFeatures = 64,
+        private int $hiddenNodes = 64,
+        private int $numClasses = 10
+    ) {
+        $this->zero = CudaArray::zeros([1]);
+        $this->lower = CudaArray::full([1], -5.0);
+        $this->upper = CudaArray::full([1], 5.0);
+        mt_srand(2026);
+        $weights = static function (array $shape): CudaArray {
+            $values = [];
+            for ($i = 0, $count = array_product($shape); $i < $count; $i++) {
+                $values[] = (mt_rand() / mt_getrandmax() * 2 - 1) * 0.1;
+            }
+            return CudaArray::fromBuffer(pack('g*', ...$values), $shape);
+        };
+        $this->W1 = $weights([$inputFeatures, $hiddenNodes]);
+        $this->b1 = CudaArray::zeros([1, $hiddenNodes]);
+        $this->W2 = $weights([$hiddenNodes, $numClasses]);
+        $this->b2 = CudaArray::zeros([1, $numClasses]);
     }
 
-    public function initWeights(): void
+    public function parameters(): array
     {
-        $this->W1 = CudaArray::rand([$this->inputFeatures, $this->hiddenNodes], -0.1, 0.1, 'float32');
-        $this->b1 = CudaArray::zeros([1, $this->hiddenNodes], 'float32');
-        $this->W2 = CudaArray::rand([$this->hiddenNodes, $this->numClasses], -0.1, 0.1, 'float32');
-        $this->b2 = CudaArray::zeros([1, $this->numClasses], 'float32');
+        return [$this->W1, $this->b1, $this->W2, $this->b2];
     }
 
-    public function loadModel(string $path, string $versionCheck): bool
+    public function trainingExpression(int $rows, float $learningRate, bool $withLoss): Closure
     {
-        if (!file_exists($path)) {
-            return false;
+        if ($rows < 1 || !is_finite($learningRate) || $learningRate <= 0) {
+            throw new InvalidArgumentException('Invalid training batch or learning rate.');
         }
-
-        echo CLI::magenta("Found serialized model on disk. Loading weights...\n");
-        $startLoad = microtime(true);
-        $candidateModel = unserialize(file_get_contents($path));
-
-        if (($candidateModel['version'] ?? null) !== $versionCheck) {
-            echo CLI::yellow("Saved model is from an older config/version. Re-training...\n");
-            return false;
-        }
-
-        $this->W1 = unserialize($candidateModel['W1']);
-        $this->b1 = unserialize($candidateModel['b1']);
-        $this->W2 = unserialize($candidateModel['W2']);
-        $this->b2 = unserialize($candidateModel['b2']);
-
-        echo CLI::green("Model restored to GPU in " . sprintf("%.2f ms", (microtime(true) - $startLoad) * 1000) . "!\n\n");
-        return true;
-    }
-
-    public function saveModel(string $path, string $version): void
-    {
-        echo CLI::magenta("Saving (Serializing) trained CudaArrays to disk...\n");
-        $serializedModel = serialize([
-            'version' => $version,
-            'W1' => serialize($this->W1),
-            'b1' => serialize($this->b1),
-            'W2' => serialize($this->W2),
-            'b2' => serialize($this->b2),
-        ]);
-        file_put_contents($path, $serializedModel);
-        echo CLI::green("Model saved to: $path\n\n");
+        $zero = $this->zero;
+        $lower = $this->lower;
+        $upper = $this->upper;
+        $hidden = $this->hiddenNodes;
+        $classes = $this->numClasses;
+        return static function ($x, $xt, $y, $w1, $b1, $w2, $b2) use (
+            $rows, $learningRate, $withLoss, $zero, $lower, $upper, $hidden, $classes
+        ): array {
+            $z1 = $x->matmul($w1) + $b1;
+            $a1 = CudaArray::where($z1->gt(0), $z1, $zero);
+            $logits = $a1->matmul($w2) + $b2;
+            $shifted = $logits - $logits->max(1)->reshape([$rows, 1]);
+            $exponentials = $shifted->exp();
+            $denominator = $exponentials->sum(1)->reshape([$rows, 1]);
+            $dz2 = ($exponentials / $denominator - $y) * (1.0 / $rows);
+            $dw2 = $a1->transpose()->matmul($dz2);
+            $db2 = $dz2->sum(0)->reshape([1, $classes]);
+            $da1 = $dz2->matmul($w2->transpose());
+            $dz1 = CudaArray::where($a1->gt(0), $da1, $zero);
+            $dw1 = $xt->matmul($dz1);
+            $db1 = $dz1->sum(0)->reshape([1, $hidden]);
+            $update = static function ($weight, $gradient) use ($learningRate, $lower, $upper): CudaArray {
+                $clipped = CudaArray::where($gradient->gt(5), $upper, $gradient);
+                $clipped = CudaArray::where($clipped->lt(-5), $lower, $clipped);
+                return CudaArray::where($gradient->eq($gradient), $weight - $clipped * $learningRate, $weight);
+            };
+            $result = [
+                $update($w1, $dw1), $update($b1, $db1),
+                $update($w2, $dw2), $update($b2, $db2),
+            ];
+            if ($withLoss) {
+                // Log-sum-exp avoids a probability clamp that changes the loss.
+                $targetLogit = ($shifted * $y)->sum(1)->reshape([$rows, 1]);
+                $result[] = ($denominator->log() - $targetLogit)->sum(0);
+            }
+            return $result;
+        };
     }
 
     public function train(DatasetManager $dataset, int $epochs, int $batchSize, float $learningRate): void
     {
-        echo CLI::bold(CLI::blue("Starting GPU Training with Fused Kernels ($batchSize) for $epochs epochs...\n"));
-        $trainStart = microtime(true);
+        if ($epochs < 1 || $batchSize < 1 || $dataset->trainSamples < 1 ||
+            !is_finite($learningRate) || $learningRate <= 0) {
+            throw new InvalidArgumentException('Training requires positive epochs, batch size, sample count and learning rate.');
+        }
+        $batches = [];
+        $start = hrtime(true);
+        for ($offset = 0; $offset < $dataset->trainSamples; $offset += $batchSize) {
+            $rows = min($batchSize, $dataset->trainSamples - $offset);
+            $x = CudaArray::fromBuffer(
+                substr($dataset->trainXBuffer, $offset * $this->inputFeatures * 4, $rows * $this->inputFeatures * 4),
+                [$rows, $this->inputFeatures]
+            );
+            $y = CudaArray::fromBuffer(
+                substr($dataset->trainYBuffer, $offset * $this->numClasses * 4, $rows * $this->numClasses * 4),
+                [$rows, $this->numClasses]
+            );
+            $batches[] = [$x, $x->transpose(), $y, $rows];
+        }
+        printf("One-time batch upload: %.2f ms\n", (hrtime(true) - $start) / 1e6);
+        $dataset->trainXBuffer = $dataset->trainYBuffer = '';
 
-        $numBatches = (int) ceil($dataset->trainSamples / $batchSize);
-        $module = $this->kernels->getModule();
-        $useBuffer = getenv('FUSED_TRANSFER_MODE') === 'buffer';
-        $profile = getenv('FUSED_PROFILE') === '1';
-        $transferNanoseconds = 0;
-
+        $plans = [];
+        $start = hrtime(true);
+        foreach ($batches as [$x, $xt, $y, $rows]) {
+            if (isset($plans[$rows])) continue;
+            $inputs = [$x, $xt, $y, ...$this->parameters()];
+            $plans[$rows] = [
+                Fusion::compile($this->trainingExpression($rows, $learningRate, false), $inputs),
+                Fusion::compile($this->trainingExpression($rows, $learningRate, true), $inputs),
+            ];
+            $stats = $plans[$rows][0]->getStats();
+            if ($stats['fusedKernels'] < 1) {
+                throw new RuntimeException('Training did not produce any fused kernels.');
+            }
+            printf("Batch %d plan: %d fused kernels, %d native boundaries, %s backend.\n",
+                $rows, $stats['fusedKernels'], $stats['boundaries'], $stats['backend']);
+        }
+        printf("Plan compilation: %.2f ms\n", (hrtime(true) - $start) / 1e6);
+        echo "Training with compiled Fusion replay (no custom kernels)...\n";
+        $start = hrtime(true);
+        $steps = 0;
         for ($epoch = 0; $epoch < $epochs; $epoch++) {
-            $epochLoss = 0.0;
-
-            for ($b = 0; $b < $numBatches; $b++) {
-                $startIdx = $b * $batchSize;
-                $currentBatchSize = min($batchSize, $dataset->trainSamples - $startIdx);
-
-                if ($profile) $transferStart = hrtime(true);
-                if ($useBuffer) {
-                    $X = CudaArray::fromBuffer(substr($dataset->trainXBuffer, $startIdx * $this->inputFeatures * 4, $currentBatchSize * $this->inputFeatures * 4), [$currentBatchSize, $this->inputFeatures]);
-                    $Y = CudaArray::fromBuffer(substr($dataset->trainYBuffer, $startIdx * $this->numClasses * 4, $currentBatchSize * $this->numClasses * 4), [$currentBatchSize, $this->numClasses]);
-                } else {
-                    $batchXHost = array_slice($dataset->trainX, $startIdx * $this->inputFeatures, $currentBatchSize * $this->inputFeatures);
-                    $batchYHost = array_slice($dataset->trainY, $startIdx * $this->numClasses, $currentBatchSize * $this->numClasses);
-                    $X = (new CudaArray($batchXHost, 'float32'))->reshape([$currentBatchSize, $this->inputFeatures]);
-                    $Y = (new CudaArray($batchYHost, 'float32'))->reshape([$currentBatchSize, $this->numClasses]);
-                }
-                if ($profile) $transferNanoseconds += hrtime(true) - $transferStart;
-
-                $A1 = CudaArray::zeros([$currentBatchSize, $this->hiddenNodes], 'float32');
-                $sizeA1 = $currentBatchSize * $this->hiddenNodes;
-                cuda_synchronize();
-                $module->launch('linear_forward_relu', config: $module->autoGrid('linear_forward_relu', $sizeA1), args: [$X, $this->W1, $this->b1, $A1, $currentBatchSize, $this->inputFeatures, $this->hiddenNodes]);
-
-                $Z2 = CudaArray::zeros([$currentBatchSize, $this->numClasses], 'float32');
-                $sizeZ2 = $currentBatchSize * $this->numClasses;
-                cuda_synchronize();
-                $module->launch('linear_forward', config: $module->autoGrid('linear_forward', $sizeZ2), args: [$A1, $this->W2, $this->b2, $Z2, $currentBatchSize, $this->hiddenNodes, $this->numClasses]);
-
-                $probs = CudaArray::zeros([$currentBatchSize, $this->numClasses], 'float32');
-                $dZ2 = CudaArray::zeros([$currentBatchSize, $this->numClasses], 'float32');
-                $batchLoss = CudaArray::zeros([$currentBatchSize], 'float32');
-
-                cuda_synchronize();
-                $module->launch('softmax_cross_entropy', config: $module->autoGrid('softmax_cross_entropy', $currentBatchSize), args: [$Z2, $Y, $probs, $dZ2, $batchLoss, $currentBatchSize, $this->numClasses]);
-
-                if ($epoch % 50 === 0 || $epoch === $epochs - 1) {
-                    $epochLoss += $batchLoss->sum()->toArray()[0];
-                }
-
-                $dW2 = $A1->transpose([1, 0])->matmul($dZ2);
-                $db2 = $dZ2->sum(0)->reshape([1, $this->numClasses]);
-                $dA1 = $dZ2->matmul($this->W2->transpose([1, 0]));
-
-                $dZ1 = CudaArray::zeros($A1->getShape(), 'float32');
-                $size = $A1->getSize();
-                cuda_synchronize();
-                $reluOperation = $module->launchAsync('relu_backward', config: $module->autoGrid('relu_backward', $size), args: [$A1, $dA1, $dZ1, $size]);
-
-                $X_T = $X->transpose([1, 0]);
-                $module->sync($reluOperation);
-                $dW1 = $X_T->matmul($dZ1);
-
-                $tmpDb1 = $dZ1->sum(0);
-                $db1 = $tmpDb1->reshape([1, $this->hiddenNodes]);
-
-                foreach ([
-                    [$this->W1, $dW1],
-                    [$this->b1, $db1],
-                    [$this->W2, $dW2],
-                    [$this->b2, $db2]
-                ] as [$w, $g]) {
-                    $sz = $w->getSize();
-                    $module->launchAsync('update_weights', config: $module->autoGrid('update_weights', $sz), args: [$w, $g, $learningRate, $sz]);
-                }
-                $module->sync();
-                $module->cleanup();
+            $report = $epoch % 50 === 0 || $epoch === $epochs - 1;
+            $loss = 0.0;
+            foreach ($batches as [$x, $xt, $y, $rows]) {
+                $outputs = $plans[$rows][(int)$report]->run($x, $xt, $y, ...$this->parameters());
+                [$this->W1, $this->b1, $this->W2, $this->b2] = $outputs;
+                if ($report) $loss += $outputs[4][0];
+                unset($outputs);
+                $steps++;
             }
-
-            if ($epoch % 50 === 0 || $epoch === $epochs - 1) {
-                $lossVal = $epochLoss / $dataset->trainSamples;
-                echo "   " . CLI::cyan(sprintf("Epoch %4d", $epoch)) . " -> Cross-Entropy Loss: " . CLI::yellow(sprintf("%.5f", $lossVal)) . "\n";
-
-                if (!is_finite($lossVal)) {
-                    throw new RuntimeException('Training diverged: non-finite loss detected.');
+            if ($report) {
+                $loss /= $dataset->trainSamples;
+                if (!is_finite($loss)) {
+                    throw new RuntimeException('Training diverged: non-finite cross-entropy.');
                 }
+                printf("Epoch %4d: cross-entropy %.5f\n", $epoch + 1, $loss);
             }
         }
-
-        echo CLI::green("\nTraining completed in " . sprintf("%.2f ms", (microtime(true) - $trainStart) * 1000) . ".\n");
-        if ($profile) {
-            echo "   Batch input preparation + upload: " . sprintf("%.2f ms", $transferNanoseconds / 1e6) . "\n";
-        }
+        $seconds = (hrtime(true) - $start) / 1e9;
+        printf("Training: %.2f s, %.2f ms/step, %.0f samples/s (%d steps).\n",
+            $seconds, $seconds * 1000 / $steps, $dataset->trainSamples * $epochs / $seconds, $steps);
     }
 
-    public function evaluate(DatasetManager $dataset): void
+    public function evaluate(DatasetManager $dataset): float
     {
-        echo CLI::bold(CLI::blue("🧪 Running Inference on Test Dataset...\n"));
-
-        $xTest = getenv('FUSED_TRANSFER_MODE') === 'buffer'
-            ? CudaArray::fromBuffer($dataset->testXBuffer, [$dataset->testSamples, $this->inputFeatures])
-            : (new CudaArray($dataset->testX, 'float32'))->reshape([$dataset->testSamples, $this->inputFeatures]);
-        $module = $this->kernels->getModule();
-
-        $testA1 = CudaArray::zeros([$dataset->testSamples, $this->hiddenNodes], 'float32');
-        $sizeA1 = $dataset->testSamples * $this->hiddenNodes;
-        cuda_synchronize();
-        $firstForward = $module->launchAsync('linear_forward_relu', config: $module->autoGrid('linear_forward_relu', $sizeA1), args: [$xTest, $this->W1, $this->b1, $testA1, $dataset->testSamples, $this->inputFeatures, $this->hiddenNodes]);
-        $module->sync($firstForward);
-
-        $testPredictions = CudaArray::zeros([$dataset->testSamples, $this->numClasses], 'float32');
-        $sizeZ2 = $dataset->testSamples * $this->numClasses;
-        cuda_synchronize();
-        $secondForward = $module->launchAsync('linear_forward', config: $module->autoGrid('linear_forward', $sizeZ2), args: [$testA1, $this->W2, $this->b2, $testPredictions, $dataset->testSamples, $this->hiddenNodes, $this->numClasses]);
-        $module->sync($secondForward);
-        $module->cleanup();
-
-        $predictedClasses = $testPredictions->argMax(1)->toArray();
-
+        $x = CudaArray::fromBuffer($dataset->testXBuffer, [$dataset->testSamples, $this->inputFeatures]);
+        $zero = $this->zero;
+        $plan = Fusion::compile(static function ($x, $w1, $b1, $w2, $b2) use ($zero) {
+            $z1 = $x->matmul($w1) + $b1;
+            return (CudaArray::where($z1->gt(0), $z1, $zero)->matmul($w2) + $b2)->argMax(1);
+        }, [$x, ...$this->parameters()]);
+        $predictions = $plan->run($x, ...$this->parameters())->toArray();
         $correct = 0;
-        for ($i = 0; $i < $dataset->testSamples; $i++) {
-            if ((int) $predictedClasses[$i] === $dataset->testTargets[$i]) {
-                $correct++;
+        foreach ($predictions as $index => $prediction) {
+            if ((int)$prediction === $dataset->testTargets[$index]) $correct++;
+        }
+        $accuracy = 100.0 * $correct / $dataset->testSamples;
+        printf("Test accuracy: %.2f%% (%d/%d).\n", $accuracy, $correct, $dataset->testSamples);
+        if ($accuracy < 80.0) {
+            throw new RuntimeException(sprintf('Accuracy below the 80%% training check: %.2f%%.', $accuracy));
+        }
+        return $accuracy;
+    }
+
+    public function saveModel(string $path, string $version): void
+    {
+        $data = serialize(['version' => $version, 'parameters' => $this->parameters()]);
+        if (file_put_contents($path, $data) !== strlen($data)) {
+            throw new RuntimeException('Unable to save trained parameters.');
+        }
+        echo "Model saved: $path\n";
+    }
+
+    public function loadModel(string $path, string $version): void
+    {
+        $data = file_get_contents($path);
+        if ($data === false) throw new RuntimeException('Unable to read the saved model.');
+        $model = unserialize($data, ['allowed_classes' => [CudaArray::class]]);
+        $parameters = is_array($model) ? ($model['parameters'] ?? null) : null;
+        if (($model['version'] ?? null) !== $version || !is_array($parameters) || count($parameters) !== 4) {
+            throw new RuntimeException('Saved model version or parameters are incompatible.');
+        }
+        $shapes = [[$this->inputFeatures, $this->hiddenNodes], [1, $this->hiddenNodes],
+            [$this->hiddenNodes, $this->numClasses], [1, $this->numClasses]];
+        foreach (array_values($parameters) as $index => $parameter) {
+            if (!$parameter instanceof CudaArray || $parameter->dtype() !== 'float32' ||
+                $parameter->getShape() !== $shapes[$index]) {
+                throw new RuntimeException('Saved parameter dtype or shape is incompatible.');
             }
         }
-
-        $accuracy = ($correct / $dataset->testSamples) * 100.0;
-        $accColor = $accuracy > 90 ? "\033[32m" : "\033[33m";
-
-        echo CLI::bold("   Test Accuracy: ") . $accColor . sprintf("%.2f%%", $accuracy) . CLI::bold(" ($correct / {$dataset->testSamples})\n\n\033[0m");
-
-        if ($accuracy < 80.0) {
-            throw new RuntimeException(sprintf('Accuracy too low after stable training: %.2f%%', $accuracy));
-        }
-
-        echo CLI::green("Stable training check passed.\n");
+        [$this->W1, $this->b1, $this->W2, $this->b2] = array_values($parameters);
     }
 }
 
-echo CLI::bold(CLI::cyan("\n======================================================\n"));
-echo CLI::bold(CLI::cyan("  CUDA PHP Neural Network: 0-9 Digit Recognizer \n"));
-echo CLI::bold(CLI::cyan("======================================================\n\n"));
-
-$CONFIG = [
-    'modelPath' => __DIR__ . '/trained_model_stable.dat',
-    'modelVersion' => 'softmax-ce-v1',
-    'datasetPath' => __DIR__ . '/optdigits.csv',
-    'inputFeatures' => 64,
-    'numClasses' => 10,
-    'hiddenNodes' => 64,
-    'batchSize' => 256,
-    'epochs' => getenv('FUSED_EPOCHS') !== false ? max(1, (int) getenv('FUSED_EPOCHS')) : 1000,
-    'learningRate' => 0.05
-];
-
-try {
-    $dataset = new DatasetManager($CONFIG['datasetPath'], $CONFIG['numClasses']);
+function runFusedTraining(): void
+{
+    if (!extension_loaded('cuda') || cuda_get_device_count() < 1) {
+        throw new RuntimeException('Training requires the CUDA extension and a visible NVIDIA GPU.');
+    }
+    $options = getopt('', ['epochs:', 'batch-size:', 'learning-rate:', 'load-model', 'no-save']);
+    $epochs = filter_var($options['epochs'] ?? 1000, FILTER_VALIDATE_INT);
+    $batchSize = filter_var($options['batch-size'] ?? 256, FILTER_VALIDATE_INT);
+    $learningRate = filter_var($options['learning-rate'] ?? 0.05, FILTER_VALIDATE_FLOAT);
+    if ($epochs === false || $epochs < 1 || $batchSize === false || $batchSize < 1 ||
+        $learningRate === false || !is_finite($learningRate) || $learningRate <= 0) {
+        throw new InvalidArgumentException('epochs, batch-size and learning-rate must be positive numbers.');
+    }
+    $modelPath = __DIR__ . DIRECTORY_SEPARATOR . 'trained_model_stable.dat';
+    $modelVersion = 'fusion-softmax-ce-v2-64x64x10';
+    $dataset = new DatasetManager(__DIR__ . DIRECTORY_SEPARATOR . 'optdigits.csv');
     $dataset->loadDataset();
-
-    $kernels = new CudaKernelProvider();
-    $network = new NeuralNetwork($kernels, $CONFIG['inputFeatures'], $CONFIG['hiddenNodes'], $CONFIG['numClasses']);
-
-    if (getenv('FUSED_FORCE_TRAIN') === '1' || !$network->loadModel($CONFIG['modelPath'], $CONFIG['modelVersion'])) {
-        $network->initWeights();
-        $network->train($dataset, $CONFIG['epochs'], $CONFIG['batchSize'], $CONFIG['learningRate']);
-        $network->saveModel($CONFIG['modelPath'], $CONFIG['modelVersion']);
+    $network = new NeuralNetwork();
+    if (array_key_exists('load-model', $options)) {
+        $network->loadModel($modelPath, $modelVersion);
+    } else {
+        $network->train($dataset, $epochs, $batchSize, $learningRate);
     }
-
-    if (getenv('FUSED_SKIP_EVALUATION') !== '1') {
-        $network->evaluate($dataset);
+    $network->evaluate($dataset);
+    if (!array_key_exists('load-model', $options) && !array_key_exists('no-save', $options)) {
+        $network->saveModel($modelPath, $modelVersion);
     }
+    echo "Real Fusion training check passed.\n";
+}
 
-} catch (Exception $e) {
-    echo CLI::red("\nError: " . $e->getMessage() . "\n");
-    exit(1);
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    try {
+        runFusedTraining();
+    } catch (Throwable $error) {
+        fwrite(STDERR, 'Error: ' . $error->getMessage() . PHP_EOL);
+        exit(1);
+    }
 }

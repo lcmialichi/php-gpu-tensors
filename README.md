@@ -231,6 +231,32 @@ php -n -d extension=./cuda_build-8.3/modules/cuda.so \
 The example validates output bytes, reports cold/cache compilation costs and
 end-to-end timings, and does not assume CUDA Graph is faster for every workload.
 
+### Real training with Fusion
+
+[`fused.php`](fused.php) trains a 64-64-10 ReLU classifier on UCI Optdigits
+without custom CUDA source or environment switches. Packed float32 batches are
+uploaded once with `fromBuffer()` and kept on the GPU, including their transpose
+views. Forward, stable softmax cross-entropy, backward and clipped SGD are
+compiled once per batch shape and replayed with new parameter tensors.
+Matmul/reduction boundaries use the synchronous native backend; the elementwise
+segments use generated fused kernels. Loss is transferred only on reporting
+epochs, and inference transfers only predicted class indices.
+
+```sh
+php -n -d extension=./cuda_build-8.3/modules/cuda.so fused.php \
+  --epochs=200 --batch-size=256 --learning-rate=0.05 --no-save
+```
+
+Defaults are 1,000 epochs, batch size 256 and learning rate 0.05. Every default
+run trains from deterministic initial weights and checks at least 80% test
+accuracy. Omit `--no-save` to save parameters after successful evaluation;
+`--load-model` explicitly evaluates the compatible saved model instead of
+training. Dataset and model files are ignored by Git. The script reports
+one-time uploads, compilation, fused/native step counts and training throughput.
+[`fusion_training.phpt`](tests/fusion_training.phpt) checks a complete training
+step against eager execution, CPU loss and finite-difference gradients, including
+large-logit stability and retained outputs across replays.
+
 ## PHP GPU Computing for Machine Learning
 
 Use this PHP CUDA extension to build GPU-accelerated numerical steps into PHP
