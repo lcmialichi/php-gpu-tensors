@@ -105,10 +105,7 @@ demonstration, not a clinical model. The planner turned the 68 captured nodes of
 the training step into 11 fused kernels plus 9 native boundaries (matmul and
 reductions).
 
-**End-to-end training example** ([`fused.php`](fused.php), UCI Optdigits, 64-64-10
-classifier, 1,000 epochs, batch size 256): 12,000 steps in 3.67 s (0.31 ms per
-step on average, 832,787 samples per second), reaching 97.25% test accuracy
-(744/765).
+**End-to-end training example** ([`examples/08_gpu_classifier.php`](examples/08_gpu_classifier.php), a complete Multi-Layer Perceptron (MLP) for MNIST, Fashion-MNIST, or custom CSVs. It processes hundreds of thousands of samples per second using fused CUDA kernels, showcasing tensor operations, JIT compilation, math optimization (AdamW/SGD), and pure PHP data orchestration.
 
 Full benchmark reports live in the
 [benchmarks repository](#benchmarks).
@@ -538,36 +535,20 @@ end-to-end timings, and does not assume CUDA Graph is faster for every workload.
 </details>
 
 ## Real training with Fusion
+[`examples/08_gpu_classifier.php`](examples/08_gpu_classifier.php )trains a deep MLP classifier on real datasets (MNIST, Fashion-MNIST, or CSV) without custom CUDA source or environment switches:
 
-[`fused.php`](fused.php) trains a 64-64-10 ReLU classifier on UCI Optdigits
-without custom CUDA source or environment switches:
-
-- Packed float32 batches are uploaded once with `fromBuffer()` and kept on the GPU,
-  including their transpose views.
-- Forward, stable softmax cross-entropy, backward and clipped SGD are compiled once
-  per batch shape and replayed with new parameter tensors.
-- Matmul/reduction boundaries and generated elementwise kernels share the private
-  stream, with one final synchronization per successful training replay.
-- Loss is transferred only on reporting epochs, and inference transfers only
-  predicted class indices.
+- Parses and normalizes dataset files directly in PHP.
+- Packed float32 batches are uploaded once with ``fromBuffer()`` and kept on the GPU, including their transpose views.
+- Forward pass, numerically stable softmax cross-entropy, backward pass, and optimizer (AdamW or SGD) steps are compiled once per batch shape and replayed with new parameter tensors
+- Matmul/reduction boundaries and generated elementwise kernels share a private stream, with minimal synchronization.
+- Loss is transferred only on reporting epochs, outputting a colorful CLI report including macro-F1 score and confusion analysis
 
 ```sh
-php -n -d extension=./cuda_build-8.3/modules/cuda.so fused.php \
-  --epochs=200 --batch-size=256 --learning-rate=0.05 --no-save
+php -n -d extension=./cuda_build-8.3/modules/cuda.so examples/08_gpu_classifier.php \
+  --dataset=mnist --epochs=40 --batch-size=128 --optimizer=adam
 ```
 
-Defaults are 1,000 epochs, batch size 256 and learning rate 0.05. Every default run
-trains from deterministic initial weights and checks at least 80% test accuracy.
-Omit `--no-save` to save parameters after successful evaluation; `--load-model`
-explicitly evaluates the compatible saved model instead of training. Dataset and
-model files are ignored by Git. The script reports one-time uploads, compilation,
-fused/native step counts and training throughput, also by epoch block. Add
-`--profile` to print per-plan timing, allocation, scratch and synchronization
-counters after training.
-
-[`fusion_training.phpt`](tests/fusion_training.phpt) checks a complete training
-step against eager execution, CPU loss and finite-difference gradients, including
-large-logit stability and retained outputs across replays.
+Defaults are MNIST, 512-256 hidden layers, 40 epochs, batch size 128, and the AdamW optimizer. Every default run trains from deterministic initial weights. Omit ``--no-save`` to save parameters after successful evaluation; ``--load`` explicitly evaluates a compatible saved model instead of training. Dataset and model files are saved to the script's origin directory and are ignored by Git. The script reports one-time uploads, compilation, training throughput, and detailed evaluation metrics. Add ``--profile`` to print per-plan timing, allocation, scratch, and synchronization counters after training, or ``--predict-index=N``to showcase inference on a specific sample.
 
 ## API and limits
 

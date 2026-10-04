@@ -26,6 +26,7 @@ $stream = Fusion::compile($expression, [$a, $b, $c]);
 $coldCompileMs = (hrtime(true) - $start) / 1e6;
 $start = hrtime(true);
 $cudaGraph = Fusion::compile($expression, [$a, $b, $c], cudaGraph: true);
+
 $cachedCompileMs = (hrtime(true) - $start) / 1e6;
 $execution = $cudaGraph->runAsync($a, $b, $c);
 $result = $execution->wait();
