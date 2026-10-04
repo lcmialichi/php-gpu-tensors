@@ -78,7 +78,7 @@ print_r($fused->toArray()); // [7, 7, 7, 7]
 Try a full training run on the GPU, written entirely in PHP:
 
 ```bash
-php -n -d extension=./cuda_build-8.3/modules/cuda.so fused.php \
+php -n -d extension=./cuda_build-8.3/modules/cuda.so examples/08_gpu_classifier.php \
   --epochs=200 --batch-size=256 --learning-rate=0.05 --no-save
 ```
 
