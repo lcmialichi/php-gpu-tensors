@@ -7,16 +7,17 @@
 Native PHP extension for GPU tensors and NVIDIA CUDA-accelerated numerical
 workloads. Build tensor operations and machine-learning data pipelines in PHP,
 move data explicitly between host and GPU, and compile custom CUDA C++ kernels
-at runtime with NVRTC. No Python runtime required.
+at runtime with NVRTC. Optionally fuse tensor expressions and replay compiled
+plans, including asynchronous execution and CUDA Graph for compatible plans.
+No Python runtime required.
 
-**Status:** beta, with the PHP API frozen at `0.1.0`. The freeze does
-not imply production readiness: so far, Linux, PHP 8.1 and 8.3, and CUDA 12.3
-have been exercised with an NVIDIA RTX A2000. PHP 8.4.26 and 8.5.11 also pass
-extension builds with CUDA 12.6.3. PIE 1.5.1 installed and loaded the current
-source under PHP 8.4.26 and 8.5.11, and under PHP 8.5 targeting PHP 8.1. The
-full GPU suite passes 26/26 tests on PHP 8.5.11 NTS and ZTS, and PHP 8.1.34
-ZTS. Four concurrent PHP 8.5 ZTS runtimes also passed tensor and JIT workloads
-on an RTX A2000. Other PHP/CUDA versions and GPUs need independent testing.
+**Status:** beta, targeting PHP 8.1 through 8.5 on Linux, with NTS and experimental
+ZTS support. The core API has a frozen `0.1.0` baseline; Fusion is experimental
+and explicitly opt-in. The current Fusion implementation passed 38 GPU tests
+on PHP 8.3 NTS with an NVIDIA GeForce MX570 A, plus a separate real-training
+regression and Optdigits training check. Earlier tensor/JIT validation covered
+PHP 8.5 NTS/ZTS and PHP 8.1 ZTS on an RTX A2000; it does not validate the latest
+Fusion changes on those builds. Beta status does not imply production readiness.
 
 ## Start here
 
@@ -30,11 +31,11 @@ git clone https://github.com/lcmialichi/php-gpu-tensors.git
 cd php-gpu-tensors
 ./compile.sh
 ./run-tests.sh --require-gpu
-php -n -d extension=./cuda_build-8.1/modules/cuda.so examples/01_basics_cuda_array.php
+php -n -d extension=./cuda_build-8.3/modules/cuda.so examples/01_basics_cuda_array.php
 ```
 
 The build stays in `cuda_build-<PHP major.minor>/modules/cuda.so`; replace
-`8.1` above with the PHP version used by `php-config`. To install the extension
+`8.3` above with the PHP version used by `php-config`. To install the extension
 and its INI configuration instead, run `./compile.sh --install` with permission
 to write to your PHP extension/INI directories. To choose another PHP ABI:
 
@@ -45,21 +46,11 @@ PHP_BIN=php8.3 PHP_CONFIG=php-config8.3 ./run-tests.sh --require-gpu
 
 ### Install with PIE 🥧
 
-PIE 1.5.1 installed the current source under PHP 8.1.34, 8.4.26, and 8.5.11.
-The native `hash_file()` `$options` argument was added in PHP 8.1
-([PHP.Watch](https://php.watch/codex/hash_file#changes-php-8.1)); the official
-PHP 8.1.34 build accepts it, and PIE installation succeeds.
-
-An earlier failure came from the Ubuntu PHP 8.1.2 package used in one test
-container, whose `hash_file()` rejected the fourth argument. That result is
-specific to that package build and must not be generalized to PHP 8.1 as a
-whole. If a distribution's PHP build reproduces it, run PIE under PHP 8.5 and
-target PHP 8.1 with matching `--with-php-config=/usr/bin/php-config8.1` and
-`--with-phpize-path=/usr/bin/phpize8.1`, or install from source with
-`./compile.sh --install`.
-
-The Packagist `0.1.0-beta.2` predates PHP 8.4/8.5 and ZTS support. Use the new
-`0.1.0-beta.3` release for those changes.
+The extension is published as
+[`lcmialichi/php-gpu-tensors`](https://packagist.org/packages/lcmialichi/php-gpu-tensors).
+Release `0.1.0-beta.3` includes PHP 8.4/8.5 and ZTS support. For the latest
+Fusion APIs and training example described here, build the current repository
+source rather than assuming an older published release includes them.
 
 PIE builds the native extension for the selected PHP installation; it does not
 install an NVIDIA driver or CUDA Toolkit. Those must already be available on
@@ -264,8 +255,9 @@ applications: tensor arithmetic, matrix multiplication, broadcasting,
 reductions such as `mean()`, and custom CUDA kernels. These primitives can
 support machine-learning data preparation and inference workloads while the
 data remains in NVIDIA GPU memory. This is a low-level GPU computing library,
-not a complete machine-learning framework; model training, automatic
-differentiation, and Python interoperability are outside its current scope.
+not a complete machine-learning framework. The training example implements
+backpropagation explicitly; automatic differentiation and Python
+interoperability are not provided.
 
 For data already in packed row-major bytes, avoid creating individual PHP
 scalars. `fromFile()` reads raw bytes, whereas `fromNpy()` parses NumPy's
@@ -340,6 +332,8 @@ or `wait()`. Keep tensors alive until asynchronous work finishes. See
 | --- | --- |
 | `Cuda\CudaArray` | GPU allocation, tensor math, reductions, views, imports and `where()` |
 | `Cuda\HostArray` / `Cuda\ContiguousArray` | CPU storage, packed buffers, optional pinned memory and `toGpu()` |
+| `Cuda\Fusion` / `Cuda\FusionGraph` | Optional expression capture, compiled replay, PTX cache and plan diagnostics |
+| `Cuda\FusionExecution` | Pending compatible execution, completion query and synchronized result collection |
 | `Cuda\Compiler` / `Cuda\CompiledModule` | NVRTC compilation, cached PTX, synchronous and asynchronous kernels |
 | `cuda_get_device_count()` and other `cuda_*` functions | Device selection, properties, memory and synchronization |
 | `Cuda\Exception` | Base class for runtime, argument, allocation and compilation errors |
@@ -347,8 +341,10 @@ or `wait()`. Keep tensors alive until asynchronous work finishes. See
 The annotated signatures are in [class stubs](stubs/cuda.stub.php) and
 [device function stubs](stubs/cuda_methods.stub.php); runnable examples live
 in [examples](examples/README.md). `astype()` supports safe dtype conversions.
-GPU data has no CPU fallback. The project does not yet provide a
-stable API. Kernel fusion is experimental and explicitly opt-in.
+GPU data has no CPU fallback. The core API baseline is frozen, but the project
+remains beta and does not yet promise production stability. Kernel fusion is
+experimental and explicitly opt-in; plans with native matmul/reduction/power
+boundaries currently execute synchronously.
 
 ## Contribute
 
