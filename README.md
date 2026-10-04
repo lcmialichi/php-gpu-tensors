@@ -441,7 +441,10 @@ and host-side tests are possible without an NVIDIA GPU.
 
 The benchmark suite is maintained in the separate
 [PHP GPU Tensors Benchmarks repository](https://github.com/lcmialichi/php-gpu-tensors-benchmarks).
-It includes focused `--matmul` and `--import` runs, JSON/HTML reports, and a
+It includes focused `--matmul`, `--import` and `--fusion` runs, JSON/HTML reports,
+and a [beta.4 full-suite report](https://github.com/lcmialichi/php-gpu-tensors-benchmarks/blob/main/published-reports/beta4-php83-mx570/README.md)
+covering 398 cases on PHP 8.3 NTS and an MX570 A, including Fusion replay and
+slicing. Earlier results include a
 [published PHP 8.5 NTS vs ZTS comparison](https://github.com/lcmialichi/php-gpu-tensors-benchmarks/blob/main/published-reports/php85-nts-vs-zts/README.md),
 as well as a [full-suite benchmark report](https://github.com/lcmialichi/php-gpu-tensors-benchmarks/blob/main/published-reports/php85-nts-vs-zts-full/README.md)
 covering 368 cases across five workload groups with downloadable raw reports.
