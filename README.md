@@ -289,7 +289,37 @@ $result = CudaArray::where(
 );
 $cpuCopy = $result->toHost();
 $raw = $cpuCopy->toBuffer();
+
+// Flat PHP values can be imported without constructing nested rows.
+$matrix = CudaArray::fromFlatArray([1, 2, 3, 4], [2, 2]);
+// Direct binary download avoids both PHP scalar expansion and an extra host-to-string copy.
+$bytes = $matrix->toBuffer();
 ```
+
+The constructor validates rectangular numeric input while converting it, with
+specialized packed-array loops for each dtype. Integer, float and boolean values
+are accepted; array keys are ignored in iteration order. Ragged arrays,
+nonnumeric values and excessive nesting throw `Cuda\InvalidArgumentException`;
+empty rectangular arrays are supported. `fromFlatArray()` additionally verifies
+that the flat element count matches the explicit shape.
+
+`toArray()` preserves nested row-major PHP lists, using preallocated packed
+arrays. Large contiguous imports use 4 MiB staging windows; PHP-array exports
+use at most 32 MiB to avoid excessive CUDA copy calls, rather than a temporary
+buffer the size of the tensor. Large or sparse
+strided downloads are packed on the GPU before copying; small strided results
+use a host gather. Scalars remain one-element arrays, and empty axes are
+preserved. These optimizations do not remove the memory cost of one PHP value
+per element: prefer `toBuffer()` when consuming binary data and keep intermediate
+tensors on the GPU.
+
+For reproducible constructor/download measurements, run
+`examples/09_transfer_benchmark.php --output=transfer.json` with the extension
+loaded. Add `--large` to include the 33,554,432-element case and allow enough PHP
+memory (`-d memory_limit=-1`). Add `--random` for random GPU download inputs.
+The runner prepares inputs outside timing and
+reports materialization, destruction and end-to-end medians separately, plus
+retained PHP heap bytes; it does not claim to isolate CUDA copy time.
 
 `HostArray` is an alias of `Cuda\ContiguousArray`, a contiguous CPU tensor. Pass
 `pinned: true` to its constructor or `fromBuffer()` for page-locked host storage
@@ -584,6 +614,7 @@ runtime validation on each PHP version and thread mode.
 | PHP / mode | GPU | What was validated |
 | --- | --- | --- |
 | 8.3 NTS | GeForce MX570 A | Current release: 41 GPU tests (including gradient/lifetime regressions) plus an Optdigits training check |
+| 8.3 and 8.5 NTS | GeForce MX570 A | Current source: 41 GPU PHPT tests on each runtime, including constructor validation, typed exports, strided packing and staging-window boundaries; CPU/API checks also passed |
 | 8.5 NTS and ZTS, 8.1 ZTS | RTX A2000 | Earlier tensor/JIT validation only; does not cover the latest Fusion changes |
 | All ten PHP 8.1–8.5 × NTS/ZTS combinations | none | Builds and CPU/API checks for this release |
 

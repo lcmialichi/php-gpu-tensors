@@ -82,13 +82,38 @@ ZEND_METHOD(CudaArray, __construct)
 
     if (!tensor)
     {
-        CUDA_THROW_RUNTIME("Failed to create CudaArray from PHP data");
         RETURN_THROWS();
     }
 
-    tensor->dtype = dtype;
+    if (obj->tensor_handle) cuda_tensor_destroy(obj->tensor_handle);
     obj->tensor_handle = tensor;
     sync_php_object_shape(obj, tensor);
+}
+
+ZEND_METHOD(CudaArray, fromFlatArray)
+{
+    zval *values, *shape_array;
+    zend_string *dtype_name = NULL;
+    ZEND_PARSE_PARAMETERS_START(2, 3)
+    Z_PARAM_ARRAY(values)
+    Z_PARAM_ARRAY(shape_array)
+    Z_PARAM_OPTIONAL
+    Z_PARAM_STR(dtype_name)
+    ZEND_PARSE_PARAMETERS_END();
+
+    dtype_t dtype = parse_dtype_param(dtype_name);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Invalid dtype: '%s'", ZSTR_VAL(dtype_name));
+        RETURN_THROWS();
+    }
+    int shape[MAX_DIMS];
+    size_t elements;
+    int ndims = tensor_import_shape(shape_array, shape, &elements);
+    if (!ndims) RETURN_THROWS();
+    tensor_t *tensor = cuda_tensor_create_from_flat_array(values, shape, ndims, dtype);
+    if (!tensor) RETURN_THROWS();
+    create_result_object(return_value, tensor);
 }
 
 ZEND_METHOD(CudaArray, fromBuffer)
@@ -941,6 +966,16 @@ ZEND_METHOD(CudaArray, toArray)
     cuda_array_obj *obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
     if (!obj) RETURN_THROWS();
     tensor_to_php_array(return_value, obj->tensor_handle);
+}
+
+ZEND_METHOD(CudaArray, toBuffer)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    cuda_array_obj *obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    zend_string *bytes = tensor_to_buffer(obj->tensor_handle);
+    if (!bytes) RETURN_THROWS();
+    RETURN_STR(bytes);
 }
 
 ZEND_METHOD(CudaArray, toHost)

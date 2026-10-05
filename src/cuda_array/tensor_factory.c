@@ -6,33 +6,83 @@
 #include "data_types.h"
 #include "factory_kernels.h"
 #include <stdbool.h>
+#include <limits.h>
 
-#define DEFINE_FLATTENER(type_name, c_type)                                              \
-    static void flatten_php_array_to_##type_name(zval *data, c_type *buffer, int *index) \
-    {                                                                                    \
-        if (Z_TYPE_P(data) == IS_ARRAY)                                                  \
-        {                                                                                \
-            HashTable *ht = Z_ARRVAL_P(data);                                            \
-            zval *current;                                                               \
-            ZEND_HASH_FOREACH_VAL(ht, current)                                           \
-            {                                                                            \
-                flatten_php_array_to_##type_name(current, buffer, index);                \
-            }                                                                            \
-            ZEND_HASH_FOREACH_END();                                                     \
-            return;                                                                      \
-        }                                                                                \
-        c_type value;                                                                    \
-        if (Z_TYPE_P(data) == IS_DOUBLE)                                                 \
-            value = (c_type)Z_DVAL_P(data);                                              \
-        else if (Z_TYPE_P(data) == IS_LONG)                                              \
-            value = (c_type)Z_LVAL_P(data);                                              \
-        else if (Z_TYPE_P(data) == IS_TRUE)                                              \
-            value = (c_type)1;                                                           \
-        else if (Z_TYPE_P(data) == IS_FALSE)                                             \
-            value = (c_type)0;                                                           \
-        else                                                                             \
-            value = (c_type)0;                                                           \
-        buffer[(*index)++] = value;                                                      \
+typedef struct {
+    tensor_t *tensor;
+    void *data;
+    size_t uploaded;
+} php_import_sink;
+
+#if PHP_VERSION_ID >= 80200
+#define PHP_CUDA_PACKED_FOREACH_VAL(ht, value) ZEND_HASH_PACKED_FOREACH_VAL(ht, value)
+#else
+#define PHP_CUDA_PACKED_FOREACH_VAL(ht, value) ZEND_HASH_FOREACH_VAL(ht, value)
+#endif
+
+static int php_import_flush(php_import_sink *sink, size_t bytes)
+{
+    cudaError_t status = cudaMemcpy((char *)sink->tensor->data + sink->uploaded,
+                                    sink->data, bytes, cudaMemcpyHostToDevice);
+    if (status != cudaSuccess)
+    {
+        CUDA_THROW_RUNTIME("PHP array upload failed: %s", cudaGetErrorString(status));
+        return 0;
+    }
+    sink->uploaded += bytes;
+    return 1;
+}
+
+#define COPY_NUMERIC_VALUE(c_type, value, destination) do { \
+    ZVAL_DEREF(value); \
+    switch (Z_TYPE_P(value)) { \
+        case IS_DOUBLE: *(destination) = (c_type)Z_DVAL_P(value); break; \
+        case IS_LONG: *(destination) = (c_type)Z_LVAL_P(value); break; \
+        case IS_TRUE: *(destination) = (c_type)1; break; \
+        case IS_FALSE: *(destination) = (c_type)0; break; \
+        default: return 0; \
+    } \
+} while (0)
+
+#define DEFINE_FLATTENER(type_name, c_type) \
+    static int flatten_php_array_to_##type_name(zval *data, c_type **buffer, \
+                                                const int *shape, int ndims, int dim, \
+                                                php_import_sink *sink, const void *limit) \
+    { \
+        ZVAL_DEREF(data); \
+        if (Z_TYPE_P(data) != IS_ARRAY || zend_hash_num_elements(Z_ARRVAL_P(data)) != (uint32_t)shape[dim]) \
+            return 0; \
+        HashTable *ht = Z_ARRVAL_P(data); \
+        zval *current; \
+        if (dim == ndims - 1) { \
+            c_type *destination = *buffer; \
+            if (HT_IS_PACKED(ht) && HT_IS_WITHOUT_HOLES(ht)) { \
+                PHP_CUDA_PACKED_FOREACH_VAL(ht, current) { \
+                    COPY_NUMERIC_VALUE(c_type, current, destination); \
+                    destination++; \
+                    if (UNEXPECTED(destination == limit)) { \
+                        if (!php_import_flush(sink, (const char *)limit - (const char *)sink->data)) return 0; \
+                        destination = sink->data; \
+                    } \
+                } ZEND_HASH_FOREACH_END(); \
+            } else { \
+                ZEND_HASH_FOREACH_VAL(ht, current) { \
+                    COPY_NUMERIC_VALUE(c_type, current, destination); \
+                    destination++; \
+                    if (UNEXPECTED(destination == limit)) { \
+                        if (!php_import_flush(sink, (const char *)limit - (const char *)sink->data)) return 0; \
+                        destination = sink->data; \
+                    } \
+                } ZEND_HASH_FOREACH_END(); \
+            } \
+            *buffer = destination; \
+            return 1; \
+        } \
+        ZEND_HASH_FOREACH_VAL(ht, current) { \
+            if (!flatten_php_array_to_##type_name(current, buffer, shape, ndims, dim + 1, sink, limit)) \
+                return 0; \
+        } ZEND_HASH_FOREACH_END(); \
+        return 1; \
     }
 
 DEFINE_FLATTENER(float32, float)
@@ -47,12 +97,6 @@ DEFINE_FLATTENER(uint32, uint32_t)
 DEFINE_FLATTENER(uint64, uint64_t)
 DEFINE_FLATTENER(_bool, bool)
 
-#define PINNED_TRANSFER_THRESHOLD_BYTES (1024 * 1024)
-
-static void flatten_php_array(zval *data, float *flat_array, int *index);
-static void extract_shape_from_array(zval *data, int *shape, int *ndims);
-static size_t calculate_total_size(zval *data);
-static cudaError_t cuda_flatten_php_array_to_gpu(zval *data, void *gpu_data, int *index, size_t total_size, dtype_t dtype);
 static cudaError_t cuda_copy_host_buffer_to_gpu(void *gpu_data, const void *host_data, size_t byte_count);
 
 tensor_t *tensor_cast_string(tensor_t *tensor, const char *new_dtype_str)
@@ -72,49 +116,127 @@ tensor_t *tensor_cast_string(tensor_t *tensor, const char *new_dtype_str)
     return tensor_cast(tensor, new_dtype);
 }
 
-tensor_t *create_tensor_from_php_array(zval *data, dtype_t dtype)
+static tensor_t *create_tensor_from_php_array_impl(zval *data, dtype_t dtype,
+                                                  const int *target_shape, int target_ndims)
 {
-    int shape[10] = {0};
+    int shape[MAX_DIMS];
     int ndims = 0;
-
-    extract_shape_from_array(data, shape, &ndims);
-
-    if (ndims == 0)
+    size_t elements = 1, element_size = dtype_size(dtype);
+    zval *level = data;
+    ZVAL_DEREF(level);
+    while (Z_TYPE_P(level) == IS_ARRAY)
     {
-        CUDA_THROW_INVALID("Invalid array: cannot determine dimensions");
+        HashTable *ht = Z_ARRVAL_P(level);
+        size_t length = zend_hash_num_elements(ht);
+        if (ndims == MAX_DIMS || length > INT_MAX || (length && elements > SIZE_MAX / length))
+        {
+            CUDA_THROW_INVALID("PHP array shape exceeds supported limits");
+            return NULL;
+        }
+        shape[ndims++] = (int)length;
+        elements *= length;
+        if (!length) break;
+        ZEND_HASH_FOREACH_VAL(ht, level) { break; } ZEND_HASH_FOREACH_END();
+        ZVAL_DEREF(level);
+    }
+    if (!ndims || !element_size || elements > SIZE_MAX / element_size)
+    {
+        CUDA_THROW_INVALID("Invalid PHP array shape or dtype");
         return NULL;
     }
-
-    tensor_t *tensor = cuda_tensor_create_empty_with_dtype(shape, ndims, dtype);
-    if (!tensor)
+    if (target_shape)
     {
-        CUDA_THROW_OOM("Failed to create empty tensor");
-        return NULL;
+        size_t target_elements = 1;
+        for (int d = 0; d < target_ndims; d++)
+            target_elements *= (size_t)target_shape[d];
+        if (ndims != 1 || elements != target_elements)
+        {
+            CUDA_THROW_INVALID("Flat array size does not match shape");
+            return NULL;
+        }
     }
 
-    size_t total_size = calculate_total_size(data);
-    int index = 0;
-
-    cudaError_t cuda_status = cuda_flatten_php_array_to_gpu(
-        data,
-        tensor->data,
-        &index,
-        total_size,
-        dtype);
-
-    if (cuda_status != cudaSuccess)
+    size_t bytes = elements * element_size;
+    int streaming = bytes >= 16 * 1024 * 1024;
+    size_t capacity = streaming ? 4 * 1024 * 1024 : bytes;
+    void *buffer = emalloc(capacity);
+    php_import_sink sink = {NULL, buffer, 0};
+    if (streaming)
     {
-        cuda_tensor_destroy(tensor);
-        CUDA_THROW_RUNTIME("Failed to copy data to GPU: %s", cudaGetErrorString(cuda_status));
+        sink.tensor = cuda_tensor_create_empty_dtype(target_shape ? target_shape : shape,
+                                                     target_shape ? target_ndims : ndims, dtype);
+        if (!sink.tensor)
+        {
+            efree(buffer);
+            return NULL;
+        }
+    }
+    const void *limit = streaming ? (char *)buffer + capacity : NULL;
+    void *end = buffer;
+    int valid = 0;
+#define FLATTEN_CASE(dtype_id, name, c_type) \
+    case dtype_id: { \
+        c_type *destination = buffer; \
+        valid = flatten_php_array_to_##name(data, &destination, shape, ndims, 0, &sink, limit); \
+        end = destination; \
+        break; \
+    }
+    switch (dtype)
+    {
+        FLATTEN_CASE(DTYPE_FLOAT32, float32, float)
+        FLATTEN_CASE(DTYPE_FLOAT64, float64, double)
+        FLATTEN_CASE(DTYPE_INT8, int8, int8_t)
+        FLATTEN_CASE(DTYPE_INT16, int16, int16_t)
+        FLATTEN_CASE(DTYPE_INT32, int32, int32_t)
+        FLATTEN_CASE(DTYPE_INT64, int64, int64_t)
+        FLATTEN_CASE(DTYPE_UINT8, uint8, uint8_t)
+        FLATTEN_CASE(DTYPE_UINT16, uint16, uint16_t)
+        FLATTEN_CASE(DTYPE_UINT32, uint32, uint32_t)
+        FLATTEN_CASE(DTYPE_UINT64, uint64, uint64_t)
+        FLATTEN_CASE(DTYPE_BOOL, _bool, bool)
+        default: break;
+    }
+#undef FLATTEN_CASE
+    if (!valid)
+    {
+        efree(buffer);
+        if (sink.tensor) cuda_tensor_destroy(sink.tensor);
+        if (!EG(exception))
+            CUDA_THROW_INVALID("Expected a rectangular PHP array containing only int, float or bool values");
         return NULL;
     }
-
+    tensor_t *tensor = sink.tensor;
+    if (streaming)
+    {
+        size_t remaining = (char *)end - (char *)buffer;
+        if (remaining && !php_import_flush(&sink, remaining))
+        {
+            cuda_tensor_destroy(tensor);
+            tensor = NULL;
+        }
+    }
+    else
+    {
+        tensor = cuda_tensor_create_from_host_buffer(
+            target_shape ? target_shape : shape, target_shape ? target_ndims : ndims, dtype, buffer, bytes);
+    }
+    efree(buffer);
     return tensor;
 }
 
-tensor_t *cuda_tensor_create_from_host_buffer(int *shape, int ndims, dtype_t dtype, const void *host_data, size_t byte_count)
+tensor_t *create_tensor_from_php_array(zval *data, dtype_t dtype)
 {
-    tensor_t *tensor = cuda_tensor_create_empty_with_dtype(shape, ndims, dtype);
+    return create_tensor_from_php_array_impl(data, dtype, NULL, 0);
+}
+
+tensor_t *cuda_tensor_create_from_flat_array(zval *data, const int *shape, int ndims, dtype_t dtype)
+{
+    return create_tensor_from_php_array_impl(data, dtype, shape, ndims);
+}
+
+tensor_t *cuda_tensor_create_from_host_buffer(const int *shape, int ndims, dtype_t dtype, const void *host_data, size_t byte_count)
+{
+    tensor_t *tensor = cuda_tensor_create_empty_dtype(shape, ndims, dtype);
     if (!tensor)
     {
         return NULL;
@@ -467,85 +589,6 @@ tensor_t *resolve_result_tensor(tensor_t *t)
     return cuda_tensor_create_empty_dtype(t->shape, t->ndims, t->dtype);
 }
 
-static cudaError_t cuda_flatten_php_array_to_gpu(zval *data, void *gpu_data, int *index, size_t total_size, dtype_t dtype)
-{
-    void *host_data;
-    size_t el_size = dtype_size(dtype);
-    size_t total_bytes = total_size * el_size;
-    bool use_pinned_host = total_bytes >= PINNED_TRANSFER_THRESHOLD_BYTES;
-
-    if (el_size == 0)
-    {
-        return cudaErrorInvalidValue;
-    }
-
-    cudaError_t status = cudaSuccess;
-    if (use_pinned_host)
-    {
-        status = cudaMallocHost(&host_data, total_bytes);
-        if (status != cudaSuccess)
-            return status;
-    }
-    else
-    {
-        host_data = emalloc(total_bytes);
-    }
-
-    int host_index = 0;
-
-    switch (dtype)
-    {
-    case DTYPE_FLOAT32:
-        flatten_php_array_to_float32(data, (float *)host_data, &host_index);
-        break;
-    case DTYPE_FLOAT64:
-        flatten_php_array_to_float64(data, (double *)host_data, &host_index);
-        break;
-    case DTYPE_INT32:
-        flatten_php_array_to_int32(data, (int32_t *)host_data, &host_index);
-        break;
-    case DTYPE_INT8:
-        flatten_php_array_to_int8(data, (int8_t *)host_data, &host_index);
-        break;
-    case DTYPE_INT16:
-        flatten_php_array_to_int16(data, (int16_t *)host_data, &host_index);
-        break;
-    case DTYPE_INT64:
-        flatten_php_array_to_int64(data, (int64_t *)host_data, &host_index);
-        break;
-    case DTYPE_UINT8:
-        flatten_php_array_to_uint8(data, (uint8_t *)host_data, &host_index);
-        break;
-    case DTYPE_UINT16:
-        flatten_php_array_to_uint16(data, (uint16_t *)host_data, &host_index);
-        break;
-    case DTYPE_UINT32:
-        flatten_php_array_to_uint32(data, (uint32_t *)host_data, &host_index);
-        break;
-    case DTYPE_UINT64:
-        flatten_php_array_to_uint64(data, (uint64_t *)host_data, &host_index);
-        break;
-    case DTYPE_BOOL:
-        flatten_php_array_to__bool(data, (bool *)host_data, &host_index);
-        break;
-    default:
-        if (use_pinned_host)
-            cudaFreeHost(host_data);
-        else
-            efree(host_data);
-        return cudaErrorInvalidValue;
-    }
-
-    status = cudaMemcpy(gpu_data, host_data, total_bytes, cudaMemcpyHostToDevice);
-
-    if (use_pinned_host)
-        cudaFreeHost(host_data);
-    else
-        efree(host_data);
-    *index = host_index;
-    return status;
-}
-
 static cudaError_t cuda_copy_host_buffer_to_gpu(void *gpu_data, const void *host_data, size_t byte_count)
 {
     if (byte_count == 0)
@@ -553,93 +596,6 @@ static cudaError_t cuda_copy_host_buffer_to_gpu(void *gpu_data, const void *host
         return cudaSuccess;
     }
     return cudaMemcpy(gpu_data, host_data, byte_count, cudaMemcpyHostToDevice);
-}
-
-static void flatten_php_array(zval *data, float *flat_array, int *index)
-{
-    if (Z_TYPE_P(data) != IS_ARRAY)
-    {
-        if (Z_TYPE_P(data) == IS_LONG)
-        {
-            flat_array[(*index)++] = (float)Z_LVAL_P(data);
-        }
-        else if (Z_TYPE_P(data) == IS_DOUBLE)
-        {
-            flat_array[(*index)++] = (float)Z_DVAL_P(data);
-        }
-        else if (Z_TYPE_P(data) == IS_TRUE)
-        {
-            flat_array[(*index)++] = 1.0f;
-        }
-        else if (Z_TYPE_P(data) == IS_FALSE)
-        {
-            flat_array[(*index)++] = 0.0f;
-        }
-        return;
-    }
-
-    HashTable *ht = Z_ARRVAL_P(data);
-    zval *current;
-    ZEND_HASH_FOREACH_VAL(ht, current)
-    {
-        flatten_php_array(current, flat_array, index);
-    }
-    ZEND_HASH_FOREACH_END();
-}
-
-static void extract_shape_from_array(zval *data, int *shape, int *ndims)
-{
-    *ndims = 0;
-
-    void extract_shape_recursive(zval * arr, int current_depth)
-    {
-        if (Z_TYPE_P(arr) != IS_ARRAY)
-            return;
-        if (current_depth >= 10)
-            return;
-
-        HashTable *arr_ht = Z_ARRVAL_P(arr);
-        int count = zend_array_count(arr_ht);
-
-        if (count == 0)
-            return;
-
-        shape[current_depth] = count;
-        if (current_depth >= *ndims)
-        {
-            *ndims = current_depth + 1;
-        }
-
-        if (count > 0)
-        {
-            zval *first = zend_hash_index_find(arr_ht, 0);
-            if (first != NULL)
-            {
-                extract_shape_recursive(first, current_depth + 1);
-            }
-        }
-    }
-
-    extract_shape_recursive(data, 0);
-}
-
-static size_t calculate_total_size(zval *data)
-{
-    if (Z_TYPE_P(data) != IS_ARRAY)
-    {
-        return 1;
-    }
-
-    size_t total = 1;
-    HashTable *ht = Z_ARRVAL_P(data);
-    zval *first = zend_hash_index_find(ht, 0);
-
-    if (first != NULL)
-    {
-        total = zend_array_count(ht) * calculate_total_size(first);
-    }
-
-    return total;
 }
 
 tensor_t *cuda_tensor_clone(tensor_t *base_tensor)

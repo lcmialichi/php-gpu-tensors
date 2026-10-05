@@ -4,6 +4,55 @@
 #include "dispatcher.h"
 #include "../data_types.h"
 
+struct transfer_layout
+{
+    int shape[10];
+    size_t strides[10];
+    int ndims;
+};
+
+template <typename T>
+__global__ void pack_strided_kernel(const T *source, T *destination, size_t elements, transfer_layout layout)
+{
+    for (size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+         i < elements; i += (size_t)blockDim.x * gridDim.x)
+    {
+        size_t remaining = i, offset = 0;
+        for (int d = layout.ndims - 1; d >= 0; d--)
+        {
+            offset += (remaining % layout.shape[d]) * layout.strides[d];
+            remaining /= layout.shape[d];
+        }
+        destination[i] = source[offset];
+    }
+}
+
+extern "C" cudaError_t launch_pack_strided(
+    const void *source, void *destination, size_t elements, size_t element_size,
+    const int *shape, const size_t *strides, int ndims)
+{
+    if (!elements) return cudaSuccess;
+    transfer_layout layout;
+    if (ndims < 1 || ndims > (int)(sizeof(layout.shape) / sizeof(layout.shape[0])))
+        return cudaErrorInvalidValue;
+    layout.ndims = ndims;
+    for (int d = 0; d < ndims; d++)
+    {
+        layout.shape[d] = shape[d];
+        layout.strides[d] = strides[d];
+    }
+    dim3 grid = cuda_grid_1d(elements);
+    switch (element_size)
+    {
+        case 1: pack_strided_kernel<<<grid, 256>>>((const uint8_t *)source, (uint8_t *)destination, elements, layout); break;
+        case 2: pack_strided_kernel<<<grid, 256>>>((const uint16_t *)source, (uint16_t *)destination, elements, layout); break;
+        case 4: pack_strided_kernel<<<grid, 256>>>((const uint32_t *)source, (uint32_t *)destination, elements, layout); break;
+        case 8: pack_strided_kernel<<<grid, 256>>>((const uint64_t *)source, (uint64_t *)destination, elements, layout); break;
+        default: return cudaErrorInvalidValue;
+    }
+    return cudaGetLastError();
+}
+
 __global__ void bernoulli_kernel(
     const float *values,
     bool *output_data,

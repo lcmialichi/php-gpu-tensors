@@ -6,6 +6,7 @@
 #include <string.h>
 #include "tensor_factory.h"
 #include "tensor_import.h"
+#include "tensor_transfer.h"
 #include "cuda_array_ce.h"
 #include "ca_struct.h"
 #include "zend_exceptions.h"
@@ -241,64 +242,17 @@ void *allocate_for_dtype(dtype_t dtype, size_t count)
 
 static void contiguous_array_to_php_array(contiguous_array_object *obj, zval *return_value)
 {
-    if (obj->ndims == 0)
+    if (!obj->tensor)
     {
-        array_init_size(return_value, 1);
-        zval value;
-        dtype_getters[obj->dtype](obj->cached_data_ptr, &value);
-        add_next_index_zval(return_value, &value);
+        CUDA_THROW_RUNTIME("Cannot export an uninitialized host array");
         return;
     }
-    if (obj->ndims == 1)
-    {
-        array_init_size(return_value, obj->total_elements);
-        size_t stride_bytes = obj->strides[0] * obj->element_size;
-        char *ptr = obj->cached_data_ptr;
-        dtype_getter_t getter = (obj->dtype < sizeof(dtype_getters) / sizeof(dtype_getter_t)) ? dtype_getters[obj->dtype] : NULL;
-
-        if (getter)
-        {
-            for (size_t i = 0; i < obj->total_elements; i++)
-            {
-                zval val;
-                getter(ptr + (i * stride_bytes), &val);
-                add_next_index_zval(return_value, &val);
-            }
-        }
-    }
-    else
-    {
-        array_init_size(return_value, obj->shape[0]);
-        size_t stride_bytes = obj->strides[0] * obj->element_size;
-
-        for (int i = 0; i < obj->shape[0]; i++)
-        {
-            zval slice_obj;
-            zend_object *zslice = contiguous_array_create_object(contiguous_array_ce);
-            contiguous_array_object *slice = contiguous_array_from_obj(zslice);
-
-            obj->tensor->ref_count++;
-            slice->tensor = obj->tensor;
-            slice->ndims = obj->ndims - 1;
-            slice->shape = obj->shape + 1;
-            slice->strides = obj->strides + 1;
-            slice->dtype = obj->dtype;
-            slice->element_size = obj->element_size;
-            slice->cached_data_ptr = obj->cached_data_ptr + (i * stride_bytes);
-            slice->is_contiguous = obj->is_contiguous;
-
-            size_t total = slice->shape[0];
-            for (int j = 1; j < slice->ndims; j++)
-                total *= slice->shape[j];
-            slice->total_elements = total;
-
-            zval nested_array;
-            contiguous_array_to_php_array(slice, &nested_array);
-            add_next_index_zval(return_value, &nested_array);
-
-            zend_object_release(zslice);
-        }
-    }
+    tensor_t descriptor = *obj->tensor;
+    descriptor.ndims = obj->ndims;
+    descriptor.shape = obj->shape;
+    descriptor.strides = obj->strides;
+    descriptor.dtype = obj->dtype;
+    tensor_host_to_php_array(return_value, &descriptor, obj->cached_data_ptr);
 }
 
 ZEND_METHOD(ContiguousArray, __serialize)

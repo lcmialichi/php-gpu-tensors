@@ -8,7 +8,8 @@
 
 tensor_t *tensor_cast_string(tensor_t *tensor, const char *new_dtype_str);
 tensor_t *create_tensor_from_php_array(zval *data, dtype_t dtype);
-tensor_t *cuda_tensor_create_from_host_buffer(int *shape, int ndims, dtype_t dtype, const void *host_data, size_t byte_count);
+tensor_t *cuda_tensor_create_from_flat_array(zval *data, const int *shape, int ndims, dtype_t dtype);
+tensor_t *cuda_tensor_create_from_host_buffer(const int *shape, int ndims, dtype_t dtype, const void *host_data, size_t byte_count);
 
 tensor_t *cuda_tensor_create_with_value(int *shape, int ndims, scalar_value_t value, dtype_t dtype);
 tensor_t *cuda_tensor_create(const int shape[], int ndims, const void *data, dtype_t dtype);

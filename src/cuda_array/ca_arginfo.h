@@ -10,6 +10,12 @@ ZEND_ARG_TYPE_INFO(0, data, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "\"float32\"")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cuda_array_fromFlatArray, 0, 2, Cuda\\CudaArray, 0)
+ZEND_ARG_TYPE_INFO(0, values, IS_ARRAY, 0)
+ZEND_ARG_TYPE_INFO(0, shape, IS_ARRAY, 0)
+ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "\"float32\"")
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cuda_array_fromBuffer, 0, 2, Cuda\\CudaArray, 0)
 ZEND_ARG_TYPE_INFO(0, bytes, IS_STRING, 0)
 ZEND_ARG_TYPE_INFO(0, shape, IS_ARRAY, 0)
@@ -99,6 +105,9 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(arginfo_cuda_array_toHost, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_cuda_array_toBuffer, 0, 0, IS_STRING, 0)
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_cuda_array_flatten, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
@@ -148,6 +157,7 @@ ZEND_END_ARG_INFO()
 static zend_function_entry cuda_array_methods[] = {
     ZEND_ME(CudaArray, __construct, arginfo_cuda_array_construct, ZEND_ACC_PUBLIC | ZEND_ACC_CTOR)
     ZEND_ME(CudaArray, fromBuffer, arginfo_cuda_array_fromBuffer, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(CudaArray, fromFlatArray, arginfo_cuda_array_fromFlatArray, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(CudaArray, fromFile, arginfo_cuda_array_fromFile, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(CudaArray, fromNpy, arginfo_cuda_array_fromNpy, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(CudaArray, where, arginfo_cuda_array_where, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
@@ -198,6 +208,7 @@ static zend_function_entry cuda_array_methods[] = {
 
                                                                                                                                                                 ZEND_ME(CudaArray, toArray, arginfo_cuda_array_toArray, ZEND_ACC_PUBLIC)
                                                                                                                                                                     ZEND_ME(CudaArray, toHost, arginfo_cuda_array_toHost, ZEND_ACC_PUBLIC)
+    ZEND_ME(CudaArray, toBuffer, arginfo_cuda_array_toBuffer, ZEND_ACC_PUBLIC)
                                                                                                                                                                         ZEND_ME(CudaArray, reshape, arginfo_cuda_array_reshape, ZEND_ACC_PUBLIC)
                                                                                                                                                                             ZEND_ME(CudaArray, flatten, arginfo_cuda_array_flatten, ZEND_ACC_PUBLIC)
 

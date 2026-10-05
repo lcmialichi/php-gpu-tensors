@@ -15,6 +15,7 @@ void cuda_array_shutdown();
 
 ZEND_METHOD(CudaArray, __construct);
 ZEND_METHOD(CudaArray, fromBuffer);
+ZEND_METHOD(CudaArray, fromFlatArray);
 ZEND_METHOD(CudaArray, fromFile);
 ZEND_METHOD(CudaArray, fromNpy);
 ZEND_METHOD(CudaArray, where);
@@ -77,5 +78,6 @@ ZEND_METHOD(CudaArray, getSize);
 ZEND_METHOD(CudaArray, getStrides);
 ZEND_METHOD(CudaArray, getNdims);
 ZEND_METHOD(CudaArray, toArray);
+ZEND_METHOD(CudaArray, toBuffer);
 ZEND_METHOD(CudaArray, toHost);
 ZEND_METHOD(CudaArray, dtype);

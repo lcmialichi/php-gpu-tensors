@@ -168,13 +168,15 @@ class CudaArray
 {
     /** Import row-major little-endian packed bytes matching shape and dtype. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32'): CudaArray {}
+    /** Copy a flat numeric PHP array directly into the requested row-major shape. */
+    public static function fromFlatArray(array $values, array $shape, ?string $dtype = 'float32'): CudaArray {}
     /** Read raw packed bytes (not .npy) into GPU storage. */
     public static function fromFile(string $path, array $shape, ?string $dtype = 'float32'): CudaArray {}
     /** Import a C-order little-endian NumPy .npy file. */
     public static function fromNpy(string $path): CudaArray {}
     /** Select x or y by nonzero mask with broadcasting; x/y must share dtype. */
     public static function where(CudaArray $condition, CudaArray $x, CudaArray $y): CudaArray {}
-    /** Copy a nonempty rectangular PHP array onto the GPU. */
+    /** Copy a rectangular numeric PHP array onto the GPU; keys are ignored in iteration order. */
     public function __construct(array $data, ?string $dtype = 'float32') {}
     /** Serialize contiguous GPU storage; views cannot be serialized directly. */
     public function __serialize(): array {}
@@ -265,6 +267,8 @@ class CudaArray
     public function toArray(): array {}
     /** Copy into contiguous CPU storage without PHP scalar expansion. */
     public function toHost(): ContiguousArray {}
+    /** Download logical row-major bytes directly, without PHP scalar expansion. */
+    public function toBuffer(): string {}
     /** Create a view with the same element count. */
     public function reshape(array $shape): CudaArray {}
     /** Create a one-dimensional view. */

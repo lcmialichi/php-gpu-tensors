@@ -1019,6 +1019,41 @@
                     ],
                     "returnType": "Cuda\\CudaArray"
                 },
+                "fromFlatArray": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "values",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "fromNpy": {
                     "static": true,
                     "abstract": false,
@@ -1489,6 +1524,13 @@
                     "returnsReference": false,
                     "parameters": [],
                     "returnType": "array"
+                },
+                "toBuffer": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
                 },
                 "toHost": {
                     "static": false,
