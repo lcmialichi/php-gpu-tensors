@@ -52,8 +52,8 @@ baseline with `php tests/check_api_surface.php --update` only for an approved
 API change.
 
 This beta is not a claim of production readiness or broad hardware support.
-Release tags use the `vMAJOR.MINOR.PATCH` format. CI creates a draft release
-only after the build and CPU-side tests pass; drafts contain source archives,
+Release tags use the `vMAJOR.MINOR.PATCH` format, with prerelease suffixes for betas.
+CI publishes a release only after the build and CPU-side tests pass; releases contain source archives,
 not prebuilt CUDA binaries.
 
 ## Build and test

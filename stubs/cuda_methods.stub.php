@@ -1,5 +1,8 @@
 <?php
 
+/** Compiled backend capabilities and actual per-thread/request dispatch counters; no GPU work is submitted. */
+function cuda_get_backend_info(): array {}
+
 /** Return the number of CUDA devices visible to this process. @throws \Cuda\RuntimeException */
 function cuda_get_device_count(): int
 {

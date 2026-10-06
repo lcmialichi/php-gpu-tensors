@@ -17,6 +17,9 @@
 #include "matmul_kernels.h"
 #include "cuda_exceptions.h"
 #include "fusion.h"
+#include "backend_info.h"
+#include "reduction_ops.h"
+#include "nn.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(cuda);
 
@@ -73,6 +76,7 @@ PHP_MINIT_FUNCTION(cuda)
     module_init();
     contiguous_array_init();
     fusion_init();
+    cuda_nn_init();
 
     if (!cuda_array_init(pool_size))
     {
@@ -93,6 +97,28 @@ ZEND_FUNCTION(cuda_get_device_count)
     }
 
     RETURN_LONG(count);
+}
+
+ZEND_FUNCTION(cuda_get_backend_info)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    cuda_backend_info info = {0};
+    cuda_blas_info(&info);
+    cuda_reduction_info(&info);
+    array_init(return_value);
+    add_assoc_bool(return_value, "cublas", info.cublas);
+    add_assoc_bool(return_value, "cublasLt", info.cublas_lt);
+    add_assoc_bool(return_value, "cub", 1);
+    add_assoc_bool(return_value, "cudnn", cuda_nn_available());
+    add_assoc_string(return_value, "precision", "fp32-strict");
+    add_assoc_string(return_value, "lastMatmul", info.last_matmul);
+    add_assoc_long(return_value, "lastBlasStatus", info.last_blas_status);
+    add_assoc_long(return_value, "cublasCalls", info.blas_calls);
+    add_assoc_long(return_value, "cublasLtCalls", info.lt_calls);
+    add_assoc_long(return_value, "builtinMatmulCalls", info.builtin_matmul_calls);
+    add_assoc_long(return_value, "cubReductionCalls", info.cub_calls);
+    add_assoc_long(return_value, "coalescedReductionCalls", info.axis_calls);
+    add_assoc_long(return_value, "genericReductionCalls", info.generic_reduce_calls);
 }
 
 ZEND_FUNCTION(cuda_get_device_info)
@@ -179,6 +205,8 @@ ZEND_FUNCTION(cuda_device_reset)
 {
     if (!fusion_check_mutation()) RETURN_THROWS();
     cuda_blas_shutdown();
+    cuda_reduction_shutdown();
+    cuda_nn_shutdown();
     if (!cuda_wrapper_device_reset())
     {
         zend_throw_exception(cuda_runtime_exception_ce, "Failed to reset device", 0);
@@ -277,6 +305,7 @@ ZEND_FUNCTION(cuda_get_peer_access)
 }
 
 static zend_function_entry cuda_functions[] = {
+    PHP_FE(cuda_get_backend_info, arginfo_cuda_get_backend_info)
     PHP_FE(cuda_get_device_count, arginfo_cuda_get_device_count)
         PHP_FE(cuda_get_device_info, arginfo_cuda_get_device_info)
             PHP_FE(cuda_set_device, arginfo_cuda_set_device)
@@ -294,6 +323,8 @@ static zend_function_entry cuda_functions[] = {
 PHP_MSHUTDOWN_FUNCTION(cuda)
 {
     cuda_blas_shutdown();
+    cuda_reduction_shutdown();
+    cuda_nn_shutdown();
     cuda_array_shutdown();
     cuda_wrapper_device_reset();
     return SUCCESS;
@@ -303,6 +334,8 @@ PHP_RSHUTDOWN_FUNCTION(cuda)
 {
     fusion_request_shutdown();
     cuda_blas_shutdown();
+    cuda_reduction_shutdown();
+    cuda_nn_shutdown();
     return SUCCESS;
 }
 

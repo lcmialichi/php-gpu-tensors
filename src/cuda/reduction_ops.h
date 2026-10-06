@@ -9,6 +9,9 @@
 extern "C"
 {
 #endif
+    cudaError_t cuda_reduction_status(void);
+    void cuda_reduction_shutdown(void);
+    cudaError_t cuda_reduction_release_stream(cudaStream_t stream);
     void launch_reduction(
         void *input, void *output,
         dtype_t dtype, operation_type_t op_type,

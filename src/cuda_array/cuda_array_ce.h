@@ -9,6 +9,8 @@
 #include "ca_struct.h"
 
 extern zend_class_entry *cuda_array_ce;
+cuda_array_obj *php_cuda_array_fetch_valid_object(zend_object *obj);
+void create_result_object(zval *return_value, tensor_t *result_tensor);
 
 int cuda_array_init(size_t size);
 void cuda_array_shutdown();

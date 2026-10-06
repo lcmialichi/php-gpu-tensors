@@ -2,6 +2,21 @@
 
 namespace Cuda;
 
+/** Optional synchronous cuDNN inference. NCHW inputs, OIHW filters, contiguous FP32; no Fusion capture. */
+final class NN
+{
+    private function __construct() {}
+    public static function isAvailable(): bool {}
+    /** Cross-correlation, floor output dimensions, optional bias per output channel. */
+    public static function conv2d(CudaArray $input, CudaArray $weights, ?CudaArray $bias = null,
+        array $stride = [1, 1], array $padding = [0, 0], array $dilation = [1, 1], int $groups = 1): CudaArray {}
+    /** Max pooling or average pooling excluding padded cells; floor output dimensions. */
+    public static function pool2d(CudaArray $input, array $window, array $stride = [2, 2],
+        array $padding = [0, 0], string $mode = 'max'): CudaArray {}
+    /** Stable softmax across channels independently at each N,H,W coordinate. */
+    public static function softmax(CudaArray $input): CudaArray {}
+}
+
 /** Base error from the CUDA extension. */
 class Exception extends \Exception {}
 /** Device or kernel operation failed. */

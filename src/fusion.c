@@ -1,5 +1,6 @@
 #include "fusion_internal.h"
 #include "cuda_array_ce.h"
+#include "reduction_ops.h"
 #include "zend_interfaces.h"
 #include "zend_fibers.h"
 #include <time.h>
@@ -780,7 +781,12 @@ static void fusion_execution_free(zend_object *object)
         {
             if (!execution->finished) fusion_execution_finish(execution);
             if (execution->event) fusion_cleanup_error("Destroying completion event", cuEventDestroy(execution->event));
-            if (execution->stream) fusion_cleanup_error("Destroying async stream", cuStreamDestroy(execution->stream));
+            if (execution->stream) {
+                cudaError_t workspace_error = cuda_reduction_release_stream((cudaStream_t)execution->stream);
+                if (workspace_error != cudaSuccess)
+                    php_error_docref(NULL, E_WARNING, "Releasing reduction workspace failed: %s", cudaGetErrorString(workspace_error));
+                fusion_cleanup_error("Destroying async stream", cuStreamDestroy(execution->stream));
+            }
             fusion_cleanup_error("Restoring async context", cuCtxPopCurrent(&previous));
         }
         else php_error_docref(NULL, E_WARNING, "Cannot clean up fusion execution context (CUDA error %d)", error);

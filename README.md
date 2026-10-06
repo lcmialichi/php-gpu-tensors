@@ -22,7 +22,7 @@ at runtime with NVRTC. Optionally fuse tensor expressions into compiled plans
 that replay quickly, with asynchronous execution and CUDA Graph for compatible
 plans.
 
-**Status:** beta (`0.1.0-beta.4`) · Linux · PHP 8.1–8.5, NTS and ZTS · NVIDIA GPU
+**Status:** beta (`0.1.0-beta.5`) · Linux · PHP 8.1–8.5, NTS and ZTS · NVIDIA GPU
 required. See [Validation status](#validation-status) for exactly what has been
 tested on real GPUs.
 
@@ -150,6 +150,18 @@ Build options:
 - `CUDA_USE_CUBLAS=no ./compile.sh` to use the extension's built-in CUDA matrix
   kernels instead of cuBLAS (cuBLAS is used when available for compatible larger
   matrix products).
+- `CUDA_USE_CUBLASLT=no` to retain cuBLAS without cuBLASLt. Both default to
+  enabled when their toolkit headers and libraries are available.
+- `CUDA_USE_CUDNN=auto` (default), `yes` (require it), or `no` (disable it).
+  `CUDA_CUDNN_ROOT=/path/to/cudnn` selects a prefix containing `include/cudnn.h`
+  and `lib/libcudnn.so` or `lib64/libcudnn.so`. Runtime libraries must also be
+  discoverable by the dynamic loader. cuDNN is optional; CUB headers from the
+  CUDA Toolkit are required.
+
+CUDA compiler flags are tracked by the build, and changing backend flags or
+CUDA architecture rebuilds the affected CUDA objects after reconfiguration.
+Header dependencies are tracked too; a stale object must not silently retain
+an old backend configuration.
 
 ### With PIE 🥧
 
@@ -157,7 +169,7 @@ The extension is published as
 [`lcmialichi/php-gpu-tensors`](https://packagist.org/packages/lcmialichi/php-gpu-tensors).
 
 ```bash
-pie install lcmialichi/php-gpu-tensors:0.1.0-beta.4
+pie install lcmialichi/php-gpu-tensors:0.1.0-beta.5
 ```
 
 Use `0.1.0-beta.4` or newer for the Fusion APIs and the training example
@@ -181,6 +193,102 @@ docker compose run --rm php_cuda_dev bash -lc './compile.sh && ./run-tests.sh --
 run only the host-side C tests in build environments without a GPU; this does not
 validate CUDA execution. `--require-gpu` fails immediately when no GPU is visible,
 instead of treating skipped GPU tests as success.
+
+## Accelerated kernels and backend diagnostics
+
+The backend additions and `Cuda\NN` below require `0.1.0-beta.5` or newer;
+they are not included in the previously published `0.1.0-beta.4` package.
+
+The execution path is hybrid: custom kernels/Fusion for elementwise work,
+CUB for large contiguous reductions, cuBLAS/cuBLASLt for eligible matrix
+products, and optional cuDNN for CNN inference. Small matrix products retain a
+lightweight CUDA kernel; larger incompatible layouts use shared-memory tiling.
+Padded/transposed BLAS-compatible
+views and batched broadcasts remain supported; large vector dot products use
+cuBLAS directly without the general GEMM size threshold.
+
+Large global `sum`, `mean`, `prod`, `argMin` and `argMax` use parallel CUB
+reductions, as do integral `min`/`max`. Non-last-axis reductions can use a
+coalesced column kernel. Scratch storage is cached per device and stream, so
+concurrent `FusionGraph::runAsync()` calls do not share writable workspace.
+Arg reductions retain first-index tie behavior and ignore NaNs as before.
+Floating `min`/`max` retain the original kernel and reduction order to preserve
+their existing NaN semantics. Parallel floating sum/mean/product may change
+low-order bits because the addition/multiplication order changes.
+
+BLAS uses strict FP32 math (no TF32 or implicit FP16). cuBLASLt algorithms are
+cached by layout with zero shared workspace, allowing concurrent Fusion streams.
+Unavailable algorithms fall back to cuBLAS; submission failures raise exceptions
+instead of silently running another backend. This does not add bias/activation
+epilogues to Fusion or change the existing dtype API.
+
+```php
+print_r(cuda_get_backend_info());
+// cublas, cublasLt, cub, cudnn: compiled capabilities
+// lastMatmul: none, builtin, cublas, cublasDot, cublasBatched, cublasLt
+// lastBlasStatus: status of the most recent BLAS call (0 = success)
+// cublasCalls, cublasLtCalls, builtinMatmulCalls,
+// cubReductionCalls, coalescedReductionCalls, genericReductionCalls
+```
+
+Counters are per request/thread and reset on device reset. They count native
+submissions, not completed GPU executions or CUDA Graph replays. The
+`precision` field describes the BLAS/CNN FP32 policy, not all tensor dtypes.
+
+Use [`examples/10_kernel_benchmark.php`](examples/10_kernel_benchmark.php) for a
+reproducible before/after benchmark with numerical checks, warm resident inputs,
+raw samples and binary hashes:
+
+```bash
+php -n -d memory_limit=-1 -d extension=./cuda_build-8.3/modules/cuda.so \
+  examples/10_kernel_benchmark.php \
+  --binary=./cuda_build-8.3/modules/cuda.so --output=kernel-results.json
+```
+
+This measures PHP/API wall-clock latency including output allocation and final
+GPU synchronization, **not isolated CUDA-event kernel time**. Run without other
+GPU workloads for useful comparisons; speedups depend on shape and hardware.
+
+## CNN inference with optional cuDNN
+
+`Cuda\NN` is a final, static inference API. All inputs must be initialized,
+contiguous **float32** tensors in **NCHW** format; filters use **OIHW**. Existing
+tensor operations retain their dtype support. NN does not silently cast, pack
+views, run on CPU or participate in Fusion capture.
+
+```php
+use Cuda\CudaArray;
+use Cuda\NN;
+
+if (!NN::isAvailable()) {
+    throw new RuntimeException('Build with cuDNN to use CNN inference.');
+}
+$input = CudaArray::ones([8, 3, 32, 32]);
+$weights = CudaArray::ones([16, 3, 3, 3]);
+$bias = CudaArray::zeros([16]);
+$features = NN::conv2d($input, $weights, $bias, padding: [1, 1]);
+$pooled = NN::pool2d($features, window: [2, 2], stride: [2, 2]);
+$probabilities = NN::softmax($pooled); // channel axis, at each N,H,W coordinate
+```
+
+- `NN::conv2d(input, weights, bias: null, stride: [1,1], padding: [0,0],
+  dilation: [1,1], groups: 1)` performs cross-correlation, with optional per-output
+  channel bias. Groups must divide input and output channels; filter input
+  channels must equal input channels divided by groups.
+- `NN::pool2d(input, window, stride: [2,2], padding: [0,0], mode: 'max')`
+  supports deterministic max pooling and `'average'` excluding padded cells.
+  Padding must be smaller than the window.
+- `NN::softmax(input)` uses accurate channel softmax.
+- Spatial output dimensions use floor division. Selectors are lists of exactly
+  two integers. Empty axes and tensors/output shapes exceeding `INT_MAX` elements
+  are rejected.
+
+Convolution uses deterministic FP32 FMA algorithms with a cached shape plan and
+up to 32 MiB of reusable workspace. Calls complete on the default stream before
+returning. The initial integration uses cuDNN's fixed-function inference API,
+not the frontend graph API; it has been validated with cuDNN 8.9. Backpropagation,
+mixed precision, asynchronous CNN plans and convolution/activation graph fusion
+are not part of this API yet. Methods throw explicitly when cuDNN is unavailable.
 
 ## GPU Tensors in PHP
 
@@ -613,10 +721,11 @@ runtime validation on each PHP version and thread mode.
 
 | PHP / mode | GPU | What was validated |
 | --- | --- | --- |
-| 8.3 NTS | GeForce MX570 A | Current release: 41 GPU tests (including gradient/lifetime regressions) plus an Optdigits training check |
-| 8.3 and 8.5 NTS | GeForce MX570 A | Current source: 41 GPU PHPT tests on each runtime, including constructor validation, typed exports, strided packing and staging-window boundaries; CPU/API checks also passed |
+| 8.3 NTS with cuDNN 8.9.7 | GeForce MX570 A | Beta.5: all 44 GPU PHPT tests passed, including CNN inference; CPU/API checks passed |
+| 8.3 and 8.5 NTS without cuDNN | GeForce MX570 A | Beta.5: 43 GPU PHPT tests passed on each runtime; one optional cuDNN test skipped. CPU/API checks passed |
+| 8.3 NTS without cuBLAS/cuDNN | GeForce MX570 A | Beta.5: 43 GPU PHPT tests passed; one optional cuDNN test skipped. CPU/API checks passed |
 | 8.5 NTS and ZTS, 8.1 ZTS | RTX A2000 | Earlier tensor/JIT validation only; does not cover the latest Fusion changes |
-| All ten PHP 8.1–8.5 × NTS/ZTS combinations | none | Builds and CPU/API checks for this release |
+| All ten PHP 8.1–8.5 × NTS/ZTS combinations | none | CI build/CPU/API matrix; GPU execution is not covered by CI |
 
 **Tested on another GPU, PHP version or CUDA version?** Reports are very welcome:
 please [open an issue](https://github.com/lcmialichi/php-gpu-tensors/issues) with

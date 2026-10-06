@@ -746,7 +746,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "__serialize": {
                     "static": false,
@@ -777,7 +777,7 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "add": {
                     "static": false,
@@ -794,7 +794,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "argMax": {
                     "static": false,
@@ -811,7 +811,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "argMin": {
                     "static": false,
@@ -828,7 +828,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "astype": {
                     "static": false,
@@ -845,14 +845,14 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "ceil": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "concat": {
                     "static": false,
@@ -878,14 +878,14 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "cos": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "divide": {
                     "static": false,
@@ -902,7 +902,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "dtype": {
                     "static": false,
@@ -926,28 +926,28 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "exp": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "flatten": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "floor": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "fromBuffer": {
                     "static": true,
@@ -982,7 +982,7 @@
                             "default": "float32"
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "fromFile": {
                     "static": true,
@@ -1017,7 +1017,7 @@
                             "default": "float32"
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "fromFlatArray": {
                     "static": true,
@@ -1069,7 +1069,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "full": {
                     "static": true,
@@ -1104,7 +1104,7 @@
                             "default": "float32"
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "ge": {
                     "static": false,
@@ -1121,7 +1121,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "getNdims": {
                     "static": false,
@@ -1166,7 +1166,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "le": {
                     "static": false,
@@ -1183,14 +1183,14 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "log": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "lt": {
                     "static": false,
@@ -1207,7 +1207,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "matmul": {
                     "static": false,
@@ -1216,7 +1216,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray",
+                            "type": "self",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1224,7 +1224,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "max": {
                     "static": false,
@@ -1241,7 +1241,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "mean": {
                     "static": false,
@@ -1258,7 +1258,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "min": {
                     "static": false,
@@ -1275,7 +1275,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "multiply": {
                     "static": false,
@@ -1292,7 +1292,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "ne": {
                     "static": false,
@@ -1309,14 +1309,14 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "neg": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "ones": {
                     "static": true,
@@ -1342,7 +1342,7 @@
                             "default": "float32"
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "power": {
                     "static": false,
@@ -1359,7 +1359,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "prod": {
                     "static": false,
@@ -1376,7 +1376,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "rand": {
                     "static": true,
@@ -1420,7 +1420,7 @@
                             "default": "float32"
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "reshape": {
                     "static": false,
@@ -1437,21 +1437,21 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "round": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "sin": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "slice": {
                     "static": false,
@@ -1468,14 +1468,14 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "sqrt": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "subtract": {
                     "static": false,
@@ -1492,7 +1492,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "sum": {
                     "static": false,
@@ -1509,14 +1509,14 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "tan": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "toArray": {
                     "static": false,
@@ -1554,7 +1554,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "where": {
                     "static": true,
@@ -1563,7 +1563,7 @@
                     "parameters": [
                         {
                             "name": "condition",
-                            "type": "Cuda\\CudaArray",
+                            "type": "self",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1572,7 +1572,7 @@
                         },
                         {
                             "name": "x",
-                            "type": "Cuda\\CudaArray",
+                            "type": "self",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1581,7 +1581,7 @@
                         },
                         {
                             "name": "y",
-                            "type": "Cuda\\CudaArray",
+                            "type": "self",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1589,7 +1589,7 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 },
                 "zeros": {
                     "static": true,
@@ -1615,7 +1615,7 @@
                             "default": "float32"
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "self"
                 }
             }
         },
@@ -1812,6 +1812,176 @@
             "abstract": false,
             "final": false,
             "methods": []
+        },
+        "Cuda\\NN": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "conv2d": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "input",
+                            "type": "Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "weights",
+                            "type": "Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "bias",
+                            "type": "?Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "stride",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                1,
+                                1
+                            ]
+                        },
+                        {
+                            "name": "padding",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                0,
+                                0
+                            ]
+                        },
+                        {
+                            "name": "dilation",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                1,
+                                1
+                            ]
+                        },
+                        {
+                            "name": "groups",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1
+                        }
+                    ],
+                    "returnType": "Cuda\\CudaArray"
+                },
+                "isAvailable": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "bool"
+                },
+                "pool2d": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "input",
+                            "type": "Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "window",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "stride",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                2,
+                                2
+                            ]
+                        },
+                        {
+                            "name": "padding",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                0,
+                                0
+                            ]
+                        },
+                        {
+                            "name": "mode",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "max"
+                        }
+                    ],
+                    "returnType": "Cuda\\CudaArray"
+                },
+                "softmax": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "input",
+                            "type": "Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "Cuda\\CudaArray"
+                }
+            }
         },
         "Cuda\\Number": {
             "parent": null,
@@ -2014,6 +2184,10 @@
         "cuda_device_reset": {
             "parameters": [],
             "returnType": "bool"
+        },
+        "cuda_get_backend_info": {
+            "parameters": [],
+            "returnType": "array"
         },
         "cuda_get_current_device": {
             "parameters": [],

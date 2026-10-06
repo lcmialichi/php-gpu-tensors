@@ -336,6 +336,7 @@ struct ArgIdentity<T, AddOpT<T>>
 template <typename T>
 struct ArgIdentity<T, MaxOpT<T>>
 {
+    static constexpr T integral_value = std::numeric_limits<T>::lowest();
     __device__ __forceinline__ static T get_init_val()
     {
         if constexpr (std::is_floating_point<T>::value)
@@ -348,7 +349,7 @@ struct ArgIdentity<T, MaxOpT<T>>
         }
         else
         {
-            return (T)INT_MIN;
+            return integral_value;
         }
     }
 };
@@ -356,6 +357,7 @@ struct ArgIdentity<T, MaxOpT<T>>
 template <typename T>
 struct ArgIdentity<T, MinOpT<T>>
 {
+    static constexpr T integral_value = std::numeric_limits<T>::max();
     __device__ __forceinline__ static T get_init_val()
     {
         if constexpr (std::is_floating_point<T>::value)
@@ -368,7 +370,7 @@ struct ArgIdentity<T, MinOpT<T>>
         }
         else
         {
-            return (T)INT_MAX;
+            return integral_value;
         }
     }
 };

@@ -60,14 +60,64 @@ if test "$PHP_CUDA" != "no"; then
     PHP_ADD_LIBRARY_WITH_PATH(curand, $CUDA_LIB_DIR, CUDA_SHARED_LIBADD)
 
     CUDA_CUBLAS_FLAG=""
+    AC_ARG_VAR([CUDA_USE_CUBLAS], [Enable cuBLAS (yes, no; default yes)])
+    AC_ARG_VAR([CUDA_USE_CUBLASLT], [Enable cuBLASLt (yes, no; default yes)])
+    AC_ARG_VAR([CUDA_CUDNN_ROOT], [Optional cuDNN prefix containing include and lib or lib64])
+    AC_ARG_VAR([CUDA_USE_CUDNN], [Enable cuDNN (auto, yes, no; default auto)])
+    case "${CUDA_USE_CUBLAS:-yes}" in
+      yes|no) ;;
+      *) AC_MSG_ERROR([CUDA_USE_CUBLAS must be yes or no]);;
+    esac
+    case "${CUDA_USE_CUBLASLT:-yes}" in
+      yes|no) ;;
+      *) AC_MSG_ERROR([CUDA_USE_CUBLASLT must be yes or no]);;
+    esac
+    case "${CUDA_USE_CUDNN:-auto}" in
+      auto|yes|no) ;;
+      *) AC_MSG_ERROR([CUDA_USE_CUDNN must be auto, yes or no]);;
+    esac
+    CUDA_BACKEND_FLAGS=""
     if test "${CUDA_USE_CUBLAS:-yes}" != "no" && test -f "$PHP_CUDA/include/cublas_v2.h"; then
         PHP_CHECK_LIBRARY(cublas, cublasCreate_v2, [
             CUDA_CUBLAS_FLAG="-DHAVE_CUBLAS"
+            AC_DEFINE(HAVE_CUBLAS, 1, [cuBLAS available])
+            PHP_ADD_LIBRARY_WITH_PATH(cublas, $CUDA_LIB_DIR, CUDA_SHARED_LIBADD)
         ], [
             AC_MSG_WARN([cuBLAS not found; using built-in matmul kernels])
         ], [-L$CUDA_LIB_DIR])
     fi
     PHP_SUBST(CUDA_CUBLAS_FLAG)
+    if test -n "$CUDA_CUBLAS_FLAG" && test "${CUDA_USE_CUBLASLT:-yes}" != "no" && test -f "$PHP_CUDA/include/cublasLt.h"; then
+        PHP_CHECK_LIBRARY(cublasLt, cublasLtMatmul, [
+            CUDA_BACKEND_FLAGS="$CUDA_BACKEND_FLAGS -DHAVE_CUBLASLT"
+            AC_DEFINE(HAVE_CUBLASLT, 1, [cuBLASLt available])
+            PHP_ADD_LIBRARY_WITH_PATH(cublasLt, $CUDA_LIB_DIR, CUDA_SHARED_LIBADD)
+        ], [AC_MSG_WARN([cuBLASLt unavailable; using cuBLAS])], [-L$CUDA_LIB_DIR])
+    fi
+    if test ! -f "$PHP_CUDA/include/cub/cub.cuh"; then
+        AC_MSG_ERROR([CUB headers required; install CUDA toolkit development headers])
+    fi
+    CUDNN_ROOT="${CUDA_CUDNN_ROOT:-$PHP_CUDA}"
+    CUDNN_LIB_DIR="$CUDNN_ROOT/lib64"
+    if test ! -f "$CUDNN_LIB_DIR/libcudnn.so"; then
+        CUDNN_LIB_DIR="$CUDNN_ROOT/lib"
+    fi
+    if test "${CUDA_USE_CUDNN:-auto}" != "no" && test -f "$CUDNN_ROOT/include/cudnn.h"; then
+        PHP_CHECK_LIBRARY(cudnn, cudnnCreate, [
+            CUDA_BACKEND_FLAGS="$CUDA_BACKEND_FLAGS -DHAVE_CUDNN -I$CUDNN_ROOT/include"
+            AC_DEFINE(HAVE_CUDNN, 1, [cuDNN available])
+            PHP_ADD_INCLUDE($CUDNN_ROOT/include)
+            PHP_ADD_LIBRARY_WITH_PATH(cudnn, $CUDNN_LIB_DIR, CUDA_SHARED_LIBADD)
+        ], [
+            if test "$CUDA_USE_CUDNN" = "yes"; then
+                AC_MSG_ERROR([Requested cuDNN library not found])
+            fi
+            AC_MSG_WARN([cuDNN unavailable; CNN methods will report unavailable backend])
+        ], [-L$CUDNN_LIB_DIR])
+    elif test "$CUDA_USE_CUDNN" = "yes"; then
+        AC_MSG_ERROR([Requested cuDNN headers not found; set CUDA_CUDNN_ROOT])
+    fi
+    PHP_SUBST(CUDA_BACKEND_FLAGS)
 
     CXXFLAGS="$CXXFLAGS -O2"
     CFLAGS="$CFLAGS -O2"
@@ -95,10 +145,8 @@ if test "$PHP_CUDA" != "no"; then
     PHP_SUBST(NVCC)
     PHP_SUBST(CUDA_ARCH_FLAG)
 
-    PHP_EVAL_LIBLINE([-L. -lcudakernels], CUDA_SHARED_LIBADD)
-    if test -n "$CUDA_CUBLAS_FLAG"; then
-        CUDA_SHARED_LIBADD="$CUDA_SHARED_LIBADD -lcublas"
-    fi
+    dnl CUDA kernels are a static archive: its backend dependencies must follow it.
+    CUDA_SHARED_LIBADD="-L. -lcudakernels $CUDA_SHARED_LIBADD"
     
     PHP_SUBST(CUDA_SHARED_LIBADD)
     SRC_FILES="\
@@ -110,6 +158,7 @@ if test "$PHP_CUDA" != "no"; then
     src/cuda_wrapper.cpp \
     src/cuda_array/cuda_array_ce.c \ 
     src/contiguous_array_ce.c \
+    src/nn.c \
     src/cuda_array/ca_private.c \
     src/cuda_array/tensor_transfer.c \
     src/data_types.c \

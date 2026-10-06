@@ -4,6 +4,7 @@
 #include "unary_ops.h"
 #include "tensor_factory.h"
 #include "matmul_kernels.h"
+#include "backend_info.h"
 #include "scalar_ops.h"
 #include "operations.h"
 #include <stdlib.h>
@@ -231,7 +232,7 @@ tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t ope
         total_elements_out,
         0, NULL);
 
-    err = cudaGetLastError();
+    err = cuda_reduction_status();
     if (err == cudaSuccess) err = cudaDeviceSynchronize();
     if (err != cudaSuccess)
     {
@@ -271,7 +272,7 @@ tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operati
     launch_reduction(input->data, result->data, input->dtype, operation_type, input->shape, input->ndims,
                      result_shape_arr, input->strides, result_ndims, axis, total_elements_out, 0, NULL);
 
-    cudaError_t err = cudaGetLastError();
+    cudaError_t err = cuda_reduction_status();
     if (err == cudaSuccess) err = cudaDeviceSynchronize();
     if (err != cudaSuccess)
     {
@@ -445,6 +446,9 @@ tensor_t *cuda_tensor_matmul_nd(tensor_t *a, tensor_t *b)
 
     if (status == 0)
     {
+        cuda_backend_info info = {0};
+        cuda_blas_info(&info);
+        CUDA_THROW_RUNTIME("Matmul backend submission failed (cuBLAS status %d)", info.last_blas_status);
         cuda_tensor_destroy(result);
         return NULL;
     }
@@ -489,6 +493,9 @@ tensor_t *cuda_tensor_matmul(tensor_t *a, tensor_t *b)
 
     if (status == 0)
     {
+        cuda_backend_info info = {0};
+        cuda_blas_info(&info);
+        CUDA_THROW_RUNTIME("Matmul backend submission failed (cuBLAS status %d)", info.last_blas_status);
         cuda_tensor_destroy(result);
         return NULL;
     }

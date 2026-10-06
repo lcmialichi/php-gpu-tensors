@@ -20,11 +20,9 @@ zend_class_entry *cuda_array_ce;
 static zend_object_handlers cuda_array_handlers;
 
 static cuda_array_obj *php_cuda_array_fetch_object(zend_object *obj);
-static cuda_array_obj *php_cuda_array_fetch_valid_object(zend_object *obj);
 static cuda_array_obj *php_cuda_array_fetch_deferred_object(zend_object *obj);
 static zend_object *cuda_array_create_object(zend_class_entry *class_type);
 static void cuda_array_free_object(zend_object *object);
-static void create_result_object(zval *return_value, tensor_t *result_tensor);
 static zend_object *cuda_array_clone_obj(zend_object *old_object);
 static int parse_slice_parameter(zval *param, slice_info_t *slice);
 static zend_result cuda_array_do_operation(zend_uchar opcode, zval *result, zval *op1, zval *op2);
@@ -574,8 +572,9 @@ ZEND_METHOD(CudaArray, matmul)
     tensor_t *result_tensor = cuda_tensor_matmul(tensor_a, tensor_b);
     if (result_tensor == NULL)
     {
-        CUDA_THROW_INVALID("Matrix multiplication failed - incompatible dimensions");
-        RETURN_NULL();
+        if (!EG(exception))
+            CUDA_THROW_INVALID("Matrix multiplication failed - incompatible dimensions");
+        RETURN_THROWS();
     }
 
     create_result_object(return_value, result_tensor);
@@ -1387,7 +1386,7 @@ static cuda_array_obj *php_cuda_array_fetch_object(zend_object *obj)
     return (cuda_array_obj *)((char *)obj - XtOffsetOf(cuda_array_obj, obj));
 }
 
-static cuda_array_obj *php_cuda_array_fetch_valid_object(zend_object *obj)
+cuda_array_obj *php_cuda_array_fetch_valid_object(zend_object *obj)
 {
     cuda_array_obj *object = php_cuda_array_fetch_deferred_object(obj);
     if (object && !fusion_materialize(object->tensor_handle)) return NULL;
@@ -1491,7 +1490,7 @@ static void cuda_array_free_object(zend_object *object)
     zend_object_std_dtor(&obj->obj);
 }
 
-static void create_result_object(zval *return_value, tensor_t *result_tensor)
+void create_result_object(zval *return_value, tensor_t *result_tensor)
 {
     object_init_ex(return_value, cuda_array_ce);
     cuda_array_obj *result_obj = php_cuda_array_fetch_object(Z_OBJ_P(return_value));
@@ -1588,7 +1587,7 @@ static void reduction_operation_handler(INTERNAL_FUNCTION_PARAMETERS, const char
 
     if (result_tensor == NULL)
     {
-        CUDA_THROW_RUNTIME("%s failed", operation_name);
+        if (!EG(exception)) CUDA_THROW_RUNTIME("%s failed", operation_name);
         RETURN_THROWS();
     }
 

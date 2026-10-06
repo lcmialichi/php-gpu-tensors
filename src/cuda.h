@@ -5,7 +5,7 @@
 #include "operations.h"
 #include <cuda_runtime.h>
 
-#define PHP_CUDA_VERSION "0.1.0-beta.4"
+#define PHP_CUDA_VERSION "0.1.0-beta.5"
 #define PHP_CUDA_EXTNAME "cuda"
 
 extern zend_module_entry cuda_module_entry;
@@ -32,6 +32,7 @@ ZEND_EXTERN_MODULE_GLOBALS(cuda);
 #endif
 
 ZEND_FUNCTION(cuda_get_device_count);
+ZEND_FUNCTION(cuda_get_backend_info);
 ZEND_FUNCTION(cuda_get_device_info);
 ZEND_FUNCTION(cuda_set_device);
 ZEND_FUNCTION(cuda_get_current_device);

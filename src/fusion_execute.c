@@ -1,5 +1,6 @@
 #include "fusion_internal.h"
 #include "matmul_kernels.h"
+#include "backend_info.h"
 #include "reduction_ops.h"
 void fusion_cleanup_error(const char *operation, CUresult error)
 {
@@ -96,7 +97,9 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
                                              result->shape, result->strides, result->ndims, (cudaStream_t)stream);
         if (!ok)
         {
-            CUDA_THROW_RUNTIME("Fusion matmul submission failed");
+            cuda_backend_info info = {0};
+            cuda_blas_info(&info);
+            CUDA_THROW_RUNTIME("Fusion matmul submission failed (cuBLAS status %d)", info.last_blas_status);
             return 0;
         }
         return 1;
@@ -124,7 +127,7 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
                          axis == -1 ? shape : a->shape, axis == -1 ? 1 : a->ndims,
                          result->shape, axis == -1 ? stride : a->strides,
                          result->ndims, axis == -1 ? 0 : axis, result->total_size, 0, (cudaStream_t)stream);
-    cudaError_t error = cudaGetLastError();
+    cudaError_t error = cuda_reduction_status();
     if (error != cudaSuccess)
     {
         CUDA_THROW_RUNTIME("Fusion reduction submission failed: %s", cudaGetErrorString(error));

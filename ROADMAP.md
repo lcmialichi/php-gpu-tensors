@@ -90,7 +90,10 @@ Focus: **ecosystem**
 
 ### Integrations
 - [ ] Windows support (at least via WSL2) and macOS (via eGPU if viable)
-- [ ] Bindings to further CUDA libraries: cuDNN and cuSPARSE (cuBLAS is optional today)
+- [x] Optional cuDNN FP32 CNN inference: convolution, pooling and channel softmax
+- [x] Parallel CUB global reductions and layout/alignment-cached cuBLASLt GEMM
+- [ ] cuDNN training/backward, mixed precision and CNN graph fusion
+- [ ] Optional cuSPARSE bindings
 - [ ] Plugins for PHP frameworks (Laravel, Symfony) for ML tasks
 
 ### Education
