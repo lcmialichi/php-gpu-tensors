@@ -13,6 +13,7 @@
 #include "tensor.h"
 #include "cuda_exceptions.h"
 #include "fusion.h"
+#include "autograd.h"
 
 tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_type)
 {
@@ -56,7 +57,11 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
         return NULL;
     }
 
-    if (!total_elements) return result;
+    if (!total_elements)
+    {
+        autograd_record_binary(result, a, b, operation_type);
+        return result;
+    }
     if (a->data == NULL || b->data == NULL || result->data == NULL)
     {
         cuda_tensor_destroy(result);
@@ -78,6 +83,7 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
         CUDA_THROW_RUNTIME("Broadcast operation failed: %s", cudaGetErrorString(status));
         return NULL;
     }
+    autograd_record_binary(result, a, b, operation_type);
     return result;
 }
 
@@ -122,6 +128,7 @@ tensor_t *cuda_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t op
         return NULL;
     }
 
+    autograd_record_scalar(result, a, scalar, operation_type, 0);
     return result;
 }
 
@@ -168,6 +175,7 @@ tensor_t *cuda_inv_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_
         return NULL;
     }
 
+    autograd_record_scalar(result, a, scalar, operation_type, 1);
     return result;
 }
 
@@ -194,6 +202,7 @@ tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
         return NULL;
     }
 
+    autograd_record_unary(result, a, operation_type);
     return result;
 }
 
@@ -281,6 +290,7 @@ tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operati
         return NULL;
     }
 
+    autograd_record_reduce(result, input, operation_type, axis);
     return result;
 }
 
@@ -367,6 +377,7 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
         0,
         original->total_size);
 
+    if (reshaped) autograd_record_view(reshaped, original, OP_RESHAPE, NULL);
     return reshaped;
 }
 
@@ -412,6 +423,7 @@ tensor_t *cuda_tensor_transpose(tensor_t *tensor, int *axis, int axis_len)
         0,
         tensor->total_size);
 
+    if (transposed) autograd_record_view(transposed, tensor, OP_TRANSPOSE, axis);
     return transposed ? transposed : NULL;
 }
 
@@ -468,7 +480,9 @@ tensor_t *cuda_tensor_matmul(tensor_t *a, tensor_t *b)
 
     if (a->ndims != 2 || b->ndims != 2)
     {
-        return cuda_tensor_matmul_nd(a, b);
+        tensor_t *result = cuda_tensor_matmul_nd(a, b);
+        if (result) autograd_record_matmul(result, a, b);
+        return result;
     }
 
     if (a->shape[1] != b->shape[0])
@@ -500,6 +514,7 @@ tensor_t *cuda_tensor_matmul(tensor_t *a, tensor_t *b)
         return NULL;
     }
 
+    autograd_record_matmul(result, a, b);
     return result;
 }
 

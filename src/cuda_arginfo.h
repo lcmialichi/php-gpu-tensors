@@ -5,6 +5,9 @@
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_cuda_get_backend_info, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_cuda_set_matmul_precision, 0, 1, IS_VOID, 0)
+    ZEND_ARG_TYPE_INFO(0, precision, IS_STRING, 0)
+ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(arginfo_cuda_get_device_count, 0, 0, 0)
 ZEND_END_ARG_INFO()
 

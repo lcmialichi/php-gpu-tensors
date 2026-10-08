@@ -1,4 +1,5 @@
 #include "fusion_internal.h"
+#include "autograd.h"
 int fusion_active(void)
 {
     return CUDA_G(fusion_scope) != NULL;
@@ -123,6 +124,8 @@ void fusion_release_node(tensor_t *tensor)
 void fusion_scope_free(fusion_scope *scope, int invalidate)
 {
     if (!scope) return;
+    for (size_t i = 0; i < scope->count; i++)
+        autograd_clear_gradient(scope->nodes[i]);
     if (invalidate)
     {
         for (size_t i = 0; i < scope->count; i++)
@@ -165,7 +168,9 @@ tensor_t *fusion_binary(tensor_t *a, tensor_t *b, operation_type_t op)
                            dtype_to_string(a->dtype), dtype_to_string(b->dtype), dtype_to_string(dtype));
         return NULL;
     }
-    return fusion_record(FUSION_BINARY, a, b, op, shape, ndims, dtype);
+    tensor_t *tensor = fusion_record(FUSION_BINARY, a, b, op, shape, ndims, dtype);
+    if (tensor) autograd_record_binary(tensor, a, b, op);
+    return tensor;
 }
 
 tensor_t *fusion_scalar(tensor_t *a, scalar_value_t scalar, operation_type_t op, int inverse)
@@ -176,18 +181,23 @@ tensor_t *fusion_scalar(tensor_t *a, scalar_value_t scalar, operation_type_t op,
     {
         tensor->fusion->scalar = scalar;
         tensor->fusion->parameter = inverse;
+        autograd_record_scalar(tensor, a, scalar, op, inverse);
     }
     return tensor;
 }
 
 tensor_t *fusion_unary(tensor_t *a, operation_type_t op)
 {
-    return fusion_record(FUSION_UNARY, a, NULL, op, a->shape, a->ndims, a->dtype);
+    tensor_t *tensor = fusion_record(FUSION_UNARY, a, NULL, op, a->shape, a->ndims, a->dtype);
+    if (tensor) autograd_record_unary(tensor, a, op);
+    return tensor;
 }
 
 tensor_t *fusion_cast(tensor_t *a, dtype_t dtype)
 {
-    return fusion_record(FUSION_CAST, a, NULL, OP_ADD, a->shape, a->ndims, dtype);
+    tensor_t *tensor = fusion_record(FUSION_CAST, a, NULL, OP_ADD, a->shape, a->ndims, dtype);
+    if (tensor) autograd_record_cast(tensor, a);
+    return tensor;
 }
 
 tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y)
@@ -228,6 +238,7 @@ tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y)
     {
         tensor->fusion->c = y;
         y->ref_count++;
+        autograd_record_where(tensor, condition, x, y);
     }
     return tensor;
 }
@@ -258,7 +269,11 @@ tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg)
                 ? DTYPE_FLOAT64 : DTYPE_FLOAT32) : a->dtype;
     tensor_t *tensor = fusion_record(arg ? FUSION_ARG_REDUCE : FUSION_REDUCE,
                                     a, NULL, op, shape, ndims, dtype);
-    if (tensor) tensor->fusion->parameter = axis;
+    if (tensor)
+    {
+        tensor->fusion->parameter = axis;
+        autograd_record_reduce(tensor, a, op, axis);
+    }
     return tensor;
 }
 
@@ -276,7 +291,9 @@ tensor_t *fusion_matmul(tensor_t *a, tensor_t *b)
         CUDA_THROW_INVALID("Fusion matmul currently requires float32 operands");
         return NULL;
     }
-    return fusion_record(FUSION_MATMUL, a, b, OP_MATMUL, shape, ndims, DTYPE_FLOAT32);
+    tensor_t *tensor = fusion_record(FUSION_MATMUL, a, b, OP_MATMUL, shape, ndims, DTYPE_FLOAT32);
+    if (tensor) autograd_record_matmul(tensor, a, b);
+    return tensor;
 }
 
 tensor_t *fusion_view(tensor_t *a, operation_type_t op, int *shape, size_t *strides, int ndims, int *axes)
@@ -287,6 +304,7 @@ tensor_t *fusion_view(tensor_t *a, operation_type_t op, int *shape, size_t *stri
         memcpy(tensor->strides, strides, ndims * sizeof(size_t));
         tensor->is_contiguous_cached = -1;
         if (axes) memcpy(tensor->fusion->axes, axes, ndims * sizeof(int));
+        autograd_record_view(tensor, a, op, axes);
     }
     return tensor;
 }

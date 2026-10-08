@@ -182,16 +182,145 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, fusion
     }
     if (!fusion_prepare_buffers(plan, values, mode)) return 0;
     int pooled = mode == FUSION_BUFFERS_WORKSPACE;
+    int capture_native = plan->use_cuda_graph && plan->native_steps;
+    if (capture_native && !plan->graph_capture_stream)
+    {
+        CUresult create_error = cuStreamCreate(&plan->graph_capture_stream, CU_STREAM_NON_BLOCKING);
+        if (create_error != CUDA_SUCCESS)
+        {
+            CUDA_THROW_RUNTIME("Cannot create CUDA graph capture stream (CUDA error %d)", create_error);
+            return 0;
+        }
+    }
     CUevent ready = pooled ? plan->sync_ready : NULL;
     CUresult error = ready ? CUDA_SUCCESS : cuEventCreate(&ready, CU_EVENT_DISABLE_TIMING);
     if (pooled && error == CUDA_SUCCESS) plan->sync_ready = ready;
     if (error == CUDA_SUCCESS) error = cuEventRecord(ready, NULL);
     if (error == CUDA_SUCCESS) error = cuStreamWaitEvent(stream, ready, 0);
+    if (error == CUDA_SUCCESS && capture_native && !plan->native_warmed)
+        error = cuStreamWaitEvent(plan->graph_capture_stream, ready, 0);
     if (ready && !pooled) fusion_cleanup_error("Destroying readiness event", cuEventDestroy(ready));
     if (error != CUDA_SUCCESS)
     {
         CUDA_THROW_RUNTIME("Cannot order fusion stream after input work (CUDA error %d)", error);
         return 0;
+    }
+    if (capture_native)
+    {
+        CUstream capture_stream = plan->graph_capture_stream;
+        if (!plan->native_warmed)
+        {
+            for (size_t i = 0; i < plan->step_count; i++)
+            {
+                fusion_step *step = &plan->steps[i];
+                if (!step->name[0] && !plan->items[step->root].alias &&
+                    !fusion_native_submit(plan, step, values, capture_stream))
+                    return 0;
+            }
+            error = cuStreamSynchronize(capture_stream);
+            plan->synchronizations++;
+            if (error != CUDA_SUCCESS)
+            {
+                CUDA_THROW_RUNTIME("CUDA graph native warmup failed (CUDA error %d)", error);
+                return 0;
+            }
+            plan->native_warmed = 1;
+        }
+
+        error = cuStreamBeginCapture(capture_stream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL);
+        if (error != CUDA_SUCCESS)
+        {
+            CUDA_THROW_RUNTIME("Cannot begin CUDA graph stream capture (CUDA error %d)", error);
+            return 0;
+        }
+        int capture_ok = 1;
+        for (size_t i = 0; i < plan->step_count; i++)
+        {
+            fusion_step *step = &plan->steps[i];
+            if (plan->items[step->root].alias)
+            {
+                if (!fusion_alias_view(plan, step, values)) { capture_ok = 0; break; }
+                continue;
+            }
+            if (!step->name[0])
+            {
+                if (!fusion_native_submit(plan, step, values, capture_stream))
+                    capture_ok = 0;
+                if (!capture_ok) break;
+                continue;
+            }
+
+            tensor_t *result = values[step->root];
+            if (!result->total_size) continue;
+            void **args = step->arguments;
+            for (size_t j = 0; j < step->leaf_count; j++)
+                args[j] = &values[step->leaves[j]]->data;
+            for (size_t j = 0; j < step->root_count; j++)
+                args[step->leaf_count + j] = &values[step->roots[j]]->data;
+            size_t blocks = (result->total_size - 1) / 256 + 1;
+            if (blocks > 65535) blocks = 65535;
+            error = cuLaunchKernel(step->function, (unsigned int)blocks, 1, 1,
+                                   256, 1, 1, 0, capture_stream, args, NULL);
+            if (error != CUDA_SUCCESS)
+            {
+                CUDA_THROW_RUNTIME("Fusion kernel capture failed (CUDA error %d)", error);
+                capture_ok = 0;
+                break;
+            }
+        }
+
+        CUgraph captured_graph = NULL;
+        CUresult end_error = cuStreamEndCapture(capture_stream, &captured_graph);
+        if (!capture_ok)
+        {
+            if (captured_graph) fusion_cleanup_error("Destroying failed captured graph", cuGraphDestroy(captured_graph));
+            return 0;
+        }
+        if (end_error != CUDA_SUCCESS || !captured_graph)
+        {
+            if (captured_graph) fusion_cleanup_error("Destroying invalid captured graph", cuGraphDestroy(captured_graph));
+            CUDA_THROW_RUNTIME("Cannot end CUDA graph stream capture (CUDA error %d)", end_error);
+            return 0;
+        }
+
+        if (!plan->graph_exec)
+        {
+#if CUDA_VERSION >= 11040
+            error = cuGraphInstantiateWithFlags(&plan->graph_exec, captured_graph, 0);
+#else
+            error = cuGraphInstantiate(&plan->graph_exec, captured_graph, NULL, NULL, 0);
+#endif
+            if (error != CUDA_SUCCESS)
+            {
+                fusion_cleanup_error("Destroying uninstantiated captured graph", cuGraphDestroy(captured_graph));
+                CUDA_THROW_RUNTIME("Cannot instantiate CUDA graph with native operations (CUDA error %d)", error);
+                return 0;
+            }
+            plan->cuda_graph = captured_graph;
+        }
+        else
+        {
+            CUgraphExecUpdateResultInfo update_info = {};
+            error = cuGraphExecUpdate(plan->graph_exec, captured_graph, &update_info);
+            if (error != CUDA_SUCCESS)
+            {
+                fusion_cleanup_error("Destroying incompatible captured graph", cuGraphDestroy(captured_graph));
+                CUDA_THROW_RUNTIME("Cannot update CUDA graph with native operations (CUDA error %d, update result %d)",
+                                   error, (int)update_info.result);
+                return 0;
+            }
+            if (plan->cuda_graph)
+                fusion_cleanup_error("Destroying previous captured graph", cuGraphDestroy(plan->cuda_graph));
+            plan->cuda_graph = captured_graph;
+        }
+        error = cuGraphLaunch(plan->graph_exec, stream);
+        if (error != CUDA_SUCCESS)
+        {
+            CUDA_THROW_RUNTIME("CUDA graph with native operations failed to launch (CUDA error %d)", error);
+            return 0;
+        }
+        plan->graph_launches++;
+        return 1;
     }
     int constructing = plan->use_cuda_graph && !plan->graph_exec;
     if (constructing)

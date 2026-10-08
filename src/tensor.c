@@ -1,4 +1,5 @@
 #include "tensor.h"
+#include "autograd.h"
 #include "data_types.h"
 #include "php.h"
 #include "Zend/zend_API.h"
@@ -697,6 +698,8 @@ void cuda_tensor_destroy(tensor_t *tensor)
 
     if (tensor->is_view && !tensor->base_tensor)
     {
+        autograd_release_node(tensor);
+        autograd_clear_gradient(tensor);
         if (tensor->shape)
         {
             efree(tensor->shape);
@@ -730,6 +733,8 @@ void cuda_tensor_destroy(tensor_t *tensor)
     }
 
     fusion_release_node(tensor);
+    autograd_release_node(tensor);
+    autograd_clear_gradient(tensor);
 
     if (tensor->is_view)
     {

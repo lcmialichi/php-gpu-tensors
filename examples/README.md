@@ -13,7 +13,24 @@ This directory contains functional implementations of the extension's API. The e
 | `05_jit_async_execution.php` | Concurrency | Non-blocking execution, Op polling, Stream sync. |
 | `06_serialize_compiled_module.php` | JIT Serialization | PHP Serialize CompiledModule object example |
 | `07_fusion_graph.php` | Fusion and CUDA Graph | Scoped capture, compiled replay, private streams, async result and optional timing comparison |
-| `08_gpu_classifier.php` | Neural Network Training | End-to-end MLP classifier, JIT kernel fusion, AdamW/SGD optimizers, dataset orchestration (MNIST/CSV). |
+| `08_gpu_classifier.php` | Neural Network Training | End-to-end MLP classifier, stored/replayed Fusion plans, AdamW/SGD optimizers, dataset orchestration (MNIST/CSV). |
+
+`10_kernel_benchmark.php` measures square, skinny, MLP/classifier, transposed,
+strided, batched, and broadcast matmul shapes alongside large reductions. It
+checks outputs and records the dispatched backend per matmul case; use
+`--precision=tf32` to measure the opt-in Tensor Core mode.
+
+Example 08 keeps the entrypoint small. Model settings live in
+`Support/ModelConfiguration.php`; network math, optimizer state, data handling,
+and orchestration are documented functions under `Support/`. It compiles and
+retains `Cuda\FusionGraph` plans by batch shape, then calls `run()` for each
+step rather than recompiling in the training loop. `--profile` reports fused
+kernel counts and native boundaries for the captured plans.
+
+Forward, backward, and optimizer elementwise expressions are captured together.
+`matmul()` and reductions remain native boundaries, with the supported
+elementwise work fused around them; the example's self-tests compare eager and
+compiled training steps and inspect the plan boundary counts.
 
 ## Execution Requirements
 

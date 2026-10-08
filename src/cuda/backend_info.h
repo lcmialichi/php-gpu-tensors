@@ -9,6 +9,7 @@ typedef struct {
     unsigned long long blas_calls, lt_calls, builtin_matmul_calls;
     unsigned long long cub_calls, axis_calls, generic_reduce_calls;
     const char *last_matmul;
+    const char *precision;
     int last_blas_status;
 } cuda_backend_info;
 void cuda_blas_info(cuda_backend_info *info);

@@ -1,4 +1,5 @@
 #include "fusion_internal.h"
+#include "reduction_ops.h"
 int fusion_inline(tensor_t *tensor)
 {
     fusion_node *node = tensor->fusion;
@@ -122,6 +123,13 @@ void fusion_plan_free(fusion_plan *plan)
     if (plan->graph_exec) fusion_cleanup_error("Destroying graph executable", cuGraphExecDestroy(plan->graph_exec));
     if (plan->cuda_graph) fusion_cleanup_error("Destroying CUDA graph", cuGraphDestroy(plan->cuda_graph));
     if (plan->graph_nodes) efree(plan->graph_nodes);
+    if (plan->graph_capture_stream)
+    {
+        cudaError_t error = cuda_reduction_release_stream((cudaStream_t)plan->graph_capture_stream);
+        if (error != cudaSuccess)
+            php_error_docref(NULL, E_WARNING, "Releasing graph reduction workspace failed: %s", cudaGetErrorString(error));
+        fusion_cleanup_error("Destroying graph capture stream", cuStreamDestroy(plan->graph_capture_stream));
+    }
     if (plan->sync_stream) fusion_cleanup_error("Destroying replay stream", cuStreamDestroy(plan->sync_stream));
     if (plan->sync_ready) fusion_cleanup_error("Destroying replay readiness event", cuEventDestroy(plan->sync_ready));
     if (plan->module)
@@ -258,7 +266,9 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
         if (!plan->steps[i].name[0] && !plan->items[plan->steps[i].root].alias)
         {
             plan->native_steps++;
-            plan->graph_compatible = 0;
+            fusion_kind kind = plan->items[plan->steps[i].root].tensor->fusion->kind;
+            if (kind != FUSION_MATMUL && kind != FUSION_REDUCE && kind != FUSION_ARG_REDUCE)
+                plan->graph_compatible = 0;
             if (!fusion_preallocated(plan, &plan->steps[i]))
             {
                 plan->stream_compatible = 0;

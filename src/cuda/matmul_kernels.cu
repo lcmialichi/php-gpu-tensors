@@ -15,7 +15,26 @@
 #endif
 
 #define TILE_SIZE 32
+static constexpr double MATMUL_BLAS_MIN_WORK = 200000.0;
+static constexpr double MATMUL_LT_MIN_WORK = 10000000.0;
+static constexpr int MATMUL_SKINNY_MIN_INNER = 256;
+static constexpr size_t MATMUL_SKINNY_MAX_OUTPUTS = 1024;
 static thread_local cuda_backend_info backend_info = {};
+static thread_local int matmul_precision = CUDA_MATMUL_PRECISION_FP32_STRICT;
+
+extern "C" int cuda_blas_set_precision(int precision)
+{
+    if (precision != CUDA_MATMUL_PRECISION_FP32_STRICT &&
+        precision != CUDA_MATMUL_PRECISION_TF32)
+        return 0;
+    matmul_precision = precision;
+    return 1;
+}
+
+extern "C" const char *cuda_blas_precision_name(void)
+{
+    return matmul_precision == CUDA_MATMUL_PRECISION_TF32 ? "tf32" : "fp32-strict";
+}
 
 extern "C" void cuda_blas_info(cuda_backend_info *info)
 {
@@ -24,6 +43,7 @@ extern "C" void cuda_blas_info(cuda_backend_info *info)
     info->builtin_matmul_calls = backend_info.builtin_matmul_calls;
     info->last_matmul = backend_info.last_matmul ? backend_info.last_matmul : "none";
     info->last_blas_status = backend_info.last_blas_status;
+    info->precision = cuda_blas_precision_name();
 #ifdef HAVE_CUBLAS
     info->cublas = 1;
 #endif
@@ -47,8 +67,9 @@ struct BlasContext
 {
     cublasHandle_t handle;
     int device;
+    int precision;
 
-    BlasContext() : handle(nullptr), device(-1) {}
+    BlasContext() : handle(nullptr), device(-1), precision(-1) {}
 };
 
 static thread_local BlasContext blas_context;
@@ -56,6 +77,7 @@ static thread_local BlasContext blas_context;
 #ifdef HAVE_CUBLASLT
 struct LtPlan {
     int rows, inner, cols, lda, ldb;
+    int precision;
     uint32_t alignment_a, alignment_b, alignment_c;
     cublasOperation_t op_a, op_b;
     cublasLtMatmulDesc_t operation;
@@ -95,6 +117,7 @@ static int lt_matmul(float *a, float *b, float *c, int rows, int inner, int cols
     for (auto &plan : lt_plans)
         if (plan.rows == rows && plan.inner == inner && plan.cols == cols &&
             plan.lda == lda && plan.ldb == ldb && plan.op_a == op_a && plan.op_b == op_b &&
+            plan.precision == matmul_precision &&
             plan.alignment_a == alignment_a && plan.alignment_b == alignment_b && plan.alignment_c == alignment_c) {
             selected = &plan;
             break;
@@ -104,9 +127,12 @@ static int lt_matmul(float *a, float *b, float *c, int rows, int inner, int cols
         LtPlan plan = {};
         plan.rows = rows; plan.inner = inner; plan.cols = cols;
         plan.lda = lda; plan.ldb = ldb; plan.op_a = op_a; plan.op_b = op_b;
+        plan.precision = matmul_precision;
         plan.alignment_a = alignment_a; plan.alignment_b = alignment_b; plan.alignment_c = alignment_c;
         cublasLtMatmulPreference_t preference = nullptr;
-        cublasStatus_t status = cublasLtMatmulDescCreate(&plan.operation, CUBLAS_COMPUTE_32F_PEDANTIC, CUDA_R_32F);
+        cublasComputeType_t compute_type = matmul_precision == CUDA_MATMUL_PRECISION_TF32
+            ? CUBLAS_COMPUTE_32F_FAST_TF32 : CUBLAS_COMPUTE_32F_PEDANTIC;
+        cublasStatus_t status = cublasLtMatmulDescCreate(&plan.operation, compute_type, CUDA_R_32F);
         if (status == CUBLAS_STATUS_SUCCESS)
             status = cublasLtMatmulDescSetAttribute(plan.operation, CUBLASLT_MATMUL_DESC_TRANSA, &op_b, sizeof(op_b));
         if (status == CUBLAS_STATUS_SUCCESS)
@@ -172,6 +198,7 @@ extern "C" void cuda_blas_shutdown(void)
         cublasDestroy(blas_context.handle);
         blas_context.handle = nullptr;
         blas_context.device = -1;
+        blas_context.precision = -1;
     }
     backend_info = {};
 }
@@ -189,7 +216,9 @@ static cublasHandle_t get_blas_handle()
     {
         cublasStatus_t status = cublasCreate(&blas_context.handle);
         if (status == CUBLAS_STATUS_SUCCESS)
-            status = cublasSetMathMode(blas_context.handle, CUBLAS_PEDANTIC_MATH);
+            status = cublasSetMathMode(blas_context.handle,
+                matmul_precision == CUDA_MATMUL_PRECISION_TF32
+                    ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_PEDANTIC_MATH);
         backend_info.last_blas_status = status;
         if (status != CUBLAS_STATUS_SUCCESS) {
             if (blas_context.handle) cublasDestroy(blas_context.handle);
@@ -197,6 +226,16 @@ static cublasHandle_t get_blas_handle()
             return nullptr;
         }
         blas_context.device = device;
+        blas_context.precision = matmul_precision;
+    }
+    else if (blas_context.precision != matmul_precision)
+    {
+        cublasStatus_t status = cublasSetMathMode(blas_context.handle,
+            matmul_precision == CUDA_MATMUL_PRECISION_TF32
+                ? CUBLAS_TF32_TENSOR_OP_MATH : CUBLAS_PEDANTIC_MATH);
+        backend_info.last_blas_status = status;
+        if (status != CUBLAS_STATUS_SUCCESS) return nullptr;
+        blas_context.precision = matmul_precision;
     }
     return blas_context.handle;
 }
@@ -225,7 +264,11 @@ static int blas_matmul_2d(float *a, float *b, float *c,
                           size_t c_row, size_t c_col, cudaStream_t stream)
 {
     bool dot = rows == 1 && cols == 1 && inner >= 4096 && a_col <= INT_MAX && b_row <= INT_MAX;
-    if ((!dot && (double)rows * inner * cols < 500000) || c_col != 1 || c_row != (size_t)cols)
+    bool underutilized = inner >= MATMUL_SKINNY_MIN_INNER &&
+                         (size_t)rows * (size_t)cols <= MATMUL_SKINNY_MAX_OUTPUTS;
+    double work = (double)rows * inner * cols;
+    if ((!dot && !underutilized && work < MATMUL_BLAS_MIN_WORK) ||
+        c_col != 1 || c_row != (size_t)cols)
         return 0;
     cublasOperation_t op_a, op_b;
     int lda, ldb;
@@ -249,8 +292,10 @@ static int blas_matmul_2d(float *a, float *b, float *c,
     else
     {
 #ifdef HAVE_CUBLASLT
-        int lt = lt_matmul(a, b, c, rows, inner, cols, lda, ldb, op_a, op_b, stream);
-        if (lt) return lt;
+        if (work >= MATMUL_LT_MIN_WORK) {
+            int lt = lt_matmul(a, b, c, rows, inner, cols, lda, ldb, op_a, op_b, stream);
+            if (lt) return lt;
+        }
 #endif
         const float alpha = 1.0f, beta = 0.0f;
         status = cublasSgemm(handle, op_b, op_a, cols, rows, inner,
@@ -304,7 +349,8 @@ static int blas_batch_stride(const int *shape, const size_t *strides, int ndims,
 
 static int blas_matmul_batched(const MatMulParamsND *params, cudaStream_t stream)
 {
-    if (params->ndC < 3 || (double)params->M * params->N * params->K * params->total_batches < 500000)
+    if (params->ndC < 3 ||
+        (double)params->M * params->N * params->K * params->total_batches < MATMUL_BLAS_MIN_WORK)
         return 0;
 
     cublasOperation_t op_a, op_b;
@@ -509,7 +555,7 @@ extern "C" int cuda_matmul_launcher(float *a, float *b, float *c,
 #endif
 
     /* Small products need more independent blocks, not shared-memory tile barriers. */
-    if (n <= 128 && (double)m * n * k < 500000) {
+    if (n <= 128 && (double)m * n * k < MATMUL_BLAS_MIN_WORK) {
         dim3 block(16, 16), grid = cuda_grid_2d(k, m, 16, 16);
         matmul_small_kernel<<<grid, block, 0, stream>>>(a, b, c, m, n, k,
             a_stride0, a_stride1, b_stride0, b_stride1, c_stride0, c_stride1);

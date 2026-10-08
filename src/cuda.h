@@ -33,6 +33,7 @@ ZEND_EXTERN_MODULE_GLOBALS(cuda);
 
 ZEND_FUNCTION(cuda_get_device_count);
 ZEND_FUNCTION(cuda_get_backend_info);
+ZEND_FUNCTION(cuda_set_matmul_precision);
 ZEND_FUNCTION(cuda_get_device_info);
 ZEND_FUNCTION(cuda_set_device);
 ZEND_FUNCTION(cuda_get_current_device);

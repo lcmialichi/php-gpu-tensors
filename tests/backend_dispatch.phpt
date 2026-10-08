@@ -64,6 +64,10 @@ check($a->matmul($b)->toArray() === $product);
 $dot = A::ones([1, 100000])->matmul(A::ones([100000, 1]));
 check($dot->toArray() === [[100000.0]]);
 if ($info['cublas']) check(cuda_get_backend_info()['lastMatmul'] === 'cublasDot');
+$skinny = A::ones([16, 1024])->matmul(A::ones([1024, 16]));
+check($skinny->toArray() === array_fill(0, 16, array_fill(0, 16, 1024.0)));
+$skinnyBackend = cuda_get_backend_info()['lastMatmul'];
+check($skinnyBackend === ($info['cublas'] ? 'cublas' : 'builtin'));
 echo "padded GEMM and dot dispatch passed\n";
 
 $plan = Fusion::compile(fn($a) => ($a + 1)->sum(), [$x]);

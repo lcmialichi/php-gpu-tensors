@@ -1,6 +1,7 @@
 #include "tensor_where.h"
 #include "where_kernels.h"
 #include "cuda_exceptions.h"
+#include "autograd.h"
 #include <stdint.h>
 
 static int where_project_strides(const tensor_t *tensor, const int *shape, int ndims,
@@ -92,7 +93,11 @@ tensor_t *cuda_tensor_where(tensor_t *condition, tensor_t *on_true, tensor_t *on
     fast_path = fast_path && is_contiguous(condition) && is_contiguous(on_true) && is_contiguous(on_false);
     tensor_t *result = cuda_tensor_create_empty_with_dtype(shape, ndims, on_true->dtype);
     if (!result) return NULL;
-    if (!total) return result;
+    if (!total)
+    {
+        autograd_record_where(result, condition, on_true, on_false);
+        return result;
+    }
 
     cudaError_t status = launch_where_kernel(condition, on_true, on_false, result,
                                               condition_strides, true_strides, false_strides, fast_path);
@@ -102,5 +107,6 @@ tensor_t *cuda_tensor_where(tensor_t *condition, tensor_t *on_true, tensor_t *on
         CUDA_THROW_RUNTIME("where kernel failed: %s", cudaGetErrorString(status));
         return NULL;
     }
+    autograd_record_where(result, condition, on_true, on_false);
     return result;
 }

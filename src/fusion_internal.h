@@ -106,6 +106,8 @@ typedef struct
     CUgraph cuda_graph;
     CUgraphExec graph_exec;
     CUgraphNode *graph_nodes;
+    CUstream graph_capture_stream;
+    int native_warmed;
     size_t graph_launches;
     size_t buffer_reuses;
     size_t pending;

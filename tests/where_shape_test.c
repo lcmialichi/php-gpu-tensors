@@ -15,6 +15,12 @@ static size_t mask_strides[2], x_strides[2], y_strides[2];
 #define CUDA_THROW_RUNTIME(...) do { errors++; } while (0)
 #include "../src/cuda_array/tensor_where.c"
 
+int autograd_record_where(tensor_t *result, tensor_t *condition, tensor_t *x, tensor_t *y)
+{
+    (void)result; (void)condition; (void)x; (void)y;
+    return 1;
+}
+
 tensor_t *cuda_tensor_create_empty_with_dtype(int *shape, int ndims, dtype_t dtype)
 {
     tensor_t *tensor = calloc(1, sizeof(tensor_t));

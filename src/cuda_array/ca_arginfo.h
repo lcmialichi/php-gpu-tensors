@@ -154,6 +154,23 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(arginfo_cuda_array_dtype, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cuda_array_requiresGrad, 0, 0, Cuda\\CudaArray, 0)
+ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, requiresGrad, _IS_BOOL, 0, "true")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_cuda_array_backward, 0, 0, 0)
+ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, gradient, Cuda\\CudaArray, 1, "null")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cuda_array_grad, 0, 0, Cuda\\CudaArray, 1)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_INFO_EX(arginfo_cuda_array_zeroGrad, 0, 0, 0)
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cuda_array_detach, 0, 0, Cuda\\CudaArray, 0)
+ZEND_END_ARG_INFO()
+
 static zend_function_entry cuda_array_methods[] = {
     ZEND_ME(CudaArray, __construct, arginfo_cuda_array_construct, ZEND_ACC_PUBLIC | ZEND_ACC_CTOR)
     ZEND_ME(CudaArray, fromBuffer, arginfo_cuda_array_fromBuffer, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
@@ -219,6 +236,11 @@ static zend_function_entry cuda_array_methods[] = {
 
                                                                                                                                                                                                 ZEND_ME(CudaArray, astype, arginfo_cuda_array_astype, ZEND_ACC_PUBLIC)
                                                                                                                                                                                                     ZEND_ME(CudaArray, dtype, arginfo_cuda_array_dtype, ZEND_ACC_PUBLIC)
+                                                                                                                                                                                                        ZEND_ME(CudaArray, requiresGrad, arginfo_cuda_array_requiresGrad, ZEND_ACC_PUBLIC)
+                                                                                                                                                                                                            ZEND_ME(CudaArray, backward, arginfo_cuda_array_backward, ZEND_ACC_PUBLIC)
+                                                                                                                                                                                                                ZEND_ME(CudaArray, grad, arginfo_cuda_array_grad, ZEND_ACC_PUBLIC)
+                                                                                                                                                                                                                    ZEND_ME(CudaArray, zeroGrad, arginfo_cuda_array_zeroGrad, ZEND_ACC_PUBLIC)
+                                                                                                                                                                                                                        ZEND_ME(CudaArray, detach, arginfo_cuda_array_detach, ZEND_ACC_PUBLIC)
 
                                                                                                                                                                                                         PHP_FE_END};
 

@@ -4,11 +4,18 @@
 #include <stddef.h>
 #include <cuda_runtime_api.h>
 
+enum {
+    CUDA_MATMUL_PRECISION_FP32_STRICT = 0,
+    CUDA_MATMUL_PRECISION_TF32 = 1
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 void cuda_blas_shutdown(void);
+int cuda_blas_set_precision(int precision);
+const char *cuda_blas_precision_name(void);
 
 int cuda_matmul_launcher(float *a, float *b, float *c,
                         int m, int n, int k,

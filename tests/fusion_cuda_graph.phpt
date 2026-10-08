@@ -40,9 +40,35 @@ $outputs = $grouped->runAsync($a)->wait();
 check($outputs[0]->toArray() === [2.0, 3.0, 4.0]);
 check($outputs[1]->toArray() === [0.0, 1.0, 2.0]);
 echo "graph multi-output\n";
+$matrixA = CudaArray::ones([64, 64]);
+$matrixB = CudaArray::ones([64, 64]);
+$matmulGraph = Fusion::compile(fn($x, $y) => ($x->matmul($y) + 1) * 2,
+    [$matrixA, $matrixB], cudaGraph: true);
+check($matmulGraph->getStats()['backend'] === 'cuda-graph');
+check($matmulGraph->getStats()['cudaGraphCompatible']);
+$matrixFirstResult = $matmulGraph->run($matrixA, $matrixB);
+$matrixSecondResult = $matmulGraph->run($matrixA * 2, $matrixB * 3);
+$matrixFirst = $matrixFirstResult->toArray();
+$matrixSecond = $matrixSecondResult->toArray();
+check($matrixFirst[0][0] === 130.0 && $matrixFirst[63][63] === 130.0);
+check($matrixSecond[0][0] === 770.0 && $matrixSecond[63][63] === 770.0);
+echo "graph native matmul and pointer updates\n";
+$vector = CudaArray::ones([8192]);
+$reductionGraph = Fusion::compile(fn($x) => $x->sum() + 1, [$vector], cudaGraph: true);
+check($reductionGraph->getStats()['backend'] === 'cuda-graph');
+check($reductionGraph->run($vector)->toArray() === [8193.0]);
+$twice = $vector * 2;
+check($reductionGraph->run($twice)->toArray() === [16385.0]);
+echo "graph native CUB reduction and pointer updates\n";
+$pending = $reductionGraph->runAsync($vector);
+check($pending->wait()->toArray() === [8193.0]);
+echo "graph native async reduction\n";
 ?>
 --EXPECT--
 graph pointers updated and scratch reused
 overlapping graph replay rejected
 retained outputs stable
 graph multi-output
+graph native matmul and pointer updates
+graph native CUB reduction and pointer updates
+graph native async reduction

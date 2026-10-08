@@ -10,6 +10,10 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
-      - .:/usr/src/ext
+      - type: bind
+        source: .
+        target: /usr/src/ext
+        bind:
+          create_host_path: false
     tty: true
     user: root

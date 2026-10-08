@@ -110,7 +110,7 @@ ZEND_FUNCTION(cuda_get_backend_info)
     add_assoc_bool(return_value, "cublasLt", info.cublas_lt);
     add_assoc_bool(return_value, "cub", 1);
     add_assoc_bool(return_value, "cudnn", cuda_nn_available());
-    add_assoc_string(return_value, "precision", "fp32-strict");
+    add_assoc_string(return_value, "precision", (char *)info.precision);
     add_assoc_string(return_value, "lastMatmul", info.last_matmul);
     add_assoc_long(return_value, "lastBlasStatus", info.last_blas_status);
     add_assoc_long(return_value, "cublasCalls", info.blas_calls);
@@ -119,6 +119,61 @@ ZEND_FUNCTION(cuda_get_backend_info)
     add_assoc_long(return_value, "cubReductionCalls", info.cub_calls);
     add_assoc_long(return_value, "coalescedReductionCalls", info.axis_calls);
     add_assoc_long(return_value, "genericReductionCalls", info.generic_reduce_calls);
+}
+
+ZEND_FUNCTION(cuda_set_matmul_precision)
+{
+    zend_string *precision;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+    Z_PARAM_STR(precision)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (!fusion_check_mutation()) RETURN_THROWS();
+
+    int mode;
+    if (zend_string_equals_literal(precision, "fp32-strict"))
+    {
+        mode = CUDA_MATMUL_PRECISION_FP32_STRICT;
+    }
+    else if (zend_string_equals_literal(precision, "tf32"))
+    {
+        cuda_backend_info info = {0};
+        cuda_blas_info(&info);
+        if (!info.cublas)
+        {
+            CUDA_THROW_RUNTIME("TF32 matmul precision requires a cuBLAS-enabled build");
+            RETURN_THROWS();
+        }
+
+        int device = cuda_wrapper_get_current_device();
+        char name[256];
+        int major, minor;
+        size_t total_mem;
+        if (device < 0 || cuda_wrapper_get_device_properties(
+                device, name, sizeof(name), &major, &minor, &total_mem) != 1)
+        {
+            CUDA_THROW_RUNTIME("Failed to query the current CUDA device for TF32 support");
+            RETURN_THROWS();
+        }
+        if (major < 8)
+        {
+            CUDA_THROW_RUNTIME("TF32 matmul precision requires compute capability 8.0 or newer");
+            RETURN_THROWS();
+        }
+        mode = CUDA_MATMUL_PRECISION_TF32;
+    }
+    else
+    {
+        CUDA_THROW_INVALID("Matmul precision must be 'fp32-strict' or 'tf32'");
+        RETURN_THROWS();
+    }
+
+    if (!cuda_blas_set_precision(mode))
+    {
+        CUDA_THROW_RUNTIME("Failed to set matmul precision");
+        RETURN_THROWS();
+    }
+    RETURN_NULL();
 }
 
 ZEND_FUNCTION(cuda_get_device_info)
@@ -306,6 +361,7 @@ ZEND_FUNCTION(cuda_get_peer_access)
 
 static zend_function_entry cuda_functions[] = {
     PHP_FE(cuda_get_backend_info, arginfo_cuda_get_backend_info)
+        PHP_FE(cuda_set_matmul_precision, arginfo_cuda_set_matmul_precision)
     PHP_FE(cuda_get_device_count, arginfo_cuda_get_device_count)
         PHP_FE(cuda_get_device_info, arginfo_cuda_get_device_info)
             PHP_FE(cuda_set_device, arginfo_cuda_set_device)
@@ -334,6 +390,7 @@ PHP_RSHUTDOWN_FUNCTION(cuda)
 {
     fusion_request_shutdown();
     cuda_blas_shutdown();
+    cuda_blas_set_precision(CUDA_MATMUL_PRECISION_FP32_STRICT);
     cuda_reduction_shutdown();
     cuda_nn_shutdown();
     return SUCCESS;

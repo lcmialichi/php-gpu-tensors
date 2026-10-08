@@ -162,6 +162,7 @@ if test "$PHP_CUDA" != "no"; then
     src/cuda_array/ca_private.c \
     src/cuda_array/tensor_transfer.c \
     src/data_types.c \
+    src/autograd.c \
     src/tensor.c \
     src/cuda/memory_pool.c \
     src/cuda_array/tensor_factory.c \

@@ -304,6 +304,16 @@ class CudaArray
     public function astype(string $dtype): CudaArray {}
     /** Element dtype name, e.g. float32. */
     public function dtype(): string {}
+    /** Enable or disable reverse-mode gradient tracking on a leaf tensor. */
+    public function requiresGrad(bool $requiresGrad = true): CudaArray {}
+    /** Compute gradients; non-scalar tensors require an explicit gradient seed. */
+    public function backward(?CudaArray $gradient = null): void {}
+    /** Return the accumulated gradient of a leaf tensor, or null before backward(). */
+    public function grad(): ?CudaArray {}
+    /** Clear the accumulated gradient. */
+    public function zeroGrad(): void {}
+    /** Return a view that shares storage but is disconnected from gradient history. */
+    public function detach(): CudaArray {}
 }
 
 /** Abstract base dispatching PHP arithmetic operators to magic methods. */

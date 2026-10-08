@@ -1,4 +1,5 @@
 #include "fusion_internal.h"
+#include "autograd.h"
 #include "cuda_array_ce.h"
 #include "reduction_ops.h"
 #include "zend_interfaces.h"
@@ -91,11 +92,17 @@ static int fusion_materialize_roots(tensor_t **roots, size_t count)
             if (!values[i] || values[i] == target) continue;
             tensor_t *result = values[i];
             int references = target->ref_count + result->ref_count - 1;
+            struct autograd_node *grad_fn = target->grad_fn;
+            tensor_t *gradient = target->grad;
+            int requires_grad = target->requires_grad;
             fusion_release_node(target);
             if (target->shape) efree(target->shape);
             if (target->strides) efree(target->strides);
             *target = *result;
             target->ref_count = references;
+            target->grad_fn = grad_fn;
+            target->grad = gradient;
+            target->requires_grad = requires_grad;
             efree(result);
             values[i] = target;
         }
@@ -313,6 +320,7 @@ ZEND_METHOD(Fusion, compile)
             memcpy(placeholder->strides, example->strides, example->ndims * sizeof(size_t));
         placeholder->is_contiguous_cached = -1;
         placeholder->fusion->parameter = (int)initialized;
+        placeholder->requires_grad = example->requires_grad;
         input_tensors[initialized] = placeholder;
         fusion_wrap(&arguments[initialized++], placeholder);
     }

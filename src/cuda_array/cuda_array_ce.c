@@ -15,6 +15,7 @@
 #include "tensor_import.h"
 #include "tensor_where.h"
 #include "fusion.h"
+#include "autograd.h"
 
 zend_class_entry *cuda_array_ce;
 static zend_object_handlers cuda_array_handlers;
@@ -767,6 +768,85 @@ ZEND_METHOD(CudaArray, dtype)
     }
 
     RETURN_STRING(dtype_name);
+}
+
+ZEND_METHOD(CudaArray, requiresGrad)
+{
+    zend_bool requires_grad = 1;
+    ZEND_PARSE_PARAMETERS_START(0, 1)
+    Z_PARAM_OPTIONAL
+    Z_PARAM_BOOL(requires_grad)
+    ZEND_PARSE_PARAMETERS_END();
+
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    if (!autograd_set_requires_grad(obj->tensor_handle, requires_grad))
+        RETURN_THROWS();
+    RETURN_OBJ_COPY(Z_OBJ_P(ZEND_THIS));
+}
+
+ZEND_METHOD(CudaArray, backward)
+{
+    zval *gradient_value = NULL;
+    ZEND_PARSE_PARAMETERS_START(0, 1)
+    Z_PARAM_OPTIONAL
+    Z_PARAM_OBJECT_OF_CLASS_OR_NULL(gradient_value, cuda_array_ce)
+    ZEND_PARSE_PARAMETERS_END();
+
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    tensor_t *gradient = NULL;
+    if (gradient_value && Z_TYPE_P(gradient_value) == IS_OBJECT)
+    {
+        cuda_array_obj *gradient_obj = fusion_active()
+            ? php_cuda_array_fetch_deferred_object(Z_OBJ_P(gradient_value))
+            : php_cuda_array_fetch_valid_object(Z_OBJ_P(gradient_value));
+        if (!gradient_obj) RETURN_THROWS();
+        gradient = gradient_obj->tensor_handle;
+    }
+    if (!autograd_backward(obj->tensor_handle, gradient))
+        RETURN_THROWS();
+    RETURN_NULL();
+}
+
+ZEND_METHOD(CudaArray, grad)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    if (!obj->tensor_handle)
+    {
+        CUDA_THROW_INVALID("Invalid tensor");
+        RETURN_THROWS();
+    }
+    if (!obj->tensor_handle->grad)
+        RETURN_NULL();
+    obj->tensor_handle->grad->ref_count++;
+    create_result_object(return_value, obj->tensor_handle->grad);
+}
+
+ZEND_METHOD(CudaArray, zeroGrad)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    if (!obj->tensor_handle)
+    {
+        CUDA_THROW_INVALID("Invalid tensor");
+        RETURN_THROWS();
+    }
+    autograd_clear_gradient(obj->tensor_handle);
+    RETURN_NULL();
+}
+
+ZEND_METHOD(CudaArray, detach)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    tensor_t *detached = autograd_detach(obj->tensor_handle);
+    if (!detached) RETURN_THROWS();
+    create_result_object(return_value, detached);
 }
 
 ZEND_METHOD(CudaArray, reshape)

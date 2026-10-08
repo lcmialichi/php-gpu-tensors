@@ -83,3 +83,8 @@ ZEND_METHOD(CudaArray, toArray);
 ZEND_METHOD(CudaArray, toBuffer);
 ZEND_METHOD(CudaArray, toHost);
 ZEND_METHOD(CudaArray, dtype);
+ZEND_METHOD(CudaArray, requiresGrad);
+ZEND_METHOD(CudaArray, backward);
+ZEND_METHOD(CudaArray, grad);
+ZEND_METHOD(CudaArray, zeroGrad);
+ZEND_METHOD(CudaArray, detach);

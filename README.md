@@ -15,47 +15,54 @@
     <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/lcmialichi/php-gpu-tensors"></a>
 </p>
 
-Native PHP extension for GPU tensors and NVIDIA CUDA-accelerated numerical
-workloads. Build tensor operations and machine-learning data pipelines in PHP,
-move data explicitly between host and GPU, and compile custom CUDA C++ kernels
-at runtime with NVRTC. Optionally fuse tensor expressions into compiled plans
-that replay quickly, with asynchronous execution and CUDA Graph for compatible
-plans.
+Run numerical workloads on an NVIDIA GPU without leaving PHP. This native
+extension gives PHP code GPU-resident tensors, common math operations, and a way
+to compile and launch your own CUDA kernels. For repeated work, you can
+optionally compile tensor expressions into replayable Fusion plans.
 
-**Status:** beta (`0.1.0-beta.5`) · Linux · PHP 8.1–8.5, NTS and ZTS · NVIDIA GPU
-required. See [Validation status](#validation-status) for exactly what has been
-tested on real GPUs.
+**Status:** beta · Linux · PHP 8.1–8.5, NTS and ZTS · NVIDIA GPU required.
+`0.1.0-beta.5` is the documented package baseline; this source checkout may
+contain newer features. See [Validation status](#validation-status) for the
+tested PHP, CUDA, and GPU combinations.
 
-## Highlights
+## Is this a good fit?
 
-- **GPU tensors.** `CudaArray` supports arithmetic, broadcasting, comparisons,
-  `matmul()` (including batches), reductions, views and Python-style `slice()`.
-- **Explicit data movement.** Packed buffers, `.npy` import and optional pinned
-  host memory keep transfers cheap and visible.
-- **Custom CUDA kernels.** Compile CUDA C++ at runtime with NVRTC and launch it
-  from PHP, synchronously or asynchronously.
-- **Optional kernel fusion.** Capture a PHP closure once, then replay it as fused
-  GPU kernels. In a small training workload this was about 6× faster than eager
-  execution with identical results (see [Results](#results)).
-- **Clear scope.** A low-level GPU computing library, not a machine-learning
-  framework: no automatic differentiation, no CPU fallback.
+Use PHP GPU Tensors when a PHP application needs numerical work on an NVIDIA
+GPU—for example, tensor calculations, custom CUDA operations, or a small
+machine-learning pipeline—and you want to keep that workflow in PHP.
 
-**Contents:**
-[Quick look](#quick-look) ·
-[Results](#results) ·
-[Install](#install) ·
-[Tensors](#gpu-tensors-in-php) ·
-[Slicing](#python-style-slicing) ·
-[Data pipelines](#data-pipelines-for-machine-learning) ·
-[Custom kernels](#custom-kernels) ·
-[Fusion](#optional-kernel-fusion) ·
+It is a low-level GPU computing library, not a drop-in replacement for a full
+machine-learning framework. It requires Linux, an NVIDIA GPU, and the CUDA
+runtime; it does not fall back to CPU execution. Automatic differentiation is
+available for a documented subset of operations and is opt-in.
+
+### What you can do
+
+- **Work with GPU tensors.** Create arrays and apply arithmetic, broadcasting,
+  matrix multiplication, reductions, views, and Python-style slicing.
+- **Keep data on the device.** Upload packed buffers or `.npy` files, run a
+  sequence of operations, and copy results back only when PHP needs them.
+- **Write CUDA in PHP projects.** Compile CUDA C++ at runtime with NVRTC and
+  launch kernels synchronously or asynchronously.
+- **Reduce repeated work.** Opt in to Fusion to compile a tensor-expression
+  plan once and replay it. Compatible plans can use streams, asynchronous
+  execution, and CUDA Graphs.
+- **Experiment with training.** Use opt-in reverse-mode autograd and the
+  end-to-end MLP classifier example as a starting point.
+
+**Contents:** [Quick look](#quick-look) · [Results](#results) ·
+[Install](#install) · [GPU tensors](#gpu-tensors-in-php) ·
+[Data pipelines and autograd](#data-pipelines-for-machine-learning) ·
+[Custom kernels](#custom-kernels) · [Fusion](#optional-kernel-fusion) ·
 [Streams and CUDA Graph](#streams-asynchronous-execution-and-cuda-graph) ·
 [Training example](#real-training-with-fusion) ·
-[API and limits](#api-and-limits) ·
-[Validation status](#validation-status) ·
+[API and limits](#api-and-limits) · [Validation](#validation-status) ·
 [Contribute](#contribute)
 
 ## Quick look
+
+Tensor operations run on the GPU by default. Fusion is optional: use it when
+you want a reusable compiled plan for repeated work.
 
 ```php
 use Cuda\CudaArray;
@@ -75,7 +82,12 @@ $fused = $plan->run($a, $b, $c);
 print_r($fused->toArray()); // [7, 7, 7, 7]
 ```
 
-Try a full training run on the GPU, written entirely in PHP:
+The `CudaArray` objects hold GPU data; `toArray()` is where this example copies
+the result back to PHP. To explore the library, start with the
+[examples guide](examples/README.md), which walks from basic tensors to custom
+kernels, Fusion, and a complete training example.
+
+For example, train the included classifier on the GPU:
 
 ```bash
 php -n -d extension=./cuda_build-8.3/modules/cuda.so examples/08_gpu_classifier.php \
@@ -105,7 +117,11 @@ demonstration, not a clinical model. The planner turned the 68 captured nodes of
 the training step into 11 fused kernels plus 9 native boundaries (matmul and
 reductions).
 
-**End-to-end training example** ([`examples/08_gpu_classifier.php`](examples/08_gpu_classifier.php), a complete Multi-Layer Perceptron (MLP) for MNIST, Fashion-MNIST, or custom CSVs. It processes hundreds of thousands of samples per second using fused CUDA kernels, showcasing tensor operations, JIT compilation, math optimization (AdamW/SGD), and pure PHP data orchestration.
+The [end-to-end training example](examples/08_gpu_classifier.php) is a complete
+multi-layer perceptron (MLP) for MNIST, Fashion-MNIST, or custom CSV datasets.
+It demonstrates tensor operations, runtime kernel compilation, AdamW/SGD, and
+PHP-based data orchestration. Its throughput is workload- and GPU-dependent;
+see the benchmark details above for the measured setup.
 
 Full benchmark reports live in the
 [benchmarks repository](#benchmarks).
@@ -216,24 +232,38 @@ Floating `min`/`max` retain the original kernel and reduction order to preserve
 their existing NaN semantics. Parallel floating sum/mean/product may change
 low-order bits because the addition/multiplication order changes.
 
-BLAS uses strict FP32 math (no TF32 or implicit FP16). cuBLASLt algorithms are
-cached by layout with zero shared workspace, allowing concurrent Fusion streams.
-Unavailable algorithms fall back to cuBLAS; submission failures raise exceptions
-instead of silently running another backend. This does not add bias/activation
-epilogues to Fusion or change the existing dtype API.
+Matmul defaults to strict FP32. On compute capability 8.0+ with cuBLAS, callers
+may explicitly opt in to TF32 Tensor Core math:
+
+```php
+cuda_set_matmul_precision('tf32');
+$result = $left->matmul($right);
+cuda_set_matmul_precision('fp32-strict');
+```
+
+The selected mode is per request/thread and resets to strict FP32 at request
+shutdown. It affects eligible cuBLAS/cuBLASLt GEMMs only: dot products and
+built-in fallback kernels retain their existing FP32 behavior, and tensor
+dtypes are unchanged. Select the mode before compiling a Fusion graph that
+contains `matmul()`; the graph captures the mode used during compilation.
+cuBLASLt algorithms are cached by layout and precision with zero shared
+workspace, allowing concurrent Fusion streams. Unavailable algorithms fall
+back to cuBLAS; submission failures raise exceptions instead of silently
+running another backend. This does not add bias/activation epilogues to Fusion.
 
 ```php
 print_r(cuda_get_backend_info());
 // cublas, cublasLt, cub, cudnn: compiled capabilities
 // lastMatmul: none, builtin, cublas, cublasDot, cublasBatched, cublasLt
+// precision: fp32-strict (default) or tf32 (explicitly enabled)
 // lastBlasStatus: status of the most recent BLAS call (0 = success)
 // cublasCalls, cublasLtCalls, builtinMatmulCalls,
 // cubReductionCalls, coalescedReductionCalls, genericReductionCalls
 ```
 
 Counters are per request/thread and reset on device reset. They count native
-submissions, not completed GPU executions or CUDA Graph replays. The
-`precision` field describes the BLAS/CNN FP32 policy, not all tensor dtypes.
+submissions, not completed GPU executions or CUDA Graph replays. The `precision`
+field reports the selected cuBLAS matmul policy, not all tensor operations.
 
 Use [`examples/10_kernel_benchmark.php`](examples/10_kernel_benchmark.php) for a
 reproducible before/after benchmark with numerical checks, warm resident inputs,
@@ -248,6 +278,10 @@ php -n -d memory_limit=-1 -d extension=./cuda_build-8.3/modules/cuda.so \
 This measures PHP/API wall-clock latency including output allocation and final
 GPU synchronization, **not isolated CUDA-event kernel time**. Run without other
 GPU workloads for useful comparisons; speedups depend on shape and hardware.
+Its matmul cases cover square, skinny, MLP/classifier, transposed, strided,
+batched, and broadcast layouts, and report the selected backend per case.
+The benchmark defaults to strict FP32; pass `--precision=tf32` to measure the
+opt-in Tensor Core mode on supported GPUs.
 
 ## CNN inference with optional cuDNN
 
@@ -376,8 +410,57 @@ machine-learning data preparation, inference and small training loops while the
 data remains in NVIDIA GPU memory.
 
 This is a low-level GPU computing library, not a complete machine-learning
-framework. The training example implements backpropagation explicitly; automatic
-differentiation and Python interoperability are not provided.
+framework. It provides opt-in reverse-mode automatic differentiation for
+floating-point tensors, including gradients built inside a Fusion capture.
+
+### Automatic differentiation
+
+Gradient tracking is disabled by default. Mark leaf tensors with
+`requiresGrad()`, build a scalar loss, and call `backward()`. Gradients
+accumulate until `zeroGrad()` is called; `detach()` creates a shared-storage
+view disconnected from the gradient history.
+
+```php
+use Cuda\CudaArray;
+
+$input = CudaArray::fromFlatArray([1, 2, 3, 4], [2, 2])->requiresGrad();
+$weight = CudaArray::fromFlatArray([1, 0, 0, 1], [2, 2])->requiresGrad();
+$loss = $input->matmul($weight)->mean();
+$loss->backward();
+
+$weightGradient = $weight->grad();
+$weight->zeroGrad();
+```
+
+Non-scalar outputs require an explicit seed with the same shape and dtype:
+`$output->backward($seed)`. Scalar outputs use a seed of one by default.
+Supported rules include arithmetic and broadcasting, 2D matmul, `sum()`,
+`mean()`, `max()`/`min()` (ties share the gradient), `where()`, floating-point
+casts, `reshape()`, `transpose()`, and the common exponential, logarithmic,
+trigonometric, square-root and negation operations. Comparisons and `where()`
+conditions do not receive gradients. Unsupported operations fail explicitly
+during backward; batched matmul and slice/concat gradients are not implemented.
+
+Backward can be part of a compiled Fusion callback. Mark the example inputs
+before compilation so the placeholders inherit gradient tracking, and return
+the gradients (or use them to compute functional parameter updates) as graph
+outputs:
+
+```php
+$input->requiresGrad();
+$weight->requiresGrad();
+$graph = Cuda\Fusion::compile(function ($x, $w) {
+    $loss = $x->matmul($w)->mean();
+    $loss->backward();
+    return ['loss' => $loss, 'weightGradient' => $w->grad()];
+}, inputs: [$input, $weight]);
+$result = $graph->run($input, $weight);
+```
+
+Fusion still captures the operations into one execution plan; backward does
+not run kernels during graph construction. Optimizer updates remain functional:
+compute new parameters and state from the current values and gradients, then
+return them as outputs rather than mutating captured tensors.
 
 For data already in packed row-major bytes, avoid creating individual PHP
 scalars. `fromFile()` reads raw bytes, whereas `fromNpy()` parses NumPy's `.npy`
@@ -602,14 +685,19 @@ $finished = $pending->isFinished(); // Query without waiting.
 $result = $pending->wait();        // Synchronize and retrieve outputs.
 ```
 
-`cudaGraph: true` opts into a CUDA Graph executable for compatible plans. Kernel
-parameters are updated for new input/output pointers before each launch.
+`cudaGraph: true` opts into a CUDA Graph executable for compatible plans. Generated
+kernel-only plans update kernel parameters directly for new input/output pointers.
+Plans with matmul or reduction boundaries capture the complete stream sequence,
+then recapture it on replay and update the executable for current pointers. Those
+plans warm up the native library/workspace path once before capture. Recapture adds
+host work, so native-boundary graphs should be benchmarked against stream replay
+for the target workload.
 `getStats()['backend']` is `cuda-graph`, `stream` or `native`.
 
 | Plan contains | Stream and `runAsync()` | CUDA Graph |
 | --- | :---: | :---: |
 | Generated kernels only | ✅ | ✅ |
-| Matmul / reductions | ✅ | not yet |
+| Matmul / reductions | ✅ | ✅ |
 | Power boundaries | ❌ (synchronous native executor) | ❌ |
 
 Check `cudaGraphCompatible` and `cudaGraphIncompatibility` to distinguish graph
@@ -673,26 +761,39 @@ end-to-end timings, and does not assume CUDA Graph is faster for every workload.
 </details>
 
 ## Real training with Fusion
-[`examples/08_gpu_classifier.php`](examples/08_gpu_classifier.php )trains a deep MLP classifier on real datasets (MNIST, Fashion-MNIST, or CSV) without custom CUDA source or environment switches:
 
-- Parses and normalizes dataset files directly in PHP.
-- Packed float32 batches are uploaded once with ``fromBuffer()`` and kept on the GPU, including their transpose views.
-- Forward pass, numerically stable softmax cross-entropy, backward pass, and optimizer (AdamW or SGD) steps are compiled once per batch shape and replayed with new parameter tensors
-- Matmul/reduction boundaries and generated elementwise kernels share a private stream, with minimal synchronization.
-- Loss is transferred only on reporting epochs, outputting a colorful CLI report including macro-F1 score and confusion analysis
+[`examples/08_gpu_classifier.php`](examples/08_gpu_classifier.php) trains an
+MLP classifier on MNIST, Fashion-MNIST, or a custom CSV dataset without
+requiring users to write CUDA source:
+
+- Dataset parsing and normalization are handled in PHP.
+- Packed `float32` batches are uploaded and kept on the GPU.
+- Forward, backward, and optimizer elementwise operations are captured and
+  replayed through Fusion; matrix multiplication and reductions use native
+  kernels at plan boundaries.
+- The example reports loss and evaluation metrics, including macro-F1 and a
+  confusion matrix.
 
 ```sh
 php -n -d extension=./cuda_build-8.3/modules/cuda.so examples/08_gpu_classifier.php \
   --dataset=mnist --epochs=40 --batch-size=128 --optimizer=adam
 ```
 
-Defaults are MNIST, 512-256 hidden layers, 40 epochs, batch size 128, and the AdamW optimizer. Every default run trains from deterministic initial weights. Omit ``--no-save`` to save parameters after successful evaluation; ``--load`` explicitly evaluates a compatible saved model instead of training. Dataset and model files are saved to the script's origin directory and are ignored by Git. The script reports one-time uploads, compilation, training throughput, and detailed evaluation metrics. Add ``--profile`` to print per-plan timing, allocation, scratch, and synchronization counters after training, or ``--predict-index=N``to showcase inference on a specific sample.
+Defaults are MNIST, hidden layers of 512 and 256 units, 40 epochs, batch size
+128, and AdamW. Initialization is deterministic. By default, the example saves
+parameters after successful evaluation; pass `--no-save` to disable saving or
+`--load` to evaluate a compatible saved model without training. Dataset and
+model files are stored next to the script and are ignored by Git.
+
+Use `--profile` to print Fusion plan timing and resource counters, or
+`--predict-index=N` to run inference on one sample. Run the script with
+`--help` to see the available dataset, optimizer, and training options.
 
 ## API and limits
 
 | API | Purpose |
 | --- | --- |
-| `Cuda\CudaArray` | GPU allocation, tensor math, reductions, views, imports and `where()` |
+| `Cuda\CudaArray` | GPU allocation, tensor math, reductions, views, imports, `where()` and opt-in autograd |
 | `Cuda\HostArray` / `Cuda\ContiguousArray` | CPU storage, packed buffers, optional pinned memory and `toGpu()` |
 | `Cuda\Fusion` / `Cuda\FusionGraph` | Optional expression capture, compiled replay, PTX cache and plan diagnostics |
 | `Cuda\FusionExecution` | Pending compatible execution, completion query and synchronized result collection |
@@ -707,11 +808,14 @@ The annotated signatures are in [class stubs](stubs/cuda.stub.php) and
 **Current limits:**
 
 - NVIDIA GPUs only, on Linux. GPU data has no CPU fallback.
-- No automatic differentiation; backpropagation is written explicitly.
-- `astype()` supports safe dtype conversions.
+- Reverse-mode automatic differentiation is opt-in and covers only the
+  operations listed in [Automatic differentiation](#automatic-differentiation).
+  Batched matmul and slice/concat gradients are not implemented.
+- `astype()` supports safe dtype conversions; autograd tracks floating-point
+  casts only.
 - The core API baseline is frozen at `0.1.0`, and the current release is beta.
-- Matmul/reduction plans support async replay, but not CUDA Graph yet; power
-  boundaries still require synchronous execution.
+- Compatible plans with matmul or reductions support asynchronous replay and
+  CUDA Graphs. Power boundaries still require synchronous execution.
 
 ## Validation status
 
@@ -721,6 +825,7 @@ runtime validation on each PHP version and thread mode.
 
 | PHP / mode | GPU | What was validated |
 | --- | --- | --- |
+| 8.1, Docker development image | GeForce MX570 A | Current source: 45 tests passed; one optional cuDNN test skipped; MLP training smoke test completed |
 | 8.3 NTS with cuDNN 8.9.7 | GeForce MX570 A | Beta.5: all 44 GPU PHPT tests passed, including CNN inference; CPU/API checks passed |
 | 8.3 and 8.5 NTS without cuDNN | GeForce MX570 A | Beta.5: 43 GPU PHPT tests passed on each runtime; one optional cuDNN test skipped. CPU/API checks passed |
 | 8.3 NTS without cuBLAS/cuDNN | GeForce MX570 A | Beta.5: 43 GPU PHPT tests passed; one optional cuDNN test skipped. CPU/API checks passed |
