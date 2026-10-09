@@ -160,6 +160,18 @@ struct MinOpT
 };
 
 template <typename T>
+struct AllOpT
+{
+    static __device__ __forceinline__ bool apply(bool a, T b) { return a && (b != static_cast<T>(0)); }
+};
+
+template <typename T>
+struct AnyOpT
+{
+    static __device__ __forceinline__ bool apply(bool a, T b) { return a || (b != static_cast<T>(0)); }
+};
+
+template <typename T>
 struct ExpOpT
 {
     static __device__ __forceinline__ T apply(T a)
@@ -331,6 +343,18 @@ template <typename T>
 struct ArgIdentity<T, AddOpT<T>>
 {
     __device__ __forceinline__ static T get_init_val() { return static_cast<T>(0); }
+};
+
+template <typename InputT>
+struct ArgIdentity<bool, AllOpT<InputT>>
+{
+    __device__ __forceinline__ static bool get_init_val() { return true; }
+};
+
+template <typename InputT>
+struct ArgIdentity<bool, AnyOpT<InputT>>
+{
+    __device__ __forceinline__ static bool get_init_val() { return false; }
 };
 
 template <typename T>

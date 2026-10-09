@@ -32,16 +32,14 @@ function createTrainState(ModelConfiguration $configuration, array $buffers): ar
         $state['params'][] = CudaArray::fromBuffer($buffers[2 * $layer], [$inputUnits, $outputUnits]);
         $state['params'][] = CudaArray::fromBuffer($buffers[2 * $layer + 1], [1, $outputUnits]);
     }
-    foreach ($state['params'] as $parameter) {
-        $shape = $parameter->getShape();
-        $state['firstMoments'][] = CudaArray::zeros($shape);
-        if (modelUsesAdam($configuration)) {
-            $state['secondMoments'][] = CudaArray::zeros($shape);
-        }
-    }
+    $optimizerState = createModelOptimizer($configuration)->initState($state['params']);
     if (modelUsesAdam($configuration)) {
-        $state['beta1Power'] = scalarTensor(1.0);
-        $state['beta2Power'] = scalarTensor(1.0);
+        $state['firstMoments'] = $optimizerState['firstMoment'];
+        $state['secondMoments'] = $optimizerState['secondMoment'];
+        $state['beta1Power'] = $optimizerState['beta1Power'];
+        $state['beta2Power'] = $optimizerState['beta2Power'];
+    } else {
+        $state['firstMoments'] = $optimizerState['velocity'];
     }
     return $state;
 }

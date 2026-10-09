@@ -327,6 +327,9 @@ scalar_value_t cast_single_value(scalar_value_t value, dtype_t target_dtype)
 
 dtype_t promote_scalar_for_arithmetic(dtype_t tensor_dtype, dtype_t scalar_dtype, operation_type_t op, int is_neg)
 {
+    if (op == OP_MAXIMUM || op == OP_MINIMUM)
+        return tensor_dtype == scalar_dtype ? tensor_dtype : promote_types(tensor_dtype, scalar_dtype);
+
     if (op == OP_DIV || (op == OP_POW && is_neg == 1))
     {
         if (tensor_dtype == DTYPE_FLOAT64 && scalar_dtype == DTYPE_FLOAT64)
@@ -371,6 +374,9 @@ dtype_t promote_scalar_for_arithmetic(dtype_t tensor_dtype, dtype_t scalar_dtype
 
 dtype_t promote_types_for_arithmetic(dtype_t a, dtype_t b, operation_type_t op)
 {
+    if (op == OP_MAXIMUM || op == OP_MINIMUM)
+        return promote_types(a, b);
+
     if (op == OP_DIV || op == OP_POW) /** @todo need to validate this policy for tensors */
     {
         dtype_t p = promote_types(a, b);

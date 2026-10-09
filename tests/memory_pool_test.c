@@ -12,6 +12,7 @@
 static void *device_allocations[32];
 static size_t device_allocation_sizes[32];
 static size_t live_bytes;
+static size_t device_allocation_calls;
 static int invalid_frees;
 static int fail_metadata;
 
@@ -39,6 +40,7 @@ static cudaError_t test_cuda_malloc(void **ptr, size_t size)
             device_allocations[index] = *ptr;
             device_allocation_sizes[index] = size;
             live_bytes += size;
+            device_allocation_calls++;
             return cudaSuccess;
         }
     }
@@ -130,6 +132,26 @@ int main(void)
     cuda_mem_free(main_pool_allocation);
     tensor_mem_destroy();
     assert(live_bytes == 0);
+
+    size_t allocation_calls_before_growth = device_allocation_calls;
+    assert(tensor_mem_init(64 * 1024 * 1024));
+    void *arena_blocks[8];
+    for (int index = 0; index < 8; index++)
+    {
+        arena_blocks[index] = cuda_mem_alloc(2 * 1024 * 1024);
+        assert(arena_blocks[index]);
+    }
+    assert(device_allocation_calls == allocation_calls_before_growth + 3);
+    for (int index = 0; index < 8; index++)
+        cuda_mem_free(arena_blocks[index]);
+    size_t reserved_with_two_arenas = live_bytes;
+    void *reused_arena_block = cuda_mem_alloc(2 * 1024 * 1024);
+    assert(reused_arena_block);
+    assert(live_bytes == reserved_with_two_arenas);
+    cuda_mem_free(reused_arena_block);
+    tensor_mem_destroy();
+    assert(live_bytes == 0);
+    assert(invalid_frees == 0);
     puts("memory pool checks passed");
     return 0;
 }

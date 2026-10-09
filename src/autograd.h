@@ -13,7 +13,9 @@ typedef enum
     AUTOGRAD_MATMUL,
     AUTOGRAD_VIEW,
     AUTOGRAD_CAST,
-    AUTOGRAD_WHERE
+    AUTOGRAD_WHERE,
+    AUTOGRAD_GATHER,
+    AUTOGRAD_SCATTER_ADD
 } autograd_kind_t;
 
 typedef struct autograd_node
@@ -37,6 +39,9 @@ int autograd_record_unary(tensor_t *result, tensor_t *a, operation_type_t op);
 int autograd_record_reduce(tensor_t *result, tensor_t *a, operation_type_t op, int axis);
 int autograd_record_matmul(tensor_t *result, tensor_t *a, tensor_t *b);
 int autograd_record_view(tensor_t *result, tensor_t *a, operation_type_t op, const int *axes);
+int autograd_record_gather(tensor_t *result, tensor_t *input, tensor_t *indices, int axis);
+int autograd_record_scatter_add(tensor_t *result, tensor_t *input, tensor_t *indices,
+                                tensor_t *updates, int axis);
 int autograd_record_cast(tensor_t *result, tensor_t *a);
 int autograd_record_where(tensor_t *result, tensor_t *condition, tensor_t *x, tensor_t *y);
 int autograd_backward(tensor_t *tensor, tensor_t *gradient);

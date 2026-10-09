@@ -20,6 +20,7 @@
 #include "backend_info.h"
 #include "reduction_ops.h"
 #include "nn.h"
+#include "optimizer.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(cuda);
 
@@ -79,6 +80,10 @@ PHP_MINIT_FUNCTION(cuda)
     cuda_nn_init();
 
     if (!cuda_array_init(pool_size))
+    {
+        return FAILURE;
+    }
+    if (cuda_optimizer_init() != SUCCESS)
     {
         return FAILURE;
     }

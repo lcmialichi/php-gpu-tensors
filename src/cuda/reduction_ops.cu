@@ -125,6 +125,29 @@ extern "C" void launch_reduction(
         return;
     }
 
+    if (op_type == OP_REDUCE_ALL || op_type == OP_REDUCE_ANY)
+    {
+        DISPATCH_DTYPE(dtype, {
+            if (op_type == OP_REDUCE_ALL)
+            {
+                typedef AllOpT<scalar_t> reduce_op_t;
+                launch_reduce_op_kernel<scalar_t, bool, reduce_op_t>(
+                    (scalar_t *)input, (bool *)output, input_shape, input_ndims,
+                    result_shape, input_strides, result_ndims, axis,
+                    total_elements_out, input_base_offset, 1, stream);
+            }
+            else
+            {
+                typedef AnyOpT<scalar_t> reduce_op_t;
+                launch_reduce_op_kernel<scalar_t, bool, reduce_op_t>(
+                    (scalar_t *)input, (bool *)output, input_shape, input_ndims,
+                    result_shape, input_strides, result_ndims, axis,
+                    total_elements_out, input_base_offset, 1, stream);
+            }
+        });
+        return;
+    }
+
     DISPATCH_DTYPE(dtype, {
         DISPATCH_OP_REDUCTION(op_type, {
             launch_reduce_op_kernel<scalar_t, scalar_t, bin_op_t>(

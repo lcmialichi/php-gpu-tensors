@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 use Cuda\CudaArray;
+use Cuda\Optimizer;
 
 /**
  * -------------------------------------------------------------------------
@@ -31,6 +32,23 @@ function modelParameterCount(ModelConfiguration $configuration): int
 function modelUsesAdam(ModelConfiguration $configuration): bool
 {
     return $configuration->optimizer === 'adam';
+}
+
+function createModelOptimizer(ModelConfiguration $configuration): Optimizer
+{
+    if (modelUsesAdam($configuration)) {
+        return Optimizer::adamW(
+            learningRate: 0.001,
+            beta1: $configuration->beta1,
+            beta2: $configuration->beta2,
+            weightDecay: $configuration->weightDecay
+        );
+    }
+    return Optimizer::sgd(
+        learningRate: 0.02,
+        momentum: $configuration->momentum,
+        weightDecay: $configuration->weightDecay
+    );
 }
 
 /**
@@ -93,7 +111,7 @@ function modelEvaluationArity(ModelConfiguration $configuration): int
 function modelExpectedBoundaries(ModelConfiguration $configuration, bool $withLoss): int
 {
     $layers = modelLayerCount($configuration);
-    return (3 * $layers - 1) + ($layers + 2) + ($withLoss ? 2 : 0);
+    return 4 * $layers + 4 + ($withLoss ? 1 : 0);
 }
 
 /**
@@ -177,22 +195,25 @@ function trainingBody(
     $weightDecay = $configuration->weightDecay;
     $clip = $configuration->gradientClip;
     $labelSmoothing = $configuration->labelSmoothing;
-    $momentum = $configuration->momentum;
-    $beta1 = $configuration->beta1;
-    $beta2 = $configuration->beta2;
     $classes = $dimensions[$layers];
     $zero = $constants['zero'];
     $one = $constants['one'];
     $upper = $constants['upper'];
     $lower = $constants['lower'];
+    $optimizer = createModelOptimizer($configuration);
+    $weightDecayMask = [];
+    for ($index = 0; $index < $parameterCount; $index++) {
+        $weightDecayMask[] = $index % 2 === 0;
+    }
 
     /**
      * @param list<CudaArray> $inputs Batch tensors, parameters, and optimizer state.
      * @return list<CudaArray> Updated parameters/state and optional scalar loss.
      */
     return static function (array $inputs) use (
-        $dimensions, $layers, $parameterCount, $adam, $activation, $weightDecay, $clip,
-        $labelSmoothing, $momentum, $beta1, $beta2, $classes, $zero, $one, $upper, $lower, $rows, $withLoss
+        $dimensions, $layers, $parameterCount, $adam, $activation, $clip,
+        $labelSmoothing, $classes, $zero, $one, $upper, $lower, $rows, $withLoss,
+        $optimizer, $weightDecayMask
     ): array {
         $features = $inputs[0];
         $transposedFeatures = $inputs[1];
@@ -211,9 +232,17 @@ function trainingBody(
         $firstMoments = array_slice($inputs, $offset, $parameterCount);
         $offset += $parameterCount;
         $secondMoments = $adam ? array_slice($inputs, $offset, $parameterCount) : [];
+        $optimizerState = $adam
+            ? [
+                'firstMoment' => $firstMoments,
+                'secondMoment' => $secondMoments,
+                'beta1Power' => $beta1Power,
+                'beta2Power' => $beta2Power,
+            ]
+            : ['velocity' => $firstMoments];
 
+        $optimizer->zeroGrad($parameters);
         foreach ($parameters as $parameter) {
-            $parameter->zeroGrad();
             $parameter->requiresGrad();
         }
 
@@ -243,57 +272,23 @@ function trainingBody(
         $loss->backward($one / $rows);
         /** @var list<CudaArray> $gradients */
         $gradients = array_map(static fn(CudaArray $parameter): CudaArray => $parameter->grad(), $parameters);
-
-        $nextBeta1Power = null;
-        $nextBeta2Power = null;
-        $beta1Correction = null;
-        $beta2Correction = null;
-        if ($adam) {
-            $nextBeta1Power = $beta1Power * $beta1;
-            $nextBeta2Power = $beta2Power * $beta2;
-            $beta1Correction = $one - $nextBeta1Power;
-            $beta2Correction = $one - $nextBeta2Power;
-        }
-        /** @var list<CudaArray> $updatedParameters */
-        $updatedParameters = [];
-        /** @var list<CudaArray> $updatedFirstMoments */
-        $updatedFirstMoments = [];
-        /** @var list<CudaArray> $updatedSecondMoments */
-        $updatedSecondMoments = [];
-        for ($index = 0; $index < $parameterCount; $index++) {
-            $parameterGradient = $gradients[$index];
-            $isFinite = $parameterGradient->eq($parameterGradient);
+        foreach ($gradients as $index => $parameterGradient) {
             $parameterGradient = CudaArray::where($parameterGradient->gt($clip), $upper, $parameterGradient);
             $parameterGradient = CudaArray::where($parameterGradient->lt(-$clip), $lower, $parameterGradient);
-            if ($adam) {
-                $nextFirstMoment = $firstMoments[$index] * $beta1
-                    + $parameterGradient * (1.0 - $beta1);
-                $nextSecondMoment = $secondMoments[$index] * $beta2
-                    + ($parameterGradient * $parameterGradient) * (1.0 - $beta2);
-                $direction = ($nextFirstMoment / $beta1Correction)
-                    / (($nextSecondMoment / $beta2Correction)->sqrt() + 1e-8);
-            } else {
-                $nextFirstMoment = $firstMoments[$index] * $momentum + $parameterGradient;
-                $direction = $nextFirstMoment;
-            }
-            if ($weightDecay > 0.0 && $index % 2 === 0) {
-                $direction = $direction + $parameters[$index] * $weightDecay;
-            }
-            $nextParameter = $parameters[$index] - $direction * $learningRate;
-            $updatedParameters[$index] = CudaArray::where($isFinite, $nextParameter, $parameters[$index])->detach();
-            $updatedFirstMoments[$index] = CudaArray::where($isFinite, $nextFirstMoment, $firstMoments[$index]);
-            if ($adam) {
-                $updatedSecondMoments[$index] = CudaArray::where(
-                    $isFinite,
-                    $nextSecondMoment,
-                    $secondMoments[$index]
-                );
-            }
+            $gradients[$index] = $parameterGradient;
         }
+        $updated = $optimizer->step($parameters, $gradients, $optimizerState, $learningRate, $weightDecayMask);
+        $updatedParameters = $updated['parameters'];
+        $updatedState = $updated['state'];
 
+        $updatedFirstMoments = $adam ? $updatedState['firstMoment'] : $updatedState['velocity'];
         $outputs = array_merge($updatedParameters, $updatedFirstMoments);
         if ($adam) {
-            $outputs = array_merge($outputs, $updatedSecondMoments, [$nextBeta1Power, $nextBeta2Power]);
+            $outputs = array_merge(
+                $outputs,
+                $updatedState['secondMoment'],
+                [$updatedState['beta1Power'], $updatedState['beta2Power']]
+            );
         }
         if ($withLoss) {
             $outputs[] = $loss;

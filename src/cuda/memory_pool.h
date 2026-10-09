@@ -8,8 +8,15 @@
 typedef struct MemoryBlock {
     void* ptr;
     size_t size;
+    void* pool_base;
     struct MemoryBlock* next;
 } MemoryBlock;
+
+typedef struct PoolSegment {
+    void* ptr;
+    size_t size;
+    struct PoolSegment* next;
+} PoolSegment;
 
 typedef MemoryBlock AllocatedBlock;
 typedef MemoryBlock FreeBlock;

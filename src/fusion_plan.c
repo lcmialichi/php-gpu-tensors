@@ -8,7 +8,8 @@ int fusion_inline(tensor_t *tensor)
         node->kind == FUSION_WHERE || node->kind == FUSION_VIEW) return 1;
     return (node->kind == FUSION_BINARY || node->kind == FUSION_SCALAR) &&
         (node->op == OP_ADD || node->op == OP_SUB || node->op == OP_MUL ||
-         node->op == OP_DIV || (node->op >= OP_GT && node->op <= OP_LE));
+         node->op == OP_DIV || node->op == OP_MAXIMUM || node->op == OP_MINIMUM ||
+         (node->op >= OP_GT && node->op <= OP_LE));
 }
 
 size_t fusion_find(fusion_plan *plan, tensor_t *tensor)

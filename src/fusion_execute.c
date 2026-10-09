@@ -143,7 +143,9 @@ static int fusion_alias_view(fusion_plan *plan, fusion_step *step, tensor_t **va
     tensor_t *source = values[plan->items[step->root].a];
     size_t strides[MAX_DIMS];
     size_t offset = 0;
-    if (node->op == OP_TRANSPOSE)
+    if (node->op == OP_BROADCAST)
+        memcpy(strides, tensor->strides, tensor->ndims * sizeof(size_t));
+    else if (node->op == OP_TRANSPOSE)
         for (int d = 0; d < tensor->ndims; d++) strides[d] = source->strides[node->axes[d]];
     else if (node->op == OP_SLICE)
     {
@@ -512,9 +514,13 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
                 case FUSION_ARG_REDUCE: result = cuda_tensor_reduce_arg(a, axis, node->op); break;
                 case FUSION_MATMUL: result = cuda_tensor_matmul(a, b); break;
                 case FUSION_VIEW:
-                    result = node->op == OP_RESHAPE
-                        ? cuda_tensor_reshape(a, tensor->shape, tensor->ndims)
-                        : cuda_tensor_transpose(a, node->axes, tensor->ndims);
+                    if (node->op == OP_RESHAPE)
+                        result = cuda_tensor_reshape(a, tensor->shape, tensor->ndims);
+                    else if (node->op == OP_BROADCAST)
+                        result = cuda_tensor_create_view(a, tensor->shape, tensor->strides,
+                                                         tensor->ndims, 0, tensor->total_size);
+                    else
+                        result = cuda_tensor_transpose(a, node->axes, tensor->ndims);
                     break;
                 default: ZEND_ASSERT(0);
             }

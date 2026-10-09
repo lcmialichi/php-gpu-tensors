@@ -16,6 +16,8 @@ static const char *fusion_operator(operation_type_t op)
         case OP_SUB: return "-";
         case OP_MUL: return "*";
         case OP_DIV: return "/";
+        case OP_MAXIMUM: return ">";
+        case OP_MINIMUM: return "<";
         case OP_GT: return ">";
         case OP_LT: return "<";
         case OP_EQ: return "==";
@@ -198,6 +200,8 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
                 divisor *= tensor->shape[d];
             }
         }
+        else if (node->op == OP_BROADCAST)
+            fusion_project(source, tensor, node->a, "ia");
         else
         {
             smart_str_appends(source, "size_t ia=0;\n");
@@ -235,6 +239,24 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
     if (node->kind == FUSION_UNARY) fusion_unary_source(source, node, tensor->dtype);
     else if (node->kind == FUSION_CAST || node->kind == FUSION_VIEW) smart_str_appends(source, "a");
     else if (node->kind == FUSION_WHERE) smart_str_appends(source, "a!=0?b:c");
+    else if (node->op == OP_MAXIMUM || node->op == OP_MINIMUM)
+    {
+        const char *comparison = node->op == OP_MAXIMUM ? ">" : "<";
+        for (int part = 0; part < 4; part++)
+        {
+            int left_operand = part == 0 || part == 2;
+            int operand_is_scalar = node->kind == FUSION_SCALAR;
+            smart_str_append_printf(source, "static_cast<%s>(", type);
+            if (operand_is_scalar && left_operand == node->parameter)
+                fusion_scalar_source(source, node->scalar);
+            else
+                smart_str_appends(source, operand_is_scalar ? "a" : (left_operand ? "a" : "b"));
+            smart_str_appends(source, ")");
+            if (part == 0) smart_str_appends(source, comparison);
+            else if (part == 1) smart_str_appends(source, "?");
+            else if (part == 2) smart_str_appends(source, ":");
+        }
+    }
     else
     {
         smart_str_append_printf(source, "static_cast<%s>(", type);

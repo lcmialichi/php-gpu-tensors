@@ -264,6 +264,7 @@ tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg)
         return NULL;
     }
     dtype_t dtype = arg ? DTYPE_INT32 :
+        (op == OP_REDUCE_ALL || op == OP_REDUCE_ANY) ? DTYPE_BOOL :
         op == OP_REDUCE_MEAN ?
             (a->dtype == DTYPE_FLOAT64 || dtype_is_integer(a->dtype) || a->dtype == DTYPE_BOOL
                 ? DTYPE_FLOAT64 : DTYPE_FLOAT32) : a->dtype;

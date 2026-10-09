@@ -53,6 +53,7 @@ available for a documented subset of operations and is opt-in.
 **Contents:** [Quick look](#quick-look) · [Results](#results) ·
 [Install](#install) · [GPU tensors](#gpu-tensors-in-php) ·
 [Data pipelines and autograd](#data-pipelines-for-machine-learning) ·
+[Optimizers](#optimizers) ·
 [Custom kernels](#custom-kernels) · [Fusion](#optional-kernel-fusion) ·
 [Streams and CUDA Graph](#streams-asynchronous-execution-and-cuda-graph) ·
 [Training example](#real-training-with-fusion) ·
@@ -267,7 +268,8 @@ field reports the selected cuBLAS matmul policy, not all tensor operations.
 
 Use [`examples/10_kernel_benchmark.php`](examples/10_kernel_benchmark.php) for a
 reproducible before/after benchmark with numerical checks, warm resident inputs,
-raw samples and binary hashes:
+configurable warmups/samples, latency distributions, memory-pool reuse workloads,
+Fusion plan topology/statistics, raw samples and binary hashes:
 
 ```bash
 php -n -d memory_limit=-1 -d extension=./cuda_build-8.3/modules/cuda.so \
@@ -280,6 +282,12 @@ GPU synchronization, **not isolated CUDA-event kernel time**. Run without other
 GPU workloads for useful comparisons; speedups depend on shape and hardware.
 Its matmul cases cover square, skinny, MLP/classifier, transposed, strided,
 batched, and broadcast layouts, and report the selected backend per case.
+It also compares eager, Fusion, and CUDA Graph replay for elementwise chains and
+reductions with fused work around a native boundary. The `pool-reuse-*` cases
+repeat same-shape output allocation/destruction and report end-to-end reuse
+latency; they are not allocator-only timings or internal pool counters. Adjust
+sample counts and allocator churn with `--warmups=N`, `--samples=N`, and
+`--pool-iterations=N`.
 The benchmark defaults to strict FP32; pass `--precision=tf32` to measure the
 opt-in Tensor Core mode on supported GPUs.
 
@@ -346,6 +354,43 @@ views, and `sum()`, `mean()`, `min()`, `max()`, `prod()`, `argMax()`, and
 methods. `mean()` reduces all values when called without an axis, or reduces one
 dimension when given an axis. It returns `float32` for `float32` input and
 `float64` for `float64`, integer, and boolean input.
+
+Eager elementwise operations and reductions enqueue work without a device-wide
+wait after each kernel. Operations submitted on the default stream remain
+ordered; host reads such as `toArray()`, `toBuffer()`, and `item()` wait for
+their result. Operations that must validate GPU-resident values can still
+synchronize for that validation.
+
+### More array operations
+
+`squeeze()` removes size-one dimensions and `unsqueeze()` inserts one.
+`broadcastTo()` expands a tensor as a zero-copy view where possible; expanded
+dimensions use a zero stride. Elementwise `maximum()` and `minimum()` compare
+two tensors or a tensor and a scalar, while `clamp($min, $max)` bounds values.
+These operations follow the usual broadcasting rules.
+
+`all($axis)` and `any($axis)` reduce boolean conditions and return boolean
+tensors. `var($axis, $correction)` and `std($axis, $correction)` compute
+variance and standard deviation; the default correction is zero. Calling
+`item()` on a one-element tensor returns a PHP scalar and transfers that value
+from the GPU.
+
+```php
+$row = new CudaArray([[1.0, 2.0, 3.0]]);
+$batch = $row->broadcastTo([2, 3]);
+$spread = $batch->maximum(2)->clamp(0, 2);
+$variance = $spread->var(0)->item();
+$hasPositive = $spread->any(1)->toArray();
+```
+
+`gather($indices, $axis)` selects values using an `int32` index tensor with
+matching rank and compatible dimensions outside the selected axis.
+`scatterAdd($indices, $updates, $axis)` returns a new tensor and adds updates
+at the indexed positions; duplicate indices accumulate. Gather supports the
+available tensor dtypes, while scatter-add currently supports `float32` and
+`float64`. Both are eager-only and explicitly reject capture inside Fusion.
+Other operations described here can participate in Fusion where their
+underlying operation is supported by the captured plan.
 
 ## Python-style slicing
 
@@ -461,6 +506,38 @@ Fusion still captures the operations into one execution plan; backward does
 not run kernels during graph construction. Optimizer updates remain functional:
 compute new parameters and state from the current values and gradients, then
 return them as outputs rather than mutating captured tensors.
+
+### Optimizers
+
+`Cuda\Optimizer` provides SGD and AdamW updates without hiding tensor state.
+That explicit state is useful in eager training and lets Fusion capture the
+optimizer math along with the forward and backward operations:
+
+```php
+use Cuda\CudaArray;
+use Cuda\Optimizer;
+
+$parameters = [CudaArray::fromFlatArray([2.0], [1])->requiresGrad()];
+$optimizer = Optimizer::adamW(learningRate: 0.001, weightDecay: 0.01);
+$state = $optimizer->initState($parameters);
+
+$optimizer->zeroGrad($parameters);
+$loss = ($parameters[0] * $parameters[0])->sum();
+$loss->backward();
+$gradients = [$parameters[0]->grad()];
+
+$step = $optimizer->step($parameters, $gradients, $state);
+$parameters = $step['parameters'];
+$state = $step['state'];
+```
+
+`step()` returns new parameter tensors and new state; it does not mutate its
+inputs. Pass a `CudaArray` learning rate when it must vary as a Fusion graph
+input. `weightDecayMask` can disable decay for selected parameters, such as
+biases. Parameters and gradients must have matching shapes and dtypes; optimizer
+state preserves each parameter's `float32` or `float64` dtype. SGD state contains
+a velocity tensor per parameter; AdamW state contains first and second moments
+plus scalar beta powers. Pass the returned state to the next step.
 
 For data already in packed row-major bytes, avoid creating individual PHP
 scalars. `fromFile()` reads raw bytes, whereas `fromNpy()` parses NumPy's `.npy`
@@ -795,6 +872,7 @@ Use `--profile` to print Fusion plan timing and resource counters, or
 | --- | --- |
 | `Cuda\CudaArray` | GPU allocation, tensor math, reductions, views, imports, `where()` and opt-in autograd |
 | `Cuda\HostArray` / `Cuda\ContiguousArray` | CPU storage, packed buffers, optional pinned memory and `toGpu()` |
+| `Cuda\Optimizer` | Functional SGD/AdamW updates with explicit state, compatible with Fusion capture |
 | `Cuda\Fusion` / `Cuda\FusionGraph` | Optional expression capture, compiled replay, PTX cache and plan diagnostics |
 | `Cuda\FusionExecution` | Pending compatible execution, completion query and synchronized result collection |
 | `Cuda\Compiler` / `Cuda\CompiledModule` | NVRTC compilation, cached PTX, synchronous and asynchronous kernels |

@@ -17,12 +17,18 @@ This directory contains functional implementations of the extension's API. The e
 
 `10_kernel_benchmark.php` measures square, skinny, MLP/classifier, transposed,
 strided, batched, and broadcast matmul shapes alongside large reductions. It
-checks outputs and records the dispatched backend per matmul case; use
-`--precision=tf32` to measure the opt-in Tensor Core mode.
+checks outputs and records the dispatched backend per matmul case. It also
+compares eager, Fusion, and CUDA Graph replay for elementwise chains and
+reductions around a native boundary. It also measures repeated same-shape
+allocation/release workloads to expose memory-pool reuse latency. See the root
+README for command-line options; use `--precision=tf32` to measure the
+opt-in Tensor Core mode.
 
 Example 08 keeps the entrypoint small. Model settings live in
 `Support/ModelConfiguration.php`; network math, optimizer state, data handling,
-and orchestration are documented functions under `Support/`. It compiles and
+and orchestration are documented functions under `Support/`. Its SGD and AdamW
+updates use `Cuda\Optimizer`, with state passed explicitly so the optimizer
+steps can be captured by Fusion. It compiles and
 retains `Cuda\FusionGraph` plans by batch shape, then calls `run()` for each
 step rather than recompiling in the training loop. `--profile` reports fused
 kernel counts and native boundaries for the captured plans.
@@ -31,6 +37,14 @@ Forward, backward, and optimizer elementwise expressions are captured together.
 `matmul()` and reductions remain native boundaries, with the supported
 elementwise work fused around them; the example's self-tests compare eager and
 compiled training steps and inspect the plan boundary counts.
+
+The core `CudaArray` API also includes shape views (`squeeze()`,
+`unsqueeze()`, `broadcastTo()`), elementwise bounds (`maximum()`, `minimum()`,
+`clamp()`), logical and statistical reductions (`all()`, `any()`, `var()`,
+`std()`), and `item()` for reading one value as a PHP scalar. `gather()` and
+`scatterAdd()` provide indexed reads and additive updates; they currently run
+eagerly rather than inside Fusion. See the root README for their dtype,
+broadcasting, and indexing requirements.
 
 ## Execution Requirements
 

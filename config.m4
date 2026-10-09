@@ -159,6 +159,7 @@ if test "$PHP_CUDA" != "no"; then
     src/cuda_array/cuda_array_ce.c \ 
     src/contiguous_array_ce.c \
     src/nn.c \
+    src/optimizer.c \
     src/cuda_array/ca_private.c \
     src/cuda_array/tensor_transfer.c \
     src/data_types.c \

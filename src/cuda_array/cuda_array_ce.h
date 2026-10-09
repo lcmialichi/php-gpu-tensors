@@ -25,6 +25,9 @@ ZEND_METHOD(CudaArray, __serialize);
 ZEND_METHOD(CudaArray, __unserialize);
 ZEND_METHOD(CudaArray, __invoke);
 ZEND_METHOD(CudaArray, slice);
+ZEND_METHOD(CudaArray, squeeze);
+ZEND_METHOD(CudaArray, unsqueeze);
+ZEND_METHOD(CudaArray, broadcastTo);
 ZEND_METHOD(CudaArray, __debugInfo);
 
 ZEND_METHOD(CudaArray, zeros);
@@ -40,6 +43,9 @@ ZEND_METHOD(CudaArray, divide);
 ZEND_METHOD(CudaArray, add);
 ZEND_METHOD(CudaArray, subtract);
 ZEND_METHOD(CudaArray, power);
+ZEND_METHOD(CudaArray, maximum);
+ZEND_METHOD(CudaArray, minimum);
+ZEND_METHOD(CudaArray, clamp);
 
 ZEND_METHOD(CudaArray, sqrt);
 ZEND_METHOD(CudaArray, exp);
@@ -68,6 +74,13 @@ ZEND_METHOD(CudaArray, prod);
 
 ZEND_METHOD(CudaArray, argMax);
 ZEND_METHOD(CudaArray, argMin);
+ZEND_METHOD(CudaArray, all);
+ZEND_METHOD(CudaArray, any);
+ZEND_METHOD(CudaArray, var);
+ZEND_METHOD(CudaArray, std);
+ZEND_METHOD(CudaArray, item);
+ZEND_METHOD(CudaArray, gather);
+ZEND_METHOD(CudaArray, scatterAdd);
 
 ZEND_METHOD(CudaArray, reshape);
 ZEND_METHOD(CudaArray, flatten);

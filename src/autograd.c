@@ -87,6 +87,8 @@ int autograd_record_binary(tensor_t *result, tensor_t *a, tensor_t *b, operation
         case OP_MUL:
         case OP_DIV:
         case OP_POW:
+        case OP_MAXIMUM:
+        case OP_MINIMUM:
             return autograd_node_add(result, AUTOGRAD_BINARY, a, b, NULL, op);
         default:
             return 1;
@@ -153,6 +155,25 @@ int autograd_record_view(tensor_t *result, tensor_t *a, operation_type_t op, con
         result->grad_fn->ndims = result->ndims;
         memcpy(result->grad_fn->axes, axes, result->ndims * sizeof(int));
     }
+    return 1;
+}
+
+int autograd_record_gather(tensor_t *result, tensor_t *input, tensor_t *indices, int axis)
+{
+    if (!autograd_node_add(result, AUTOGRAD_GATHER, input, indices, NULL, OP_ADD))
+        return 0;
+    if (result->grad_fn && result->grad_fn->a == input)
+        result->grad_fn->parameter = axis;
+    return 1;
+}
+
+int autograd_record_scatter_add(tensor_t *result, tensor_t *input, tensor_t *indices,
+                                tensor_t *updates, int axis)
+{
+    if (!autograd_node_add(result, AUTOGRAD_SCATTER_ADD, input, indices, updates, OP_ADD))
+        return 0;
+    if (result->grad_fn && result->grad_fn->a == input)
+        result->grad_fn->parameter = axis;
     return 1;
 }
 
@@ -355,28 +376,22 @@ static tensor_t *gradient_unbroadcast(tensor_t *gradient, const tensor_t *target
 
     tensor_t *current = gradient;
     int leading_axes = current->ndims - target->ndims;
-    for (int i = 0; i < leading_axes; i++)
-    {
-        tensor_t *reduced = cuda_tensor_reduce(current, 0, OP_REDUCE_SUM);
-        cuda_tensor_destroy(current);
-        if (!reduced)
-            return NULL;
-        current = reduced;
-    }
-
     for (int axis = current->ndims - 1; axis >= 0; axis--)
     {
-        if (target->shape[axis] != 1 || current->shape[axis] == 1)
+        int target_axis = axis - leading_axes;
+        if (target_axis >= 0 && target->shape[target_axis] != 1)
         {
-            if (current->shape[axis] != target->shape[axis])
+            if (current->shape[axis] != target->shape[target_axis])
             {
                 CUDA_THROW_INVALID("Gradient shape cannot be reduced to its operand shape at axis %d (%d versus %d)",
-                                   axis, current->shape[axis], target->shape[axis]);
+                                   target_axis, current->shape[axis], target->shape[target_axis]);
                 cuda_tensor_destroy(current);
                 return NULL;
             }
             continue;
         }
+        if (target_axis >= 0 && current->shape[axis] == 1)
+            continue;
 
         tensor_t *reduced = cuda_tensor_reduce(current, axis, OP_REDUCE_SUM);
         cuda_tensor_destroy(current);
@@ -597,6 +612,23 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                         cuda_tensor_destroy(temporary);
                     }
                     break;
+                case OP_MAXIMUM:
+                case OP_MINIMUM:
+                    {
+                        operation_type_t comparison = node->op == OP_MAXIMUM ? OP_GE : OP_LE;
+                        tensor_t *mask = cuda_tensor_op(node->a, node->b, comparison);
+                        tensor_t *zeros = mask ? gradient_scale(upstream, 0.0) : NULL;
+                        if (mask && zeros)
+                        {
+                            ga = fusion_active() ? fusion_where(mask, upstream, zeros)
+                                                 : cuda_tensor_where(mask, upstream, zeros);
+                            gb = fusion_active() ? fusion_where(mask, zeros, upstream)
+                                                 : cuda_tensor_where(mask, zeros, upstream);
+                        }
+                        if (zeros) cuda_tensor_destroy(zeros);
+                        if (mask) cuda_tensor_destroy(mask);
+                    }
+                    break;
                 default:
                     CUDA_THROW_INVALID("Backward is not implemented for this binary operation");
                     cuda_tensor_destroy(upstream);
@@ -652,6 +684,23 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                     if (scaled) cuda_tensor_destroy(scaled);
                     cuda_tensor_destroy(temporary);
                 }
+            }
+            else if (node->op == OP_MAXIMUM || node->op == OP_MINIMUM)
+            {
+                operation_type_t comparison;
+                if (node->op == OP_MAXIMUM)
+                    comparison = node->parameter ? OP_GT : OP_GE;
+                else
+                    comparison = node->parameter ? OP_LT : OP_LE;
+                tensor_t *mask = node->parameter
+                    ? cuda_scalar_op(node->a, node->scalar, comparison)
+                    : cuda_scalar_op(node->a, node->scalar, comparison);
+                tensor_t *zeros = mask ? gradient_scale(upstream, 0.0) : NULL;
+                if (mask && zeros)
+                    ga = fusion_active() ? fusion_where(mask, upstream, zeros)
+                                         : cuda_tensor_where(mask, upstream, zeros);
+                if (zeros) cuda_tensor_destroy(zeros);
+                if (mask) cuda_tensor_destroy(mask);
             }
             else
             {
@@ -778,12 +827,39 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                     inverse[node->axes[i]] = i;
                 ga = cuda_tensor_transpose(upstream, inverse, node->ndims);
             }
+            else if (node->op == OP_BROADCAST)
+            {
+                ga = upstream;
+                upstream = NULL;
+            }
             else
             {
                 CUDA_THROW_INVALID("Backward is not implemented for this tensor view");
                 cuda_tensor_destroy(upstream);
                 return 0;
             }
+            break;
+
+        case AUTOGRAD_GATHER:
+            {
+                scalar_value_t zero = {0};
+                zero.dtype = node->a->dtype;
+                int shape[MAX_DIMS];
+                memcpy(shape, node->a->shape, node->a->ndims * sizeof(int));
+                tensor_t *empty = cuda_tensor_create_with_value(
+                    shape, node->a->ndims, zero, node->a->dtype);
+                if (empty)
+                {
+                    ga = cuda_tensor_scatter_add(empty, node->b, upstream, node->parameter);
+                    cuda_tensor_destroy(empty);
+                }
+            }
+            break;
+
+        case AUTOGRAD_SCATTER_ADD:
+            ga = upstream;
+            upstream = NULL;
+            gc = cuda_tensor_gather(ga, node->b, node->parameter);
             break;
 
         case AUTOGRAD_CAST:
@@ -868,11 +944,9 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient)
     tensor_list_t topology = {0};
     gradient_entry_t *entries = NULL;
     size_t count = 0, capacity = 0;
-    int success = 0;
-    if (!autograd_visit(tensor, &topology))
-        goto cleanup;
-
-    if (!gradient)
+    int success = autograd_visit(tensor, &topology);
+    int gradient_owned = 0;
+    if (success && !gradient)
     {
         scalar_value_t one = {0};
         one.dtype = tensor->dtype;
@@ -881,22 +955,28 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient)
         int shape[MAX_DIMS];
         memcpy(shape, tensor->shape, tensor->ndims * sizeof(int));
         gradient = cuda_tensor_create_with_value(shape, tensor->ndims, one, tensor->dtype);
-        if (!gradient)
-            goto cleanup;
+        gradient_owned = gradient != NULL;
     }
-    else
-        gradient->ref_count++;
-
-    autograd_suppressed++;
-    if (!gradient_add(&entries, &count, &capacity, tensor, gradient))
+    else if (success)
     {
-        gradient = NULL;
-        autograd_suppressed--;
-        goto cleanup;
+        gradient->ref_count++;
+        gradient_owned = 1;
     }
-    gradient = NULL;
 
-    for (size_t i = topology.count; i > 0; i--)
+    int suppression_active = 0;
+    if (success && !gradient)
+        success = 0;
+    if (success)
+    {
+        autograd_suppressed++;
+        suppression_active = 1;
+        if (!gradient_add(&entries, &count, &capacity, tensor, gradient))
+            success = 0;
+        gradient = NULL;
+        gradient_owned = 0;
+    }
+
+    for (size_t i = topology.count; success && i > 0; i--)
     {
         tensor_t *current = topology.items[i - 1];
         if (!current->grad_fn)
@@ -908,14 +988,12 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient)
         tensor_t *owned_upstream = entries[entry_index].gradient;
         entries[entry_index].gradient = NULL;
         if (!autograd_propagate(current, owned_upstream, &entries, &count, &capacity))
-        {
-            autograd_suppressed--;
-            goto cleanup;
-        }
+            success = 0;
     }
-    autograd_suppressed--;
+    if (suppression_active)
+        autograd_suppressed--;
 
-    for (size_t i = 0; i < count; i++)
+    for (size_t i = 0; success && i < count; i++)
     {
         tensor_t *leaf = entries[i].tensor;
         if (leaf->grad_fn || !leaf->requires_grad)
@@ -924,7 +1002,10 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient)
         {
             tensor_t *sum = cuda_tensor_op(leaf->grad, entries[i].gradient, OP_ADD);
             if (!sum)
-                goto cleanup;
+            {
+                success = 0;
+                break;
+            }
             autograd_clear_gradient(leaf);
             leaf->grad = sum;
         }
@@ -934,10 +1015,8 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient)
             entries[i].gradient = NULL;
         }
     }
-    success = 1;
 
-cleanup:
-    if (gradient) cuda_tensor_destroy(gradient);
+    if (gradient && gradient_owned) cuda_tensor_destroy(gradient);
     for (size_t i = 0; i < count; i++)
         if (entries[i].gradient) cuda_tensor_destroy(entries[i].gradient);
     if (entries) efree(entries);
