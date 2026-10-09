@@ -97,10 +97,11 @@ php -n -d extension=./cuda_build-8.3/modules/cuda.so examples/08_gpu_classifier.
 
 ## Results
 
-Measured on PHP 8.3 NTS with an NVIDIA GeForce MX570 A (4 GB, compute capability
-8.6), driver 12.6 and CUDA runtime 12.3. The models are small, so these numbers
-mostly show how much per-step overhead Fusion removes; they are not peak GPU
-throughput and not a general-purpose GPU benchmark.
+These recorded results were measured on PHP 8.3 NTS with an NVIDIA GeForce MX570 A
+(4 GB, compute capability 8.6), driver 12.6 and CUDA runtime 12.3. The development
+image now defaults to CUDA 12.6.3. The models are small, so these numbers mostly
+show how much per-step overhead Fusion removes; they are not peak GPU throughput
+and not a general-purpose GPU benchmark.
 
 **Fusion vs. eager execution** on the same model and data, with identical
 metrics (accuracy 77.29%, ROC AUC 0.853, same confusion matrix in both modes):
@@ -198,7 +199,8 @@ additionally requires a compatible NVIDIA driver and a visible GPU.
 ### With Docker
 
 Users with the NVIDIA Container Toolkit and a working host driver can build and
-test in the development image:
+test in the development image, which uses CUDA 12.6.3 on Ubuntu 22.04 by default.
+Set `CUDA_IMAGE` to override the CUDA base image:
 
 ```bash
 docker compose run --rm php_cuda_dev bash -lc './compile.sh && ./run-tests.sh --require-gpu'
@@ -247,10 +249,12 @@ shutdown. It affects eligible cuBLAS/cuBLASLt GEMMs only: dot products and
 built-in fallback kernels retain their existing FP32 behavior, and tensor
 dtypes are unchanged. Select the mode before compiling a Fusion graph that
 contains `matmul()`; the graph captures the mode used during compilation.
-cuBLASLt algorithms are cached by layout and precision with zero shared
-workspace, allowing concurrent Fusion streams. Unavailable algorithms fall
-back to cuBLAS; submission failures raise exceptions instead of silently
-running another backend. This does not add bias/activation epilogues to Fusion.
+Very large strict-FP32 GEMMs prefer classic cuBLAS SGEMM; TF32 GEMMs continue to
+use cuBLASLt when available. cuBLASLt algorithms are cached by layout and
+precision with zero shared workspace, allowing concurrent Fusion streams.
+Unavailable algorithms fall back to cuBLAS; submission failures raise exceptions
+instead of silently running another backend. This does not add bias/activation
+epilogues to Fusion.
 
 ```php
 print_r(cuda_get_backend_info());

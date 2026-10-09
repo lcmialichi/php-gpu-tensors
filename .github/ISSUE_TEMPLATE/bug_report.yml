@@ -16,7 +16,7 @@ body:
     id: toolkit-version
     attributes:
       label: CUDA Toolkit version
-      placeholder: CUDA 12.3
+      placeholder: CUDA 12.6.3
     validations:
       required: true
   - type: input

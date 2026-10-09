@@ -17,6 +17,7 @@
 #define TILE_SIZE 32
 static constexpr double MATMUL_BLAS_MIN_WORK = 200000.0;
 static constexpr double MATMUL_LT_MIN_WORK = 10000000.0;
+static constexpr double MATMUL_LT_MAX_STRICT_WORK = 16000000000.0;
 static constexpr int MATMUL_SKINNY_MIN_INNER = 256;
 static constexpr size_t MATMUL_SKINNY_MAX_OUTPUTS = 1024;
 static thread_local cuda_backend_info backend_info = {};
@@ -292,7 +293,9 @@ static int blas_matmul_2d(float *a, float *b, float *c,
     else
     {
 #ifdef HAVE_CUBLASLT
-        if (work >= MATMUL_LT_MIN_WORK) {
+        bool prefer_lt = matmul_precision == CUDA_MATMUL_PRECISION_TF32 ||
+                         work < MATMUL_LT_MAX_STRICT_WORK;
+        if (work >= MATMUL_LT_MIN_WORK && prefer_lt) {
             int lt = lt_matmul(a, b, c, rows, inner, cols, lda, ldb, op_a, op_b, stream);
             if (lt) return lt;
         }

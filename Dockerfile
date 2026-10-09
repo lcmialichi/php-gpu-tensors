@@ -1,4 +1,4 @@
-ARG CUDA_IMAGE=nvidia/cuda:12.3.2-devel-ubuntu22.04
+ARG CUDA_IMAGE=nvidia/cuda:12.6.3-devel-ubuntu22.04
 FROM ${CUDA_IMAGE}
 
 ARG PHP_VERSION=8.1
