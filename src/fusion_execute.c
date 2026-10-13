@@ -84,6 +84,12 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
     tensor_t *a = values[item->a];
     tensor_t *b = item->b != SIZE_MAX ? values[item->b] : NULL;
     tensor_t *result = values[step->root];
+    if (!node || !result || !a || (node->kind == FUSION_MATMUL && !b))
+    {
+        CUDA_THROW_RUNTIME("Fusion native step %zu has an unresolved input buffer (a=%zu, b=%zu)",
+                           step->root, item->a, item->b);
+        return 0;
+    }
     if (node->kind == FUSION_MATMUL)
     {
         int ok = a->ndims == 2 && b->ndims == 2
@@ -141,6 +147,12 @@ static int fusion_alias_view(fusion_plan *plan, fusion_step *step, tensor_t **va
     tensor_t *tensor = plan->items[step->root].tensor;
     fusion_node *node = tensor->fusion;
     tensor_t *source = values[plan->items[step->root].a];
+    if (!source)
+    {
+        CUDA_THROW_RUNTIME("Fusion view step %zu has an unresolved source buffer",
+                           step->root);
+        return 0;
+    }
     size_t strides[MAX_DIMS];
     size_t offset = 0;
     if (node->op == OP_BROADCAST)
@@ -172,6 +184,55 @@ static int fusion_alias_view(fusion_plan *plan, fusion_step *step, tensor_t **va
     values[step->root] = cuda_tensor_create_view(source, tensor->shape, strides, tensor->ndims, offset, tensor->total_size);
     if (values[step->root]) values[step->root]->offset = 0;
     return values[step->root] != NULL;
+}
+
+static int fusion_submit_stream_step(fusion_plan *plan, fusion_step *step,
+                                     tensor_t **values, CUstream stream)
+{
+    if (plan->items[step->root].alias)
+        return fusion_alias_view(plan, step, values);
+    if (!step->name[0])
+        return fusion_native_submit(plan, step, values, stream);
+
+    tensor_t *result = values[step->root];
+    if (!result)
+    {
+        CUDA_THROW_RUNTIME("Fusion kernel step %zu has no output buffer", step->root);
+        return 0;
+    }
+    if (!result->total_size) return 1;
+
+    void **args = step->arguments;
+    for (size_t j = 0; j < step->leaf_count; j++)
+    {
+        tensor_t *leaf = values[step->leaves[j]];
+        if (!leaf)
+        {
+            CUDA_THROW_RUNTIME("Fusion kernel step %zu has an unresolved input buffer", step->root);
+            return 0;
+        }
+        args[j] = &leaf->data;
+    }
+    for (size_t j = 0; j < step->root_count; j++)
+    {
+        tensor_t *root = values[step->roots[j]];
+        if (!root)
+        {
+            CUDA_THROW_RUNTIME("Fusion kernel step %zu has an unresolved output buffer", step->root);
+            return 0;
+        }
+        args[step->leaf_count + j] = &root->data;
+    }
+    size_t blocks = (result->total_size - 1) / 256 + 1;
+    if (blocks > 65535) blocks = 65535;
+    CUresult error = cuLaunchKernel(step->function, (unsigned int)blocks, 1, 1,
+                                    256, 1, 1, 0, stream, args, NULL);
+    if (error != CUDA_SUCCESS)
+    {
+        CUDA_THROW_RUNTIME("Fusion kernel submission failed (CUDA error %d)", error);
+        return 0;
+    }
+    return 1;
 }
 
 int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, fusion_buffer_mode mode)
@@ -215,8 +276,7 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, fusion
             for (size_t i = 0; i < plan->step_count; i++)
             {
                 fusion_step *step = &plan->steps[i];
-                if (!step->name[0] && !plan->items[step->root].alias &&
-                    !fusion_native_submit(plan, step, values, capture_stream))
+                if (!fusion_submit_stream_step(plan, step, values, capture_stream))
                     return 0;
             }
             error = cuStreamSynchronize(capture_stream);
@@ -227,6 +287,15 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, fusion
                 return 0;
             }
             plan->native_warmed = 1;
+            for (size_t i = 0; i < plan->step_count; i++)
+            {
+                fusion_step *step = &plan->steps[i];
+                if (plan->items[step->root].alias && values[step->root])
+                {
+                    cuda_tensor_destroy(values[step->root]);
+                    values[step->root] = NULL;
+                }
+            }
         }
 
         error = cuStreamBeginCapture(capture_stream, CU_STREAM_CAPTURE_MODE_THREAD_LOCAL);
@@ -239,33 +308,8 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, fusion
         for (size_t i = 0; i < plan->step_count; i++)
         {
             fusion_step *step = &plan->steps[i];
-            if (plan->items[step->root].alias)
+            if (!fusion_submit_stream_step(plan, step, values, capture_stream))
             {
-                if (!fusion_alias_view(plan, step, values)) { capture_ok = 0; break; }
-                continue;
-            }
-            if (!step->name[0])
-            {
-                if (!fusion_native_submit(plan, step, values, capture_stream))
-                    capture_ok = 0;
-                if (!capture_ok) break;
-                continue;
-            }
-
-            tensor_t *result = values[step->root];
-            if (!result->total_size) continue;
-            void **args = step->arguments;
-            for (size_t j = 0; j < step->leaf_count; j++)
-                args[j] = &values[step->leaves[j]]->data;
-            for (size_t j = 0; j < step->root_count; j++)
-                args[step->leaf_count + j] = &values[step->roots[j]]->data;
-            size_t blocks = (result->total_size - 1) / 256 + 1;
-            if (blocks > 65535) blocks = 65535;
-            error = cuLaunchKernel(step->function, (unsigned int)blocks, 1, 1,
-                                   256, 1, 1, 0, capture_stream, args, NULL);
-            if (error != CUDA_SUCCESS)
-            {
-                CUDA_THROW_RUNTIME("Fusion kernel capture failed (CUDA error %d)", error);
                 capture_ok = 0;
                 break;
             }

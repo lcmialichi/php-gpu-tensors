@@ -63,6 +63,19 @@ echo "graph native CUB reduction and pointer updates\n";
 $pending = $reductionGraph->runAsync($vector);
 check($pending->wait()->toArray() === [8193.0]);
 echo "graph native async reduction\n";
+$autogradLeft = CudaArray::fromFlatArray([1, 2, 3, 4], [2, 2])->requiresGrad();
+$autogradRight = CudaArray::fromFlatArray([1, 0, 0, 1], [2, 2])->requiresGrad();
+$autogradTarget = CudaArray::ones([2, 2]);
+$autogradGraph = Fusion::compile(function ($left, $right, $target) {
+    $loss = ($left->matmul($right) * $target)->sum();
+    $loss->backward();
+    return [$loss, $left->grad(), $right->grad()];
+}, [$autogradLeft, $autogradRight, $autogradTarget], cudaGraph: true);
+$autogradResult = $autogradGraph->run($autogradLeft, $autogradRight, $autogradTarget);
+check($autogradResult[0]->toArray() === [10.0]);
+check($autogradResult[1]->toArray() === [[1.0, 1.0], [1.0, 1.0]]);
+check($autogradResult[2]->toArray() === [[4.0, 4.0], [6.0, 6.0]]);
+echo "graph native matmul autograd warmup and replay\n";
 ?>
 --EXPECT--
 graph pointers updated and scratch reused
@@ -72,3 +85,4 @@ graph multi-output
 graph native matmul and pointer updates
 graph native CUB reduction and pointer updates
 graph native async reduction
+graph native matmul autograd warmup and replay

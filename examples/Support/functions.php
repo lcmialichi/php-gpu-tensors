@@ -1009,13 +1009,18 @@ function optFloat(array $o, string $name, float $default, float $min = 0.0, floa
 function usage(): string
 {
     return <<<'TXT'
-gpu_classifier.php: deep MLP classifier on real data with php-gpu-tensors (pure PHP)
+08_gpu_classifier.php: train an MLP classifier with PHP and CUDA tensors
 
+Edit the $config array in 08_gpu_classifier.php for the common settings:
+  dataset, hiddenLayers, activation, epochs, batchSize, optimizer, learningRate, seed
+
+Advanced CLI options (these override the PHP settings):
 Data:      --dataset=mnist|fashion|csv  --data-dir=<script_dir>/training/data  --url-base=<mirror>  --val=5000
            CSV: --csv=file.csv --header --label-col=-1 --val-fraction=0.15 --test-fraction=0.15
 Model:     --layers=512,256  --activation=relu|leaky
 Training:  --epochs=40 --batch-size=128 --optimizer=adam|sgd --lr=<auto> --weight-decay=<auto>
            --clip=5 --label-smoothing=0 --warmup=2 --shift=2 --permutations=4 --seed=2026
+           Tune batch size and learning rate together; compare validation metrics
 Reporting: --report-every=1 --patience=8 --min-accuracy=0 --json=report.json --profile
             --profile prints Fusion kernel/boundary and execution timing diagnostics
 Model I/O: --model=<file> (default <script_dir>/training/<dataset>_mlp.pgt)  --no-save  --load
@@ -1026,25 +1031,72 @@ TXT;
 
 /**
  * -------------------------------------------------------------------------
- * Parses command-line arguments into the classifier run configuration.
+ * Combines the example's simple PHP settings with optional CLI overrides.
  * -------------------------------------------------------------------------
  *
+ * @param array<string,mixed> $settings
  * @return array<string,mixed>
  */
-function parseConfig(): array
+function parseConfig(array $settings = []): array
 {
-    $o = getopt('', [
+    $cli = getopt('', [
         'dataset:', 'data-dir:', 'url-base:', 'val:', 'csv:', 'label-col:', 'val-fraction:', 'test-fraction:',
         'layers:', 'activation:', 'epochs:', 'batch-size:', 'optimizer:', 'lr:', 'weight-decay:', 'clip:',
         'label-smoothing:', 'warmup:', 'shift:', 'permutations:', 'seed:', 'report-every:', 'patience:',
         'min-accuracy:', 'json:', 'model:', 'predict-index:', 'predict-file:',
         'header', 'no-save', 'load', 'invert', 'raw', 'no-selftest', 'profile', 'help',
     ]);
-
-    if (array_key_exists('help', $o)) {
+    if (array_key_exists('help', $cli)) {
         echo usage(), PHP_EOL;
         exit(0);
     }
+
+    $allowedSettings = ['dataset', 'hiddenLayers', 'activation', 'epochs', 'batchSize', 'optimizer', 'learningRate', 'seed'];
+    $unknownSettings = array_diff(array_keys($settings), $allowedSettings);
+    if ($unknownSettings !== []) {
+        throw new InvalidArgumentException('Unknown classifier setting(s): ' . implode(', ', $unknownSettings) . '.');
+    }
+
+    $settings = array_replace([
+        'dataset' => 'mnist',
+        'hiddenLayers' => [512, 256],
+        'activation' => 'relu',
+        'epochs' => 40,
+        'batchSize' => 128,
+        'optimizer' => 'adam',
+        'learningRate' => null,
+        'seed' => 2026,
+    ], $settings);
+    if (!is_array($settings['hiddenLayers']) || !array_is_list($settings['hiddenLayers'])
+        || $settings['hiddenLayers'] === []) {
+        throw new InvalidArgumentException('hiddenLayers must be a non-empty list of positive integers.');
+    }
+    foreach ($settings['hiddenLayers'] as $width) {
+        if (!is_int($width) || $width < 1) {
+            throw new InvalidArgumentException('hiddenLayers must be a non-empty list of positive integers.');
+        }
+    }
+    if (!is_string($settings['dataset']) || !is_string($settings['optimizer']) || !is_string($settings['activation'])) {
+        throw new InvalidArgumentException('dataset, optimizer, and activation settings must be strings.');
+    }
+    if ($settings['learningRate'] !== null
+        && !is_int($settings['learningRate']) && !is_float($settings['learningRate'])) {
+        throw new InvalidArgumentException('learningRate must be a number or null.');
+    }
+
+    $defaults = [
+        'dataset' => $settings['dataset'],
+        'layers' => implode(',', $settings['hiddenLayers']),
+        'activation' => $settings['activation'],
+        'epochs' => $settings['epochs'],
+        'batch-size' => $settings['batchSize'],
+        'optimizer' => $settings['optimizer'],
+        'seed' => $settings['seed'],
+    ];
+    if ($settings['learningRate'] !== null) {
+        $defaults['lr'] = $settings['learningRate'];
+    }
+    $o = array_replace($defaults, $cli);
 
     $dataset = strtolower((string)($o['dataset'] ?? 'mnist'));
     if (!in_array($dataset, ['mnist', 'fashion', 'csv'], true)) {

@@ -92,7 +92,7 @@ For example, train the included classifier on the GPU:
 
 ```bash
 php -n -d extension=./cuda_build-8.3/modules/cuda.so examples/08_gpu_classifier.php \
-  --epochs=200 --batch-size=256 --learning-rate=0.05 --no-save
+  --epochs=200 --batch-size=256 --lr=0.05 --no-save
 ```
 
 ## Results
@@ -124,6 +124,10 @@ multi-layer perceptron (MLP) for MNIST, Fashion-MNIST, or custom CSV datasets.
 It demonstrates tensor operations, runtime kernel compilation, AdamW/SGD, and
 PHP-based data orchestration. Its throughput is workload- and GPU-dependent;
 see the benchmark details above for the measured setup.
+
+To customize the common settings, edit the `$config` array near the top of
+`examples/08_gpu_classifier.php`; command-line options can still override those
+settings for one-off runs.
 
 Full benchmark reports live in the
 [benchmarks repository](#benchmarks).
@@ -890,15 +894,22 @@ php -n -d extension=./cuda_build-8.3/modules/cuda.so examples/08_gpu_classifier.
   --dataset=mnist --epochs=40 --batch-size=128 --optimizer=adam
 ```
 
-Defaults are MNIST, hidden layers of 512 and 256 units, 40 epochs, batch size
-128, and AdamW. Initialization is deterministic. By default, the example saves
+The PHP `$config` array defaults to MNIST, hidden layers of 512 and 256 units,
+40 epochs, batch size 128, and AdamW. Set `learningRate` to a number to choose
+one explicitly, or leave it `null` to use the optimizer default. Initialization
+is deterministic. By default, the example saves
 parameters after successful evaluation; pass `--no-save` to disable saving or
 `--load` to evaluate a compatible saved model without training. Dataset and
 model files are stored next to the script and are ignored by Git.
 
 Use `--profile` to print Fusion plan timing and resource counters, or
-`--predict-index=N` to run inference on one sample. Run the script with
-`--help` to see the available dataset, optimizer, and training options.
+`--predict-index=N` to run inference on one sample. Larger values for
+`--batch-size` can improve samples per second on some GPUs. Tune it together
+with `--lr`: larger batches mean fewer optimizer updates per epoch and may need
+a different learning rate or more epochs. The training summary reports batch
+size and base learning rate, so compare runs using validation metrics rather
+than throughput alone. Run the script with `--help` to see the available
+dataset, optimizer, and training options.
 
 ## API and limits
 

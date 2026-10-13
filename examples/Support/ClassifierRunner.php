@@ -332,8 +332,8 @@ function trainClassifier(
     $steadyMilliseconds = $plainSteps > 0 ? $plainSeconds * 1000 / $plainSteps : $millisecondsPerStep;
     $samplesPerSecond = $trainingRows * $epochsRun / max(1e-9, $trainSeconds);
     $gflops = modelStepFlops($configuration, $options['batchSize']) / ($steadyMilliseconds / 1000.0) / 1e9;
-    printf("\n  " . C_BLD . "Training Stats:" . C_RST . " %.2f s, %d epochs, %d steps, %.3f ms/step\n",
-        $trainSeconds, $epochsRun, $steps, $millisecondsPerStep);
+    printf("\n  " . C_BLD . "Training Stats:" . C_RST . " %.2f s, %d epochs, %d steps, %.3f ms/step (batch %d, base lr %.5f)\n",
+        $trainSeconds, $epochsRun, $steps, $millisecondsPerStep, $options['batchSize'], $options['lr']);
     printf("  " . C_BLD . "Performance:" . C_RST . " %.0f samples/s, ~" . C_CYN . "%.1f GFLOP/s" . C_RST . " matmul work\n",
         $samplesPerSecond, $gflops);
     if ($options['profile']) {
@@ -468,9 +468,9 @@ function runClassifierInference(
  * Runs dataset loading, plan compilation, training, evaluation, and reporting.
  * -------------------------------------------------------------------------
  */
-function runClassifier(): int
+function runClassifier(array $settings = []): int
 {
-    $cfg = parseConfig();
+    $cfg = parseConfig($settings);
     if (!extension_loaded('cuda') || cuda_get_device_count() < 1) {
         throw new RuntimeException('This tool requires the CUDA extension and a visible NVIDIA GPU.');
     }

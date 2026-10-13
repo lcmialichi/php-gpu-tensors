@@ -25,14 +25,20 @@ README for command-line options; use `--precision=tf32` to measure the
 opt-in Tensor Core mode. Use `--tune-matmul` to benchmark and cache eligible
 cuBLASLt algorithms before timing the matrix workloads.
 
-Example 08 keeps the entrypoint small. Model settings live in
-`Support/ModelConfiguration.php`; network math, optimizer state, data handling,
-and orchestration are documented functions under `Support/`. Its SGD and AdamW
-updates use `Cuda\Optimizer`, with state passed explicitly so the optimizer
-steps can be captured by Fusion. It compiles and
-retains `Cuda\FusionGraph` plans by batch shape, then calls `run()` for each
-step rather than recompiling in the training loop. `--profile` reports fused
-kernel counts and native boundaries for the captured plans.
+Example 08 starts with one PHP `$config` array in
+`08_gpu_classifier.php`. Change `dataset`, `hiddenLayers`, `epochs`,
+`batchSize`, `optimizer`, or `learningRate` there; set `learningRate` to `null`
+to use the optimizer's default. Command-line options remain available for
+advanced data and reporting options and override the PHP settings. Model math,
+data preparation, and Fusion internals are kept under `Support/` so the example
+entrypoint can focus on the settings a PHP developer is most likely to change.
+Its SGD and AdamW updates use `Cuda\Optimizer`, with state passed explicitly so
+the optimizer steps can be captured by Fusion. It compiles and retains
+`Cuda\FusionGraph` plans by batch shape, then calls `run()` for each step rather
+than recompiling in the training loop. `--profile` reports fused kernel counts
+and native boundaries for the captured plans. Tune batch size and learning
+rate together, and compare validation metrics because larger batches mean
+fewer optimizer updates per epoch.
 
 Forward, backward, and optimizer elementwise expressions are captured together.
 `matmul()` and reductions remain native boundaries, with the supported
