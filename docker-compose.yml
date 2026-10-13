@@ -3,7 +3,7 @@ services:
     build:
       context: .
       args:
-        CUDA_IMAGE: ${CUDA_IMAGE:-nvidia/cuda:12.6.3-devel-ubuntu22.04}
+        CUDA_IMAGE: ${CUDA_IMAGE:-nvidia/cuda:12.6.3-cudnn-devel-ubuntu22.04}
         PHP_VERSION: ${PHP_VERSION:-8.1}
     gpus: all
     environment:

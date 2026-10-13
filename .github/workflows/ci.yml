@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      max-parallel: 4
       matrix:
         php: ['8.1', '8.2', '8.3', '8.4', '8.5']
         mode: [cli, zts]
@@ -21,9 +22,19 @@ jobs:
 
       - name: Build extension and run CPU tests on PHP ${{ matrix.php }} ${{ matrix.mode }}
         run: |
-          docker build -f .github/docker/php-compat.Dockerfile \
+          build_attempt=1
+          while ! docker build -f .github/docker/php-compat.Dockerfile \
             --build-arg PHP_VERSION=${{ matrix.php }} \
-            --build-arg PHP_MODE=${{ matrix.mode }} -t php-cuda-compat .
+            --build-arg PHP_MODE=${{ matrix.mode }} -t php-cuda-compat .; do
+            if [ "$build_attempt" -ge 3 ]; then
+              echo "Docker image build failed after ${build_attempt} attempts" >&2
+              exit 1
+            fi
+            delay=$((build_attempt * 20 + RANDOM % 10))
+            echo "Docker image build failed; retrying in ${delay}s (attempt $((build_attempt + 1))/3)" >&2
+            sleep "$delay"
+            build_attempt=$((build_attempt + 1))
+          done
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/workspace" \
             -w /workspace \

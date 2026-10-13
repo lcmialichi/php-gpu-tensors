@@ -4,6 +4,9 @@
 #include <cuda_runtime.h>
 #include <string.h>
 #include <stdint.h>
+#include <algorithm>
+#include <stdio.h>
+#include <unistd.h>
 #include "backend_info.h"
 #include <vector>
 #ifdef HAVE_CUBLASLT
@@ -84,6 +87,8 @@ struct LtPlan {
     cublasLtMatmulDesc_t operation;
     cublasLtMatrixLayout_t a, b, c;
     cublasLtMatmulAlgo_t algorithm;
+    cublasLtMatmulHeuristicResult_t candidates[CUDA_MATMUL_TUNING_MAX_CANDIDATES];
+    int candidate_count, selected_candidate, tuned;
 };
 static thread_local cublasLtHandle_t lt_handle = nullptr;
 static thread_local std::vector<LtPlan> lt_plans;
@@ -101,9 +106,9 @@ static void lt_shutdown()
     lt_handle = nullptr;
 }
 
-static int lt_matmul(float *a, float *b, float *c, int rows, int inner, int cols,
-                      int lda, int ldb, cublasOperation_t op_a, cublasOperation_t op_b,
-                      cudaStream_t stream)
+static int lt_plan_for(float *a, float *b, float *c, int rows, int inner, int cols,
+                       int lda, int ldb, cublasOperation_t op_a, cublasOperation_t op_b,
+                       int create, LtPlan **selected)
 {
     auto pointer_alignment = [](const void *pointer) -> uint32_t {
         uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
@@ -111,20 +116,22 @@ static int lt_matmul(float *a, float *b, float *c, int rows, int inner, int cols
     };
     uint32_t alignment_a = pointer_alignment(b), alignment_b = pointer_alignment(a), alignment_c = pointer_alignment(c);
     if (!lt_handle) {
+        if (!create) return 0;
         cublasStatus_t status = cublasLtCreate(&lt_handle);
         if (status != CUBLAS_STATUS_SUCCESS) { backend_info.last_blas_status = status; return -1; }
     }
-    LtPlan *selected = nullptr;
+    *selected = nullptr;
     for (auto &plan : lt_plans)
         if (plan.rows == rows && plan.inner == inner && plan.cols == cols &&
             plan.lda == lda && plan.ldb == ldb && plan.op_a == op_a && plan.op_b == op_b &&
             plan.precision == matmul_precision &&
             plan.alignment_a == alignment_a && plan.alignment_b == alignment_b && plan.alignment_c == alignment_c) {
-            selected = &plan;
+            *selected = &plan;
             break;
         }
-    if (!selected) {
-        if (lt_plans.size() >= 64) return 0;
+    if (*selected) return 1;
+    if (!create || lt_plans.size() >= 64) return 0;
+    {
         LtPlan plan = {};
         plan.rows = rows; plan.inner = inner; plan.cols = cols;
         plan.lda = lda; plan.ldb = ldb; plan.op_a = op_a; plan.op_b = op_b;
@@ -158,25 +165,49 @@ static int lt_matmul(float *a, float *b, float *c, int rows, int inner, int cols
         for (auto attribute : {CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_C_BYTES, CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_D_BYTES})
             if (status == CUBLAS_STATUS_SUCCESS)
                 status = cublasLtMatmulPreferenceSetAttribute(preference, attribute, &alignment_c, sizeof(alignment_c));
-        cublasLtMatmulHeuristicResult_t heuristic = {};
         int count = 0;
         if (status == CUBLAS_STATUS_SUCCESS)
             status = cublasLtMatmulAlgoGetHeuristic(lt_handle, plan.operation, plan.a, plan.b, plan.c, plan.c,
-                                                    preference, 1, &heuristic, &count);
+                                                    preference, CUDA_MATMUL_TUNING_MAX_CANDIDATES,
+                                                    plan.candidates, &count);
         if (preference) cublasLtMatmulPreferenceDestroy(preference);
-        if (status != CUBLAS_STATUS_SUCCESS || !count || heuristic.state != CUBLAS_STATUS_SUCCESS) {
+        if (status != CUBLAS_STATUS_SUCCESS || !count) {
             if (plan.operation) cublasLtMatmulDescDestroy(plan.operation);
             if (plan.a) cublasLtMatrixLayoutDestroy(plan.a);
             if (plan.b) cublasLtMatrixLayoutDestroy(plan.b);
             if (plan.c) cublasLtMatrixLayoutDestroy(plan.c);
             if (status == CUBLAS_STATUS_NOT_SUPPORTED || (status == CUBLAS_STATUS_SUCCESS && !count)) return 0;
-            backend_info.last_blas_status = status == CUBLAS_STATUS_SUCCESS ? heuristic.state : status;
+            backend_info.last_blas_status = status;
             return -1;
         }
-        plan.algorithm = heuristic.algo;
+        int valid_count = 0;
+        for (int i = 0; i < count; i++)
+            if (plan.candidates[i].state == CUBLAS_STATUS_SUCCESS)
+                plan.candidates[valid_count++] = plan.candidates[i];
+        if (!valid_count) {
+            if (plan.operation) cublasLtMatmulDescDestroy(plan.operation);
+            if (plan.a) cublasLtMatrixLayoutDestroy(plan.a);
+            if (plan.b) cublasLtMatrixLayoutDestroy(plan.b);
+            if (plan.c) cublasLtMatrixLayoutDestroy(plan.c);
+            return 0;
+        }
+        plan.candidate_count = valid_count;
+        plan.algorithm = plan.candidates[0].algo;
         lt_plans.push_back(plan);
-        selected = &lt_plans.back();
+        *selected = &lt_plans.back();
     }
+    return 1;
+}
+
+static int lt_matmul(float *a, float *b, float *c, int rows, int inner, int cols,
+                      int lda, int ldb, cublasOperation_t op_a, cublasOperation_t op_b,
+                      cudaStream_t stream, int create, int tuned_only)
+{
+    LtPlan *selected = nullptr;
+    int plan_status = lt_plan_for(a, b, c, rows, inner, cols, lda, ldb, op_a, op_b,
+                                  create, &selected);
+    if (plan_status <= 0) return plan_status;
+    if (tuned_only && !selected->tuned) return 0;
     const float alpha = 1, beta = 0;
     cublasStatus_t status = cublasLtMatmul(lt_handle, selected->operation,
         &alpha, b, selected->a, a, selected->b, &beta, c, selected->c, c, selected->c,
@@ -259,6 +290,128 @@ static int blas_matrix_layout(int rows, int cols, size_t stride_row, size_t stri
     return 0;
 }
 
+extern "C" int cuda_blas_tune_matmul(float *a, float *b, float *c,
+                                      int rows, int inner, int cols,
+                                      size_t a_stride0, size_t a_stride1,
+                                      size_t b_stride0, size_t b_stride1,
+                                      cudaStream_t stream, cuda_matmul_tuning_result *result)
+{
+#ifdef HAVE_CUBLASLT
+    if (!a || !b || !c || !result || rows <= 0 || inner <= 0 || cols <= 0 ||
+        (double)rows * inner * cols < MATMUL_LT_MIN_WORK)
+        return 0;
+
+    cublasOperation_t op_a, op_b;
+    int lda, ldb;
+    if (!blas_matrix_layout(rows, inner, a_stride0, a_stride1, &op_a, &lda) ||
+        !blas_matrix_layout(inner, cols, b_stride0, b_stride1, &op_b, &ldb))
+        return 0;
+
+    cublasHandle_t blas = get_blas_handle();
+    if (!blas) return -1;
+    cublasStatus_t blas_status = cublasSetStream(blas, stream);
+    backend_info.last_blas_status = blas_status;
+    if (blas_status != CUBLAS_STATUS_SUCCESS) return -1;
+
+    LtPlan *plan = nullptr;
+    int plan_status = lt_plan_for(a, b, c, rows, inner, cols, lda, ldb, op_a, op_b, 1, &plan);
+    if (plan_status <= 0) return plan_status;
+
+    cudaEvent_t start = nullptr, stop = nullptr;
+    cudaError_t cuda_status = cudaEventCreate(&start);
+    if (cuda_status == cudaSuccess) cuda_status = cudaEventCreate(&stop);
+    if (cuda_status != cudaSuccess) {
+        if (start) cudaEventDestroy(start);
+        if (stop) cudaEventDestroy(stop);
+        return -1;
+    }
+
+    cuda_matmul_tuning_result measured = {};
+    constexpr int warmups = 2;
+    constexpr int samples = 5;
+    const float alpha = 1.0f, beta = 0.0f;
+    double best_ms = 0.0;
+    int selected_candidate = -1;
+    for (int i = 0; i < plan->candidate_count; i++) {
+        cublasLtMatmulHeuristicResult_t *candidate = &plan->candidates[i];
+        if (candidate->workspaceSize != 0) continue;
+
+        int algorithm_id = -1;
+        size_t written = 0;
+        cublasStatus_t status = cublasLtMatmulAlgoConfigGetAttribute(
+            &candidate->algo, CUBLASLT_ALGO_CONFIG_ID, &algorithm_id, sizeof(algorithm_id), &written);
+        if (status != CUBLAS_STATUS_SUCCESS) {
+            backend_info.last_blas_status = status;
+            cudaEventDestroy(stop);
+            cudaEventDestroy(start);
+            return -1;
+        }
+        cuda_status = cudaStreamSynchronize(stream);
+        if (cuda_status != cudaSuccess) {
+            cudaEventDestroy(stop);
+            cudaEventDestroy(start);
+            return -1;
+        }
+
+        float timings[samples];
+        for (int sample = -warmups; sample < samples; sample++) {
+            if (sample >= 0) {
+                cuda_status = cudaEventRecord(start, stream);
+                if (cuda_status != cudaSuccess) break;
+            }
+            status = cublasLtMatmul(lt_handle, plan->operation,
+                &alpha, b, plan->a, a, plan->b, &beta, c, plan->c, c, plan->c,
+                &candidate->algo, nullptr, 0, stream);
+            if (status != CUBLAS_STATUS_SUCCESS) {
+                backend_info.last_blas_status = status;
+                cudaEventDestroy(stop);
+                cudaEventDestroy(start);
+                return -1;
+            }
+            backend_info.lt_calls++;
+            if (sample >= 0) {
+                cuda_status = cudaEventRecord(stop, stream);
+                if (cuda_status == cudaSuccess) cuda_status = cudaEventSynchronize(stop);
+                if (cuda_status == cudaSuccess)
+                    cuda_status = cudaEventElapsedTime(&timings[sample], start, stop);
+                if (cuda_status != cudaSuccess) break;
+            }
+        }
+        if (cuda_status != cudaSuccess) {
+            cudaEventDestroy(stop);
+            cudaEventDestroy(start);
+            return -1;
+        }
+        std::sort(timings, timings + samples);
+        double median_ms = timings[samples / 2];
+        int output_index = measured.candidate_count++;
+        measured.candidates[output_index].algorithm_id = algorithm_id;
+        measured.candidates[output_index].workspace_bytes = candidate->workspaceSize;
+        measured.candidates[output_index].median_ms = median_ms;
+        if (selected_candidate < 0 || median_ms < best_ms) {
+            best_ms = median_ms;
+            selected_candidate = i;
+            measured.selected_candidate = output_index;
+        }
+    }
+    cudaEventDestroy(stop);
+    cudaEventDestroy(start);
+    if (selected_candidate < 0) return 0;
+
+    plan->selected_candidate = selected_candidate;
+    plan->algorithm = plan->candidates[selected_candidate].algo;
+    plan->tuned = 1;
+    *result = measured;
+    backend_info.last_matmul = "cublasLt";
+    return 1;
+#else
+    (void)a; (void)b; (void)c; (void)rows; (void)inner; (void)cols;
+    (void)a_stride0; (void)a_stride1; (void)b_stride0; (void)b_stride1;
+    (void)stream; (void)result;
+    return 0;
+#endif
+}
+
 static int blas_matmul_2d(float *a, float *b, float *c,
                           int rows, int inner, int cols,
                           size_t a_row, size_t a_col, size_t b_row, size_t b_col,
@@ -295,8 +448,9 @@ static int blas_matmul_2d(float *a, float *b, float *c,
 #ifdef HAVE_CUBLASLT
         bool prefer_lt = matmul_precision == CUDA_MATMUL_PRECISION_TF32 ||
                          work < MATMUL_LT_MAX_STRICT_WORK;
-        if (work >= MATMUL_LT_MIN_WORK && prefer_lt) {
-            int lt = lt_matmul(a, b, c, rows, inner, cols, lda, ldb, op_a, op_b, stream);
+        if (work >= MATMUL_LT_MIN_WORK) {
+            int lt = lt_matmul(a, b, c, rows, inner, cols, lda, ldb, op_a, op_b,
+                               stream, prefer_lt, !prefer_lt);
             if (lt) return lt;
         }
 #endif

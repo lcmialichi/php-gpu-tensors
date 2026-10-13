@@ -2783,6 +2783,29 @@
         "cuda_synchronize": {
             "parameters": [],
             "returnType": "bool"
+        },
+        "cuda_tune_matmul": {
+            "parameters": [
+                {
+                    "name": "left",
+                    "type": "Cuda\\CudaArray",
+                    "byReference": false,
+                    "variadic": false,
+                    "optional": false,
+                    "hasDefault": false,
+                    "default": null
+                },
+                {
+                    "name": "right",
+                    "type": "Cuda\\CudaArray",
+                    "byReference": false,
+                    "variadic": false,
+                    "optional": false,
+                    "hasDefault": false,
+                    "default": null
+                }
+            ],
+            "returnType": "array"
         }
     }
 }

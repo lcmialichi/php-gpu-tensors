@@ -199,8 +199,9 @@ additionally requires a compatible NVIDIA driver and a visible GPU.
 ### With Docker
 
 Users with the NVIDIA Container Toolkit and a working host driver can build and
-test in the development image, which uses CUDA 12.6.3 on Ubuntu 22.04 by default.
-Set `CUDA_IMAGE` to override the CUDA base image:
+test in the development image, which uses CUDA 12.6.3 with cuDNN on Ubuntu 22.04
+by default. This enables the optional `Cuda\NN` backend and its tests. Set
+`CUDA_IMAGE` to override the CUDA base image:
 
 ```bash
 docker compose run --rm php_cuda_dev bash -lc './compile.sh && ./run-tests.sh --require-gpu'
@@ -256,6 +257,26 @@ Unavailable algorithms fall back to cuBLAS; submission failures raise exceptions
 instead of silently running another backend. This does not add bias/activation
 epilogues to Fusion.
 
+For a workload that repeatedly uses a compatible large 2D FP32 shape, call
+`cuda_tune_matmul($left, $right)` explicitly before training or graph capture.
+It benchmarks the available zero-workspace cuBLASLt candidates with CUDA events,
+returns each candidate's median and algorithm ID, and caches the fastest choice
+for the current request. Later matmuls with matching shapes, strides, precision,
+and pointer alignment use that algorithm, including large strict-FP32 products
+that normally prefer classic cuBLAS. The call synchronizes the device and runs
+multiple trial GEMMs, so it is intentionally not part of normal `matmul()`
+execution. It currently requires cuBLASLt, 2D float32 operands, a BLAS-compatible
+layout, and at least 10 million multiply-accumulate operations. Only zero-workspace
+algorithms are considered so tuned plans remain safe on concurrent Fusion streams.
+
+```php
+$left = CudaArray::ones([4096, 4096]);
+$right = CudaArray::ones([4096, 4096]);
+$tuning = cuda_tune_matmul($left, $right);
+print_r($tuning['candidates']);
+$product = $left->matmul($right);
+```
+
 ```php
 print_r(cuda_get_backend_info());
 // cublas, cublasLt, cub, cudnn: compiled capabilities
@@ -293,7 +314,10 @@ latency; they are not allocator-only timings or internal pool counters. Adjust
 sample counts and allocator churn with `--warmups=N`, `--samples=N`, and
 `--pool-iterations=N`.
 The benchmark defaults to strict FP32; pass `--precision=tf32` to measure the
-opt-in Tensor Core mode on supported GPUs.
+opt-in Tensor Core mode on supported GPUs. Pass `--tune-matmul` to explicitly
+benchmark and cache zero-workspace cuBLASLt candidates for eligible matrix shapes
+before timing them; this adds tuning latency and reports the candidate results in
+the JSON output.
 
 ## CNN inference with optional cuDNN
 

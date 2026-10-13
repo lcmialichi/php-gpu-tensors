@@ -10,6 +10,7 @@
 #include "cuda_wrapper.h"
 #include "cuda_arginfo.h"
 #include "cuda_array_ce.h"
+#include "tensor_factory.h"
 #include "cuda.h"
 #include "compiler_ce.h"
 #include "module_ce.h"
@@ -179,6 +180,88 @@ ZEND_FUNCTION(cuda_set_matmul_precision)
         RETURN_THROWS();
     }
     RETURN_NULL();
+}
+
+ZEND_FUNCTION(cuda_tune_matmul)
+{
+    zval *left_value, *right_value;
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+    Z_PARAM_OBJECT_OF_CLASS(left_value, cuda_array_ce)
+    Z_PARAM_OBJECT_OF_CLASS(right_value, cuda_array_ce)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (fusion_active())
+    {
+        CUDA_THROW_INVALID("Matmul autotuning must run outside Fusion capture");
+        RETURN_THROWS();
+    }
+
+    cuda_array_obj *left_object = php_cuda_array_fetch_valid_object(Z_OBJ_P(left_value));
+    cuda_array_obj *right_object = php_cuda_array_fetch_valid_object(Z_OBJ_P(right_value));
+    if (!left_object || !right_object) RETURN_THROWS();
+
+    tensor_t *left = left_object->tensor_handle;
+    tensor_t *right = right_object->tensor_handle;
+    if (!left || !right || left->dtype != DTYPE_FLOAT32 || right->dtype != DTYPE_FLOAT32)
+    {
+        CUDA_THROW_INVALID("Matmul autotuning currently requires valid float32 tensors");
+        RETURN_THROWS();
+    }
+    if (left->ndims != 2 || right->ndims != 2 ||
+        left->shape[1] != right->shape[0])
+    {
+        CUDA_THROW_INVALID("Matmul autotuning currently requires compatible 2D tensors");
+        RETURN_THROWS();
+    }
+
+    tensor_t *output = cuda_tensor_create_empty((int[]){left->shape[0], right->shape[1]}, 2);
+    if (!output) RETURN_THROWS();
+
+    cudaError_t sync_status = cudaDeviceSynchronize();
+    if (sync_status != cudaSuccess)
+    {
+        cuda_tensor_destroy(output);
+        CUDA_THROW_RUNTIME("Failed to synchronize before matmul autotuning: %s",
+                           cudaGetErrorString(sync_status));
+        RETURN_THROWS();
+    }
+
+    cuda_matmul_tuning_result result = {};
+    int status = cuda_blas_tune_matmul(
+        left->data, right->data, output->data, left->shape[0], left->shape[1], right->shape[1],
+        left->strides[0], left->strides[1], right->strides[0], right->strides[1], NULL, &result);
+    cuda_tensor_destroy(output);
+    if (status < 0)
+    {
+        cuda_backend_info info = {0};
+        cuda_blas_info(&info);
+        CUDA_THROW_RUNTIME("Matmul autotuning failed (cuBLAS status %d)", info.last_blas_status);
+        RETURN_THROWS();
+    }
+    if (status == 0)
+    {
+        CUDA_THROW_INVALID("Matmul autotuning requires cuBLASLt, compatible strides, and at least 10 million operations");
+        RETURN_THROWS();
+    }
+
+    array_init(return_value);
+    add_assoc_string(return_value, "backend", "cublasLt");
+    add_assoc_string(return_value, "precision", (char *)cuda_blas_precision_name());
+    add_assoc_long(return_value, "selectedCandidate", result.selected_candidate);
+    add_assoc_long(return_value, "candidateCount", result.candidate_count);
+    zval candidates;
+    array_init(&candidates);
+    for (int i = 0; i < result.candidate_count; i++)
+    {
+        zval candidate;
+        array_init(&candidate);
+        add_assoc_long(&candidate, "algorithmId", result.candidates[i].algorithm_id);
+        add_assoc_long(&candidate, "workspaceBytes", (zend_long)result.candidates[i].workspace_bytes);
+        add_assoc_double(&candidate, "medianMs", result.candidates[i].median_ms);
+        add_assoc_bool(&candidate, "selected", i == result.selected_candidate);
+        add_next_index_zval(&candidates, &candidate);
+    }
+    add_assoc_zval(return_value, "candidates", &candidates);
 }
 
 ZEND_FUNCTION(cuda_get_device_info)
@@ -367,6 +450,7 @@ ZEND_FUNCTION(cuda_get_peer_access)
 static zend_function_entry cuda_functions[] = {
     PHP_FE(cuda_get_backend_info, arginfo_cuda_get_backend_info)
         PHP_FE(cuda_set_matmul_precision, arginfo_cuda_set_matmul_precision)
+        PHP_FE(cuda_tune_matmul, arginfo_cuda_tune_matmul)
     PHP_FE(cuda_get_device_count, arginfo_cuda_get_device_count)
         PHP_FE(cuda_get_device_info, arginfo_cuda_get_device_info)
             PHP_FE(cuda_set_device, arginfo_cuda_set_device)

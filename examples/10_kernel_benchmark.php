@@ -33,7 +33,9 @@ function benchmarkOptionInt(array $options, string $name, int $default, int $min
     return $value;
 }
 
-$options = getopt('', ['output:', 'binary:', 'precision:', 'warmups:', 'samples:', 'pool-iterations:']);
+$options = getopt('', [
+    'output:', 'binary:', 'precision:', 'warmups:', 'samples:', 'pool-iterations:', 'tune-matmul',
+]);
 
 $warmups = benchmarkOptionInt($options, 'warmups', 5, 0, 500);
 $sampleCount = benchmarkOptionInt($options, 'samples', 25, 1, 500);
@@ -71,7 +73,7 @@ function buildReductionCases(): array
     return $cases;
 }
 
-function buildMatmulCases(): array
+function buildMatmulCases(array &$tuningCases): array
 {
     $cases = [];
 
@@ -94,7 +96,11 @@ function buildMatmulCases(): array
         $a = CudaArray::ones([$rows, $inner]);
         $b = CudaArray::ones([$inner, $cols]);
 
-        $cases["matmul-$name"] = [static fn() => $a->matmul($b), $inner, $rows * $cols, 'matmul'];
+        $caseName = "matmul-$name";
+        $cases[$caseName] = [static fn() => $a->matmul($b), $inner, $rows * $cols, 'matmul'];
+        if ($rows * $inner * $cols >= 10000000) {
+            $tuningCases[$caseName] = [$a, $b];
+        }
     }
 
     $transposed = CudaArray::ones([128, 128])->transpose();
@@ -308,13 +314,25 @@ function runBenchmarkCase(string $name, array $case, int $warmups, int $sampleCo
 // --- 4. Assemble every case and the base report ---
 
 [$fusionCases, $fusionPlans] = buildFusionCases();
+$matmulTuningCases = [];
+$matmulCases = buildMatmulCases($matmulTuningCases);
 
 $cases = array_merge(
     buildReductionCases(),
-    buildMatmulCases(),
+    $matmulCases,
     $fusionCases,
     buildPoolReuseCases($poolIterations)
 );
+
+$matmulTuning = [];
+if (isset($options['tune-matmul'])) {
+    foreach ($matmulTuningCases as $name => [$left, $right]) {
+        $matmulTuning[$name] = cuda_tune_matmul($left, $right);
+        $selected = $matmulTuning[$name]['selectedCandidate'];
+        $timing = $matmulTuning[$name]['candidates'][$selected]['medianMs'];
+        printf("%-34s tuned cuBLASLt candidate %d at %.4f ms\n", $name, $selected, $timing);
+    }
+}
 
 $report = [
     'php' => PHP_VERSION,
@@ -327,6 +345,7 @@ $report = [
         'warmups' => $warmups,
         'samples' => $sampleCount,
         'poolIterations' => $poolIterations,
+        'matmulTuning' => isset($options['tune-matmul']),
     ],
     'generatedAt' => gmdate(DATE_ATOM),
     'binarySha256' => isset($options['binary']) ? hash_file('sha256', $options['binary']) : null,
@@ -338,6 +357,7 @@ $report = [
         . 'outputs between default-stream launches, then synchronizes once. This measures '
         . 'end-to-end reuse cost, not allocator-only time or internal pool counters.',
     'cases' => [],
+    'matmulTuning' => $matmulTuning,
 ];
 
 // --- 5. Run every case, printing progress and collecting report rows ---

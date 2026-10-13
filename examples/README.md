@@ -22,7 +22,8 @@ compares eager, Fusion, and CUDA Graph replay for elementwise chains and
 reductions around a native boundary. It also measures repeated same-shape
 allocation/release workloads to expose memory-pool reuse latency. See the root
 README for command-line options; use `--precision=tf32` to measure the
-opt-in Tensor Core mode.
+opt-in Tensor Core mode. Use `--tune-matmul` to benchmark and cache eligible
+cuBLASLt algorithms before timing the matrix workloads.
 
 Example 08 keeps the entrypoint small. Model settings live in
 `Support/ModelConfiguration.php`; network math, optimizer state, data handling,
