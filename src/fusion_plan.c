@@ -5,7 +5,8 @@ int fusion_inline(tensor_t *tensor)
     fusion_node *node = tensor->fusion;
     if (!node) return 0;
     if (node->kind == FUSION_UNARY || node->kind == FUSION_CAST ||
-        node->kind == FUSION_WHERE || node->kind == FUSION_VIEW) return 1;
+        node->kind == FUSION_WHERE || node->kind == FUSION_VIEW ||
+        node->kind == FUSION_SLICE_SCATTER) return 1;
     return (node->kind == FUSION_BINARY || node->kind == FUSION_SCALAR) &&
         (node->op == OP_ADD || node->op == OP_SUB || node->op == OP_MUL ||
          node->op == OP_DIV || node->op == OP_MAXIMUM || node->op == OP_MINIMUM ||
@@ -43,6 +44,7 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
         {
             int cost = node->kind == FUSION_UNARY ? 4 :
                        node->kind == FUSION_WHERE ? 3 :
+                       node->kind == FUSION_SLICE_SCATTER ? 4 :
                        node->kind == FUSION_VIEW ? 2 : 1;
             if (tensor->dtype == DTYPE_FLOAT64) cost *= 2;
             if (a != SIZE_MAX && !plan->items[a].cut) cost += plan->items[a].cost;

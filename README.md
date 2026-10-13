@@ -507,12 +507,18 @@ $weight->zeroGrad();
 
 Non-scalar outputs require an explicit seed with the same shape and dtype:
 `$output->backward($seed)`. Scalar outputs use a seed of one by default.
-Supported rules include arithmetic and broadcasting, 2D matmul, `sum()`,
-`mean()`, `max()`/`min()` (ties share the gradient), `where()`, floating-point
-casts, `reshape()`, `transpose()`, and the common exponential, logarithmic,
-trigonometric, square-root and negation operations. Comparisons and `where()`
+The graph is released after a successful backward call by default; pass
+`retainGraph: true` to reuse it. Gradients on leaf tensors still accumulate.
+If a tensor saved for backward is modified in place, backward rejects the
+stale graph instead of using changed values.
+
+Supported rules include arithmetic and broadcasting, batched matmul,
+`sum()`/`mean()`/`prod()`, `max()`/`min()` (ties share the gradient),
+`where()`, floating-point casts, `reshape()`, `transpose()`, slicing and
+concatenation, and the common exponential, logarithmic, trigonometric,
+square-root, rounding and negation operations. Comparisons and `where()`
 conditions do not receive gradients. Unsupported operations fail explicitly
-during backward; batched matmul and slice/concat gradients are not implemented.
+during backward.
 
 Backward can be part of a compiled Fusion callback. Mark the example inputs
 before compilation so the placeholders inherit gradient tracking, and return
@@ -916,7 +922,6 @@ The annotated signatures are in [class stubs](stubs/cuda.stub.php) and
 - NVIDIA GPUs only, on Linux. GPU data has no CPU fallback.
 - Reverse-mode automatic differentiation is opt-in and covers only the
   operations listed in [Automatic differentiation](#automatic-differentiation).
-  Batched matmul and slice/concat gradients are not implemented.
 - `astype()` supports safe dtype conversions; autograd tracks floating-point
   casts only.
 - The core API baseline is frozen at `0.1.0`, and the current release is beta.

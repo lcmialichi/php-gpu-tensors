@@ -20,6 +20,9 @@ extern "C"
     tensor_t *cuda_tensor_gather(tensor_t *input, tensor_t *indices, int axis);
     tensor_t *cuda_tensor_scatter_add(tensor_t *input, tensor_t *indices,
                                       tensor_t *updates, int axis);
+    tensor_t *cuda_tensor_slice_scatter(tensor_t *updates, const int *input_shape,
+                                        int input_ndims, const int *axes,
+                                        const int *starts, const int *steps);
 
     tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_type);
     tensor_t *cuda_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t operation_type);

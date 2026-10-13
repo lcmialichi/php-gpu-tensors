@@ -25,6 +25,9 @@ tensor_t *fusion_matmul(tensor_t *a, tensor_t *b);
 tensor_t *fusion_view(tensor_t *a, operation_type_t op, int *shape, size_t *strides, int ndims, int *axes);
 tensor_t *fusion_slice(tensor_t *a, int *shape, size_t *strides, int ndims,
                        int *axes, int *starts, int *steps);
+tensor_t *fusion_slice_scatter(tensor_t *updates, const int *input_shape,
+                               int input_ndims, const int *axes,
+                               const int *starts, const int *steps);
 void fusion_request_shutdown(void);
 
 #endif

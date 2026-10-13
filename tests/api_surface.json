@@ -894,6 +894,15 @@
                             "optional": true,
                             "hasDefault": true,
                             "default": null
+                        },
+                        {
+                            "name": "retainGraph",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": false
                         }
                     ],
                     "returnType": "void"

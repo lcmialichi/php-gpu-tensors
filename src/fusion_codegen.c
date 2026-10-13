@@ -183,6 +183,57 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
         smart_str_append_printf(source, "return static_cast<const %s*>(p%zu)[offset];}\n", type, parameter);
         return;
     }
+    if (node->kind == FUSION_SLICE_SCATTER)
+    {
+        size_t updates = fusion_find(plan, node->a);
+        if (!node->a->total_size)
+        {
+            smart_str_append_printf(source, "return static_cast<%s>(0);}\n", type);
+            return;
+        }
+        smart_str_appends(source, "size_t ia=0;bool selected=true;\n");
+        size_t source_divisor = 1;
+        for (int d = tensor->ndims - 1; d >= 0; d--)
+        {
+            int axis = -1;
+            for (int j = 0; j < node->a->ndims; j++)
+                if (node->axes[j] == d) axis = j;
+            smart_str_append_printf(source,
+                "size_t sc%d=(i/%zuULL)%%%dULL;\n",
+                d, source_divisor, tensor->shape[d]);
+            if (axis >= 0)
+            {
+                int start = node->slice_starts[d];
+                int step_size = node->slice_steps[d];
+                size_t end = (size_t)start +
+                    (size_t)node->a->shape[axis] * (size_t)step_size;
+                size_t updates_divisor = 1;
+                for (int j = node->a->ndims - 1; j > axis; j--)
+                    updates_divisor *= (size_t)node->a->shape[j];
+                if (start > 0)
+                    smart_str_append_printf(source, "if(sc%d<%dULL||", d, start);
+                else
+                    smart_str_appends(source, "if(");
+                smart_str_append_printf(source,
+                    "sc%d>=%zuULL||((sc%d-%dULL)%%%dULL)!=0)selected=false;\n"
+                    "ia+=((sc%d-%dULL)/%dULL)*%zuULL;\n",
+                    d, end, d, start, step_size,
+                    d, start, step_size, updates_divisor);
+            }
+            else
+                smart_str_append_printf(source, "if(sc%d!=%dULL)selected=false;\n",
+                                        d, node->slice_starts[d]);
+            source_divisor *= (size_t)tensor->shape[d];
+        }
+        smart_str_appends(source, "if(!selected)return static_cast<");
+        smart_str_appends(source, type);
+        smart_str_appends(source, ">(0);\nreturn static_cast<");
+        smart_str_appends(source, type);
+        smart_str_appends(source, ">(");
+        fusion_call_node(source, step, updates, "ia");
+        smart_str_appends(source, ");}\n");
+        return;
+    }
     size_t a = fusion_find(plan, node->a);
     if (node->kind == FUSION_VIEW)
     {

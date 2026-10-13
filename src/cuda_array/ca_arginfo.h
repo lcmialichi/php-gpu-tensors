@@ -196,6 +196,7 @@ ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_cuda_array_backward, 0, 0, 0)
 ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, gradient, Cuda\\CudaArray, 1, "null")
+ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, retainGraph, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cuda_array_grad, 0, 0, Cuda\\CudaArray, 1)

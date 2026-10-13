@@ -47,9 +47,9 @@ try {
 } catch (Cuda\InvalidArgumentException) {
 }
 $seeded->zeroGrad();
-$nonScalar->backward(CudaArray::fromFlatArray([1, 1], [2]));
+$nonScalar->backward(CudaArray::fromFlatArray([1, 1], [2]), true);
 check($seeded->grad()->toArray() === [2.0, 4.0]);
-$nonScalar->backward(CudaArray::fromFlatArray([1, 1], [2]));
+$nonScalar->backward(CudaArray::fromFlatArray([1, 1], [2]), true);
 check($seeded->grad()->toArray() === [4.0, 8.0]);
 $seeded->zeroGrad();
 check($seeded->grad() === null);
@@ -58,6 +58,140 @@ $detached->sum()->backward();
 check($detached->grad()->toArray() === [1.0, 1.0]);
 check($seeded->grad() === null);
 echo "explicit seeds, accumulation and detach\n";
+
+$powerBase = CudaArray::fromFlatArray([2.0], [1])->requiresGrad();
+$powerExponent = CudaArray::fromFlatArray([3.0], [1])->requiresGrad();
+($powerBase ** $powerExponent)->sum()->backward();
+check($powerBase->grad()->toArray() === [12.0]);
+checkClose($powerExponent->grad()->toArray()[0], 8.0 * log(2.0));
+$scalarBaseExponent = CudaArray::fromFlatArray([2.0], [1])->requiresGrad();
+(3.0 ** $scalarBaseExponent)->sum()->backward();
+checkClose($scalarBaseExponent->grad()->toArray()[0], 9.0 * log(3.0));
+echo "binary power gradients\n";
+
+$product = CudaArray::fromFlatArray([2.0, 3.0, 4.0], [3])->requiresGrad();
+$product->prod()->backward();
+check($product->grad()->toArray() === [12.0, 8.0, 6.0]);
+$productWithZero = CudaArray::fromFlatArray([0.0, 2.0, 3.0], [3])->requiresGrad();
+$productWithZero->prod()->backward();
+check($productWithZero->grad()->toArray() === [6.0, 0.0, 0.0]);
+$productWithMultipleZeros = CudaArray::fromFlatArray([0.0, 0.0, 3.0], [3])->requiresGrad();
+$productWithMultipleZeros->prod()->backward();
+check($productWithMultipleZeros->grad()->toArray() === [0.0, 0.0, 0.0]);
+$axisProduct = CudaArray::fromFlatArray([2.0, 3.0, 4.0, 5.0], [2, 2])->requiresGrad();
+$axisProduct->prod(1)->sum()->backward();
+check($axisProduct->grad()->toArray() === [[3.0, 2.0], [5.0, 4.0]]);
+$fusedProductInput = CudaArray::fromFlatArray([2.0, 3.0, 4.0], [3])->requiresGrad();
+$fusedProduct = Fusion::compile(function ($x) {
+    $loss = $x->prod();
+    $loss->backward();
+    return [$loss, $x->grad()];
+}, [$fusedProductInput]);
+[$fusedProductLoss, $fusedProductGradient] = $fusedProduct->run($fusedProductInput);
+check($fusedProductLoss->toArray() === [24.0]);
+check($fusedProductGradient->toArray() === [12.0, 8.0, 6.0]);
+echo "product reduction gradients\n";
+
+$sliceInput = CudaArray::fromFlatArray([1.0, 2.0, 3.0], [3])->requiresGrad();
+($sliceInput->slice('0:2')->sum() + $sliceInput->sum())->backward();
+check($sliceInput->grad()->toArray() === [2.0, 2.0, 1.0]);
+$legacySliceInput = CudaArray::fromFlatArray([1.0, 2.0, 3.0], [3])->requiresGrad();
+$legacySliceInput(1)->sum()->backward();
+check($legacySliceInput->grad()->toArray() === [0.0, 1.0, 0.0]);
+echo "slice gradient scatter\n";
+
+$fusedSliceInput = CudaArray::fromFlatArray([1, 2, 3, 4, 5, 6], [2, 3])->requiresGrad();
+$fusedSliceGraph = Fusion::compile(function ($x) {
+    $loss = $x->slice(':, ::2')->sum();
+    $loss->backward();
+    return ['loss' => $loss, 'gradient' => $x->grad()];
+}, [$fusedSliceInput]);
+$fusedSliceResult = $fusedSliceGraph->run($fusedSliceInput);
+check($fusedSliceResult['loss']->toArray() === [14.0]);
+check($fusedSliceResult['gradient']->toArray() === [[1.0, 0.0, 1.0], [1.0, 0.0, 1.0]]);
+
+$fusedIndexedSliceInput = CudaArray::fromFlatArray([1, 2, 3, 4, 5, 6], [3, 2])->requiresGrad();
+$fusedIndexedSliceGraph = Fusion::compile(function ($x) {
+    $loss = $x->slice('1')->sum();
+    $loss->backward();
+    return $x->grad();
+}, [$fusedIndexedSliceInput]);
+$fusedIndexedSliceGradient = $fusedIndexedSliceGraph->run($fusedIndexedSliceInput);
+check($fusedIndexedSliceGradient->toArray() === [[0.0, 0.0], [1.0, 1.0], [0.0, 0.0]]);
+
+$fusedEmptySliceInput = CudaArray::fromFlatArray([1, 2, 3], [3])->requiresGrad();
+$fusedEmptySliceGraph = Fusion::compile(function ($x) {
+    $loss = $x->slice('3:3')->sum();
+    $loss->backward();
+    return ['loss' => $loss, 'gradient' => $x->grad()];
+}, [$fusedEmptySliceInput]);
+$fusedEmptySliceResult = $fusedEmptySliceGraph->run($fusedEmptySliceInput);
+check($fusedEmptySliceResult['loss']->toArray() === [0.0]);
+check($fusedEmptySliceResult['gradient']->toArray() === [0.0, 0.0, 0.0]);
+echo "Fusion slice scatter gradients\n";
+
+$concatLeft = CudaArray::fromFlatArray([1.0, 2.0], [2])->requiresGrad();
+$concatRight = CudaArray::fromFlatArray([3.0], [1])->requiresGrad();
+$concatLeft->concat([$concatRight], 0)->sum()->backward();
+check($concatLeft->grad()->toArray() === [1.0, 1.0]);
+check($concatRight->grad()->toArray() === [1.0]);
+$concatRowsLeft = CudaArray::fromFlatArray([1.0, 2.0, 3.0, 4.0], [2, 2])->requiresGrad();
+$concatRowsRight = CudaArray::fromFlatArray([5.0, 6.0], [2, 1])->requiresGrad();
+$concatRowsLeft->concat([$concatRowsRight], 1)->sum()->backward();
+check($concatRowsLeft->grad()->toArray() === [[1.0, 1.0], [1.0, 1.0]]);
+check($concatRowsRight->grad()->toArray() === [[1.0], [1.0]]);
+echo "concat gradients\n";
+
+$batchedLeft = CudaArray::fromFlatArray([1, 2, 3, 4, 5, 6, 7, 8], [2, 2, 2])->requiresGrad();
+$batchedRight = CudaArray::fromFlatArray([1, 0, 0, 1], [2, 2])->requiresGrad();
+$batchedLeft->matmul($batchedRight)->sum()->backward();
+check($batchedLeft->grad()->toArray() === [[[1.0, 1.0], [1.0, 1.0]], [[1.0, 1.0], [1.0, 1.0]]]);
+check($batchedRight->grad()->toArray() === [[16.0, 16.0], [20.0, 20.0]]);
+echo "batched matmul gradients\n";
+
+$mutated = CudaArray::fromFlatArray([2.0], [1])->requiresGrad();
+$mutatedLoss = ($mutated * $mutated)->sum();
+$mutated[0] = 10;
+try {
+    $mutatedLoss->backward();
+    throw new RuntimeException('backward accepted modified saved tensor');
+} catch (Cuda\InvalidArgumentException) {
+}
+$mutatedThroughView = CudaArray::fromFlatArray([2.0, 3.0], [2])->requiresGrad();
+$viewMutationLoss = ($mutatedThroughView * $mutatedThroughView)->sum();
+$mutationView = $mutatedThroughView->slice('0:1');
+$mutationView[0] = 11;
+try {
+    $viewMutationLoss->backward();
+    throw new RuntimeException('backward accepted a mutation through a view');
+} catch (Cuda\InvalidArgumentException) {
+}
+echo "saved tensor version checks\n";
+
+$retained = CudaArray::fromFlatArray([2.0], [1])->requiresGrad();
+$retainedLoss = ($retained * $retained)->sum();
+$retainedLoss->backward(null, true);
+$retainedLoss->backward(retainGraph: true);
+check($retained->grad()->toArray() === [8.0]);
+$retainedLoss->backward();
+check($retained->grad()->toArray() === [12.0]);
+try {
+    $retainedLoss->backward();
+    throw new RuntimeException('backward accepted consumed graph');
+} catch (Cuda\InvalidArgumentException) {
+}
+echo "retainGraph and graph release\n";
+
+$roundingInput = CudaArray::fromFlatArray([0.1, 1.6], [2])->requiresGrad();
+($roundingInput->ceil() + $roundingInput->floor() + $roundingInput->round())->sum()->backward();
+check($roundingInput->grad()->toArray() === [0.0, 0.0]);
+$castInput = CudaArray::fromFlatArray([1.5], [1])->requiresGrad();
+try {
+    $castInput->astype('int32');
+    throw new RuntimeException('gradient-tracked cast to integer was accepted');
+} catch (Cuda\InvalidArgumentException) {
+}
+echo "rounding derivatives and cast validation\n";
 
 $input = CudaArray::fromFlatArray([1, 2, 3, 4], [2, 2])->requiresGrad();
 $weight = CudaArray::fromFlatArray([1, 0, 0, 1], [2, 2])->requiresGrad();
@@ -109,6 +243,15 @@ eager broadcast gradients
 max tie gradients
 where gradients
 explicit seeds, accumulation and detach
+binary power gradients
+product reduction gradients
+slice gradient scatter
+Fusion slice scatter gradients
+concat gradients
+batched matmul gradients
+saved tensor version checks
+retainGraph and graph release
+rounding derivatives and cast validation
 Fusion backward graph
 fused softmax cross-entropy gradients
 Fusion materialization retains gradient history

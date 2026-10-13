@@ -1116,9 +1116,11 @@ ZEND_METHOD(CudaArray, requiresGrad)
 ZEND_METHOD(CudaArray, backward)
 {
     zval *gradient_value = NULL;
-    ZEND_PARSE_PARAMETERS_START(0, 1)
+    zend_bool retain_graph = 0;
+    ZEND_PARSE_PARAMETERS_START(0, 2)
     Z_PARAM_OPTIONAL
     Z_PARAM_OBJECT_OF_CLASS_OR_NULL(gradient_value, cuda_array_ce)
+    Z_PARAM_BOOL(retain_graph)
     ZEND_PARSE_PARAMETERS_END();
 
     cuda_array_obj *obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
@@ -1132,7 +1134,7 @@ ZEND_METHOD(CudaArray, backward)
         if (!gradient_obj) RETURN_THROWS();
         gradient = gradient_obj->tensor_handle;
     }
-    if (!autograd_backward(obj->tensor_handle, gradient))
+    if (!autograd_backward(obj->tensor_handle, gradient, retain_graph))
         RETURN_THROWS();
     RETURN_NULL();
 }
@@ -1762,7 +1764,11 @@ ZEND_METHOD(CudaArray, slice)
     {
         view = cuda_tensor_create_view(source, shape, strides, ndims, total ? offset : 0, total);
         /* Storage pointers already include the slice displacement. */
-        if (view) view->offset = 0;
+        if (view)
+        {
+            view->offset = 0;
+            autograd_record_slice(view, source, axes, starts, steps);
+        }
     }
     if (!view) RETURN_THROWS();
     create_result_object(return_value, view);
@@ -2753,14 +2759,15 @@ static tensor_t *cuda_tensor_concat(zval *tensors_array, int axis)
         inner_dims,
         (int)total_length_on_axis);
 
-    efree(tensor_list);
-
     if (result != SUCCESS)
     {
+        efree(tensor_list);
         cuda_tensor_destroy(new_tensor);
         CUDA_THROW_RUNTIME("CUDA concat kernel failed.");
         return NULL;
     }
 
+    autograd_record_concat(new_tensor, tensor_list, (size_t)list_count, axis);
+    efree(tensor_list);
     return new_tensor;
 }

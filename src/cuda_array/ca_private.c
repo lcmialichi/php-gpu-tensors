@@ -545,6 +545,49 @@ tensor_t *cuda_tensor_scatter_add(tensor_t *input, tensor_t *indices,
     return result;
 }
 
+tensor_t *cuda_tensor_slice_scatter(tensor_t *updates, const int *input_shape,
+                                    int input_ndims, const int *axes,
+                                    const int *starts, const int *steps)
+{
+    if (!updates || !input_shape || !starts || !steps ||
+        input_ndims < 0 || input_ndims > MAX_DIMS ||
+        updates->ndims < 0 || updates->ndims > MAX_DIMS ||
+        (updates->ndims > 0 && (!axes || !updates->shape || !updates->strides)))
+    {
+        CUDA_THROW_INVALID("Invalid slice gradient metadata");
+        return NULL;
+    }
+    if (updates->dtype != DTYPE_FLOAT32 && updates->dtype != DTYPE_FLOAT64)
+    {
+        CUDA_THROW_INVALID("Slice gradients currently support float32 and float64 tensors");
+        return NULL;
+    }
+    if (fusion_active())
+        return fusion_slice_scatter(updates, input_shape, input_ndims,
+                                    axes, starts, steps);
+    if (!fusion_materialize(updates))
+        return NULL;
+
+    scalar_value_t zero = {0};
+    zero.dtype = updates->dtype;
+    tensor_t *result = cuda_tensor_create_with_value((int *)input_shape, input_ndims,
+                                                      zero, updates->dtype);
+    if (!result)
+        return NULL;
+
+    cudaError_t status = cuda_launch_slice_scatter(
+        updates->data, result->data, updates->dtype, input_shape, input_ndims,
+        updates->strides, updates->shape, axes, starts, steps,
+        updates->ndims, updates->total_size);
+    if (status != cudaSuccess)
+    {
+        cuda_tensor_destroy(result);
+        CUDA_THROW_RUNTIME("Slice gradient kernel failed: %s", cudaGetErrorString(status));
+        return NULL;
+    }
+    return result;
+}
+
 tensor_t *cuda_tensor_transpose(tensor_t *tensor, int *axis, int axis_len)
 {
     if (tensor == NULL || axis == NULL)

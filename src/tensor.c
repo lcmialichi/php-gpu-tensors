@@ -102,6 +102,12 @@ tensor_t *tensor_cast(tensor_t *tensor, dtype_t new_dtype)
                            dtype_to_string(tensor->dtype), dtype_to_string(new_dtype));
         return NULL;
     }
+    if (tensor->requires_grad && dtype_is_floating(tensor->dtype) &&
+        !dtype_is_floating(new_dtype))
+    {
+        CUDA_THROW_INVALID("Cannot cast a gradient-tracked tensor to a non-floating dtype; detach it first");
+        return NULL;
+    }
 
     if (fusion_active()) return fusion_cast(tensor, new_dtype);
     return fusion_cast_eager(tensor, new_dtype);
@@ -386,17 +392,21 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
 
     int view_shape[MAX_DIMS];
     size_t view_strides[MAX_DIMS];
+    int axes[MAX_DIMS], starts[MAX_DIMS], steps[MAX_DIMS];
     int view_ndims = 0;
 
     for (int i = 0; i < base_tensor->ndims; ++i)
     {
         slice_info_t slice = (i < num_slices) ? slices[i] : (slice_info_t){.type = SLICE_ALL};
+        starts[i] = 0;
+        steps[i] = 1;
 
         switch (slice.type)
         {
         case SLICE_ALL:
             view_shape[view_ndims] = base_tensor->shape[i];
             view_strides[view_ndims] = base_strides[i];
+            axes[view_ndims] = i;
             view_ndims++;
             break;
 
@@ -412,6 +422,8 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
 
             view_strides[view_ndims] = 0;
             view_shape[view_ndims] = 1;
+            starts[i] = index;
+            axes[view_ndims] = i;
             element_offset += index * base_strides[i];
             view_ndims++;
             break;
@@ -428,10 +440,12 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
                 return NULL;
             }
             int len = (end - start + 1);
+            starts[i] = start;
             element_offset += (size_t)start * base_strides[i];
 
             view_shape[view_ndims] = len;
             view_strides[view_ndims] = base_strides[i];
+            axes[view_ndims] = i;
             view_ndims++;
             break;
         }
@@ -456,8 +470,32 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
         view->slices = (slice_info_t *)emalloc(sizeof(slice_info_t) * num_slices);
         memcpy(view->slices, slices, sizeof(slice_info_t) * num_slices);
     }
+    autograd_record_slice(view, base_tensor, axes, starts, steps);
 
     return view;
+}
+
+static int tensor_storage_range_valid(tensor_t *tensor, size_t element_offset,
+                                      size_t element_count)
+{
+    tensor_t *root = tensor;
+    while (root && root->base_tensor)
+        root = root->base_tensor;
+    if (!tensor || !root || !tensor->data || !root->data || !tensor->element_size)
+        return 0;
+
+    uintptr_t root_address = (uintptr_t)root->data;
+    uintptr_t tensor_address = (uintptr_t)tensor->data;
+    if (tensor_address < root_address)
+        return 0;
+    uintptr_t pointer_offset = tensor_address - root_address;
+    if (pointer_offset > root->allocated_size)
+        return 0;
+    size_t available = root->allocated_size - (size_t)pointer_offset;
+    if (element_offset > available / tensor->element_size)
+        return 0;
+    size_t byte_offset = element_offset * tensor->element_size;
+    return element_count <= (available - byte_offset) / tensor->element_size;
 }
 
 int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, scalar_value_t scalar)
@@ -466,6 +504,11 @@ int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, scalar_value
     if (!tensor->total_size)
     {
         CUDA_THROW_INVALID("Cannot write a scalar into empty tensor storage");
+        return FAILURE;
+    }
+    if (!tensor_storage_range_valid(tensor, element_offset, 1))
+    {
+        CUDA_THROW_INVALID("Scalar assignment offset is outside tensor storage");
         return FAILURE;
     }
     size_t byte_offset = element_offset * tensor->element_size;
@@ -513,6 +556,7 @@ int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, scalar_value
             CUDA_THROW_INVALID("Unsupported scalar dtype");
             return FAILURE;
     }
+    autograd_mark_mutated(tensor);
     cudaError_t err = cudaMemcpy(gpu_destination, &value, tensor->element_size, cudaMemcpyHostToDevice);
 
     if (err != cudaSuccess)
@@ -538,6 +582,22 @@ int cuda_tensor_set_tensor(tensor_t *base_tensor, size_t element_offset, tensor_
         /* Stage the source so overlapping strided assignments cannot overwrite unread values. */
         tensor_t *host = tensor_copy_to_host(tensor);
         if (!host) return FAILURE;
+        for (size_t i = 0; i < tensor->total_size; i++)
+        {
+            size_t remaining = i, offset = element_offset;
+            for (int d = tensor->ndims - 1; d >= 0; d--)
+            {
+                offset += (remaining % tensor->shape[d]) * base_tensor->strides[d + 1];
+                remaining /= tensor->shape[d];
+            }
+            if (!tensor_storage_range_valid(base_tensor, offset, 1))
+            {
+                cuda_tensor_destroy(host);
+                CUDA_THROW_INVALID("Tensor assignment exceeds destination storage");
+                return FAILURE;
+            }
+        }
+        autograd_mark_mutated(base_tensor);
         cudaError_t status = cudaSuccess;
         for (size_t i = 0; i < tensor->total_size && status == cudaSuccess; i++)
         {
@@ -560,6 +620,12 @@ int cuda_tensor_set_tensor(tensor_t *base_tensor, size_t element_offset, tensor_
         return SUCCESS;
     }
 
+    if (!tensor_storage_range_valid(base_tensor, element_offset, tensor->total_size))
+    {
+        CUDA_THROW_INVALID("Tensor assignment exceeds destination storage");
+        return FAILURE;
+    }
+    autograd_mark_mutated(base_tensor);
     cudaError_t err = cudaMemcpy(dest_ptr,
                                  tensor->data,
                                  total_bytes,
@@ -602,17 +668,21 @@ tensor_t *cuda_tensor_create_dim_view(tensor_t *base_tensor, slice_info_t *slice
 
     int view_shape[MAX_DIMS];
     size_t view_strides[MAX_DIMS];
+    int axes[MAX_DIMS], starts[MAX_DIMS], steps[MAX_DIMS];
     int view_ndims = 0;
 
     for (int i = 0; i < base_tensor->ndims; ++i)
     {
         slice_info_t slice = (i < num_slices) ? slices[i] : (slice_info_t){.type = SLICE_ALL};
+        starts[i] = 0;
+        steps[i] = 1;
 
         switch (slice.type)
         {
         case SLICE_ALL:
             view_shape[view_ndims] = base_tensor->shape[i];
             view_strides[view_ndims] = base_strides[i];
+            axes[view_ndims] = i;
             view_ndims++;
             break;
 
@@ -634,6 +704,7 @@ tensor_t *cuda_tensor_create_dim_view(tensor_t *base_tensor, slice_info_t *slice
 
             size_t offset_increment = (size_t)index * base_strides[i];
             element_offset += offset_increment;
+            starts[i] = index;
             break;
         }
 
@@ -658,9 +729,11 @@ tensor_t *cuda_tensor_create_dim_view(tensor_t *base_tensor, slice_info_t *slice
             size_t offset_increment = (size_t)start * base_strides[i];
 
             element_offset += offset_increment;
+            starts[i] = start;
 
             view_shape[view_ndims] = len;
             view_strides[view_ndims] = base_strides[i];
+            axes[view_ndims] = i;
             view_ndims++;
             break;
         }
@@ -685,6 +758,7 @@ tensor_t *cuda_tensor_create_dim_view(tensor_t *base_tensor, slice_info_t *slice
         view->slices = (slice_info_t *)emalloc(sizeof(slice_info_t) * num_slices);
         memcpy(view->slices, slices, sizeof(slice_info_t) * num_slices);
     }
+    autograd_record_slice(view, base_tensor, axes, starts, steps);
 
     return view;
 }

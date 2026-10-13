@@ -196,7 +196,11 @@ tensor_t *fusion_unary(tensor_t *a, operation_type_t op)
 tensor_t *fusion_cast(tensor_t *a, dtype_t dtype)
 {
     tensor_t *tensor = fusion_record(FUSION_CAST, a, NULL, OP_ADD, a->shape, a->ndims, dtype);
-    if (tensor) autograd_record_cast(tensor, a);
+    if (tensor && !autograd_record_cast(tensor, a))
+    {
+        cuda_tensor_destroy(tensor);
+        return NULL;
+    }
     return tensor;
 }
 
@@ -305,7 +309,8 @@ tensor_t *fusion_view(tensor_t *a, operation_type_t op, int *shape, size_t *stri
         memcpy(tensor->strides, strides, ndims * sizeof(size_t));
         tensor->is_contiguous_cached = -1;
         if (axes) memcpy(tensor->fusion->axes, axes, ndims * sizeof(int));
-        autograd_record_view(tensor, a, op, axes);
+        if (op != OP_SLICE)
+            autograd_record_view(tensor, a, op, axes);
     }
     return tensor;
 }
@@ -326,5 +331,54 @@ tensor_t *fusion_slice(tensor_t *a, int *shape, size_t *strides, int ndims,
             if (axes[j] == d) node->slice_strides[j] = logical_stride * (size_t)steps[d];
         logical_stride *= a->shape[d];
     }
+    autograd_record_slice(tensor, a, axes, starts, steps);
+    return tensor;
+}
+
+tensor_t *fusion_slice_scatter(tensor_t *updates, const int *input_shape,
+                               int input_ndims, const int *axes,
+                               const int *starts, const int *steps)
+{
+    if (!updates || input_ndims < 0 || input_ndims > MAX_DIMS ||
+        updates->ndims < 0 || updates->ndims > input_ndims ||
+        (input_ndims > 0 && (!input_shape || !starts || !steps)) ||
+        (updates->ndims > 0 && (!updates->shape || !axes)))
+    {
+        CUDA_THROW_INVALID("Invalid Fusion slice-gradient metadata");
+        return NULL;
+    }
+    int used[MAX_DIMS] = {0};
+    for (int d = 0; d < input_ndims; d++)
+    {
+        if (input_shape[d] < 0 || starts[d] < 0 || steps[d] <= 0 ||
+            (input_shape[d] > 0 && starts[d] > input_shape[d]))
+        {
+            CUDA_THROW_INVALID("Invalid Fusion slice-gradient bounds");
+            return NULL;
+        }
+    }
+    for (int d = 0; d < updates->ndims; d++)
+    {
+        if (axes[d] < 0 || axes[d] >= input_ndims || used[axes[d]] ||
+            updates->shape[d] < 0)
+        {
+            CUDA_THROW_INVALID("Invalid Fusion slice-gradient axis mapping");
+            return NULL;
+        }
+        used[axes[d]] = 1;
+    }
+
+    tensor_t *tensor = fusion_record(FUSION_SLICE_SCATTER, updates, NULL,
+                                    OP_SLICE, input_shape, input_ndims,
+                                    updates->dtype);
+    if (!tensor)
+        return NULL;
+    for (int d = 0; d < input_ndims; d++)
+    {
+        tensor->fusion->slice_starts[d] = starts[d];
+        tensor->fusion->slice_steps[d] = steps[d];
+    }
+    for (int d = 0; d < updates->ndims; d++)
+        tensor->fusion->axes[d] = axes[d];
     return tensor;
 }

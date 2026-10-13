@@ -16,6 +16,58 @@ struct IndexedParams
     int axis_size;
 };
 
+struct SliceScatterParams
+{
+    int input_shape[MAX_DIMS];
+    int slice_shape[MAX_DIMS];
+    int axes[MAX_DIMS];
+    int starts[MAX_DIMS];
+    int steps[MAX_DIMS];
+    size_t update_strides[MAX_DIMS];
+    int input_ndims;
+    int slice_ndims;
+};
+
+template <typename T>
+__global__ static void slice_scatter_kernel(const T *updates, T *output,
+                                            SliceScatterParams params, size_t total)
+{
+    size_t input_strides[MAX_DIMS];
+    size_t stride = 1;
+    for (int d = params.input_ndims - 1; d >= 0; d--)
+    {
+        input_strides[d] = stride;
+        stride *= (size_t)params.input_shape[d];
+    }
+
+    for (size_t flat = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+         flat < total; flat += (size_t)blockDim.x * gridDim.x)
+    {
+        size_t remainder = flat;
+        size_t update_offset = 0;
+        size_t input_offset = 0;
+        for (int d = params.slice_ndims - 1; d >= 0; d--)
+        {
+            size_t coordinate = remainder % (size_t)params.slice_shape[d];
+            remainder /= (size_t)params.slice_shape[d];
+            update_offset += coordinate * params.update_strides[d];
+            int input_axis = params.axes[d];
+            input_offset += ((size_t)params.starts[input_axis] +
+                             coordinate * (size_t)params.steps[input_axis]) *
+                            input_strides[input_axis];
+        }
+        for (int d = 0; d < params.input_ndims; d++)
+        {
+            int is_slice_axis = 0;
+            for (int j = 0; j < params.slice_ndims; j++)
+                if (params.axes[j] == d) is_slice_axis = 1;
+            if (!is_slice_axis)
+                input_offset += (size_t)params.starts[d] * input_strides[d];
+        }
+        output[input_offset] = updates[update_offset];
+    }
+}
+
 __global__ static void validate_indices_kernel(const int *indices, IndexedParams params,
                                                 size_t total, int *invalid)
 {
@@ -176,6 +228,7 @@ extern "C" cudaError_t cuda_validate_indices(const int *indices, const int *shap
         validate_indices_kernel<<<cuda_grid_1d(total, 256), 256>>>(indices, params, total, device_invalid);
         status = cudaGetLastError();
     }
+
     if (status == cudaSuccess)
         status = cudaMemcpy(&invalid, device_invalid, sizeof(int), cudaMemcpyDeviceToHost);
     if (device_invalid)
@@ -256,4 +309,43 @@ extern "C" cudaError_t cuda_launch_scatter_add(const int *indices, const void *u
     else
         return cudaErrorInvalidValue;
     return cudaGetLastError();
+}
+
+template <typename T>
+static cudaError_t launch_slice_scatter_t(const void *updates, void *output,
+                                           SliceScatterParams params, size_t total)
+{
+    slice_scatter_kernel<T><<<cuda_grid_1d(total, 256), 256>>>(
+        (const T *)updates, (T *)output, params, total);
+    return cudaGetLastError();
+}
+
+extern "C" cudaError_t cuda_launch_slice_scatter(const void *updates, void *output,
+                                      dtype_t dtype, const int *input_shape, int input_ndims,
+                                      const size_t *update_strides, const int *slice_shape,
+                                      const int *axes, const int *starts, const int *steps,
+                                      int slice_ndims, size_t total)
+{
+    if (!total) return cudaSuccess;
+    SliceScatterParams params = {};
+    params.input_ndims = input_ndims;
+    params.slice_ndims = slice_ndims;
+    for (int d = 0; d < input_ndims; d++)
+    {
+        params.input_shape[d] = input_shape[d];
+        params.starts[d] = starts[d];
+        params.steps[d] = steps[d];
+    }
+    for (int d = 0; d < slice_ndims; d++)
+    {
+        params.slice_shape[d] = slice_shape[d];
+        params.axes[d] = axes[d];
+        params.update_strides[d] = update_strides[d];
+    }
+    switch (dtype)
+    {
+        case DTYPE_FLOAT32: return launch_slice_scatter_t<float>(updates, output, params, total);
+        case DTYPE_FLOAT64: return launch_slice_scatter_t<double>(updates, output, params, total);
+        default: return cudaErrorInvalidValue;
+    }
 }

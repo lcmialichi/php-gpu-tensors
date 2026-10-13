@@ -25,6 +25,11 @@ cudaError_t cuda_launch_scatter_add(const int *indices, const void *updates,
                                     const size_t *index_strides, const size_t *update_strides,
                                     int ndims, int axis,
                                     int axis_size, size_t total);
+cudaError_t cuda_launch_slice_scatter(const void *updates, void *output, dtype_t dtype,
+                                      const int *input_shape, int input_ndims,
+                                      const size_t *update_strides, const int *slice_shape,
+                                      const int *axes, const int *starts, const int *steps,
+                                      int slice_ndims, size_t total);
 
 #ifdef __cplusplus
 }

@@ -333,8 +333,8 @@ class CudaArray
     public function dtype(): string {}
     /** Enable or disable reverse-mode gradient tracking on a leaf tensor. */
     public function requiresGrad(bool $requiresGrad = true): CudaArray {}
-    /** Compute gradients; non-scalar tensors require an explicit gradient seed. */
-    public function backward(?CudaArray $gradient = null): void {}
+    /** Compute gradients; non-scalar tensors require a seed. Graphs are freed unless retained. */
+    public function backward(?CudaArray $gradient = null, bool $retainGraph = false): void {}
     /** Return the accumulated gradient of a leaf tensor, or null before backward(). */
     public function grad(): ?CudaArray {}
     /** Clear the accumulated gradient. */
