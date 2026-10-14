@@ -282,6 +282,12 @@ class CudaArray
     public function std(?int $axis = null, int $correction = 0): CudaArray {}
     /** Numerically stable softmax across an axis; defaults to the last axis. */
     public function softmax(int $axis = -1): CudaArray {}
+    /**
+     * Normalize across explicit axes, promoting integer input to float64.
+     * Scale and bias shapes follow the axes in the same order.
+     * @param list<int> $axes
+     */
+    public function layerNorm(array $axes, float $epsilon = 0.00001, ?CudaArray $scale = null, ?CudaArray $bias = null): CudaArray {}
     /** Index of maximum across an axis. */
     public function argMax(?int $axis = null): CudaArray {}
     /** Index of minimum across an axis. */

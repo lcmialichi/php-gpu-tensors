@@ -16,14 +16,25 @@ consistent public API across the PHP extension.
 
 - [x] Add general tensor `softmax()` with an axis argument and numerically
   stable behavior.
-- [ ] Add general tensor `layerNorm()` with explicit normalized axes,
+- [x] Add general tensor `layerNorm()` with explicit normalized axes,
   epsilon and optional scale/bias tensors.
 - [ ] Extend matrix operations to FP16 and BF16 where the CUDA backend supports
   them; document accumulation and output dtype rules.
 - [ ] Add tests for dtype conversions, overflow/underflow and numerical
   tolerances.
 
-## 3. Reduce eager dispatch and temporary tensors
+## 3. Complete autograd and Fusion coverage
+
+- [ ] Audit differentiable `CudaArray` and NN operations against implemented
+  backward rules.
+- [ ] Audit tensor operations against Fusion capture, code generation and
+  execution support.
+- [ ] Implement missing autograd and Fusion support for useful operations,
+  preserving explicit errors where semantics are undefined.
+- [ ] Test eager/Fusion result parity and gradients across supported dtypes,
+  shapes and layouts.
+
+## 4. Reduce eager dispatch and temporary tensors
 
 - [ ] Extend Fusion capture to common elementwise expressions that currently
   require separate native calls.
@@ -32,7 +43,7 @@ consistent public API across the PHP extension.
 - [ ] Keep eager and fused results consistent across supported dtypes, shapes
   and layouts.
 
-## 4. Improve data movement and execution
+## 5. Improve data movement and execution
 
 - [ ] Preserve packed-buffer paths so large transfers do not require PHP scalar
   expansion.
@@ -41,15 +52,14 @@ consistent public API across the PHP extension.
 - [ ] Add stream-aware transfer support without weakening current synchronous
   behavior or error reporting.
 
-## 5. Improve indexing and autograd coverage
+## 6. Improve indexing and autograd coverage
 
 - [ ] Reduce synchronization in `gather()` and `scatterAdd()` validation while
   retaining precise invalid-index errors.
 - [ ] Add Fusion support for useful indexed expressions where semantics allow.
-- [ ] Expand autograd coverage for the numerical operations added above,
-  including gradients through non-contiguous views.
+- [ ] Expand gradients through non-contiguous views and indexed expressions.
 
-## 6. Keep the public API consistent
+## 7. Keep the public API consistent
 
 - [ ] Keep README, PHP stubs, runtime arginfo and tests aligned for
   `CudaArray`, `ContiguousArray`/`HostArray`, `Compiler`, `CompiledModule`,
@@ -60,5 +70,5 @@ consistent public API across the PHP extension.
 
 ## Next implementation
 
-Next, add a numerically stable tensor `softmax()` with an axis argument and
-tests for layouts, supported dtypes and gradients.
+Next, audit `CudaArray` operations for missing autograd and Fusion support,
+then implement and test the highest-priority gaps.

@@ -207,7 +207,8 @@ conversion cost. Keep intermediate tensors on the GPU when possible.
   `abs()`, `neg()`, `floor()`, `ceil()` and `round()`.
 - **Normalization:** `softmax()` computes stable probabilities along an axis
   (last axis by default), preserving floating dtypes and promoting integer and
-  boolean inputs to `float64`.
+  boolean inputs to `float64`. `layerNorm()` normalizes across an explicit
+  axis list; optional `scale` and `bias` shapes follow that list's order.
 - **Comparisons and selection:** `gt()`, `lt()`, `eq()`, `ne()`, `ge()`,
   `le()`, `where()`, `maximum()`, `minimum()` and `clamp()`.
 - **Matrix products:** `matmul()`, including supported batched and broadcast
@@ -224,7 +225,12 @@ returns `float32` for `float32` input and `float64` for `float64`, integer and
 boolean input. `all()` and `any()` return boolean tensors. `where()` broadcasts
 its condition and value tensors, treats nonzero condition values as true, and
 requires the two value tensors to have the same dtype. `var()` and `std()` take
-an optional axis and correction; correction defaults to zero.
+an optional axis and correction; correction defaults to zero. `layerNorm()`
+uses population variance and requires a non-empty list of distinct axes and a
+finite positive epsilon. Optional floating-point `scale` and `bias` tensors
+must match the normalized dimensions in axis-list order. It preserves
+`float32`/`float64`, promotes integer and boolean input to `float64`, and uses
+`float64` when either affine parameter is `float64`.
 
 ### Shape operations, views and indexing
 

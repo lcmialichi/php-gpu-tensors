@@ -16,6 +16,7 @@
 #include "tensor_where.h"
 #include "fusion.h"
 #include "autograd.h"
+#include <math.h>
 
 zend_class_entry *cuda_array_ce;
 static zend_object_handlers cuda_array_handlers;
@@ -972,6 +973,356 @@ ZEND_METHOD(CudaArray, softmax)
     }
 
     tensor_t *result = cuda_array_softmax(object->tensor_handle, axis);
+    if (!result)
+        RETURN_THROWS();
+    create_result_object(return_value, result);
+}
+
+static int cuda_array_parse_normalized_axes(tensor_t *input, zval *axes_value,
+                                           int *axes, int *axis_count)
+{
+    uint32_t count = zend_hash_num_elements(Z_ARRVAL_P(axes_value));
+    if (!count || count > (uint32_t)input->ndims || count > MAX_DIMS)
+    {
+        CUDA_THROW_INVALID("LayerNorm requires a non-empty list of distinct axes");
+        return 0;
+    }
+
+    int seen[MAX_DIMS] = {0};
+    int index = 0;
+    zval *axis_value;
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(axes_value), axis_value)
+    {
+        if (Z_TYPE_P(axis_value) != IS_LONG)
+        {
+            CUDA_THROW_INVALID("LayerNorm axes must be integers");
+            return 0;
+        }
+
+        zend_long requested = Z_LVAL_P(axis_value);
+        if (requested < INT_MIN || requested > INT_MAX)
+        {
+            CUDA_THROW_INVALID("LayerNorm axis is outside the supported integer range");
+            return 0;
+        }
+
+        int axis = (int)requested;
+        if (axis < 0)
+            axis += input->ndims;
+        if (axis < 0 || axis >= input->ndims)
+        {
+            CUDA_THROW_INVALID("LayerNorm axis is out of range for tensor rank %d",
+                               input->ndims);
+            return 0;
+        }
+        if (seen[axis])
+        {
+            CUDA_THROW_INVALID("LayerNorm axes must not contain duplicates");
+            return 0;
+        }
+
+        seen[axis] = 1;
+        axes[index++] = axis;
+    }
+    ZEND_HASH_FOREACH_END();
+
+    *axis_count = index;
+    return 1;
+}
+
+static tensor_t *cuda_array_reduce_axes_keepdims(tensor_t *input,
+                                                 const int *axes, int axis_count)
+{
+    tensor_t *current = input;
+    current->ref_count++;
+    int shape[MAX_DIMS];
+    memcpy(shape, input->shape, input->ndims * sizeof(int));
+
+    for (int i = 0; i < axis_count; i++)
+    {
+        tensor_t *reduced = cuda_tensor_reduce(current, axes[i], OP_REDUCE_MEAN);
+        cuda_tensor_destroy(current);
+        if (!reduced)
+            return NULL;
+
+        shape[axes[i]] = 1;
+        current = cuda_tensor_reshape(reduced, shape, input->ndims);
+        cuda_tensor_destroy(reduced);
+        if (!current)
+            return NULL;
+    }
+
+    return current;
+}
+
+static tensor_t *cuda_array_layernorm_reshape_view(tensor_t *input,
+                                                   const int *shape,
+                                                   const size_t *strides,
+                                                   int ndims)
+{
+    if (fusion_active())
+        return fusion_view(input, OP_RESHAPE, (int *)shape, (size_t *)strides, ndims, NULL);
+    if (!fusion_materialize(input))
+        return NULL;
+
+    tensor_t *view = cuda_tensor_create_view(input, (int *)shape, (size_t *)strides,
+                                             ndims, 0, input->total_size);
+    if (view)
+        autograd_record_view(view, input, OP_RESHAPE, NULL);
+    return view;
+}
+
+static int cuda_array_validate_layernorm_parameter(tensor_t *parameter,
+                                                   tensor_t *input,
+                                                   const int *axes,
+                                                   int axis_count,
+                                                   const char *name)
+{
+    if (!dtype_is_floating(parameter->dtype))
+    {
+        CUDA_THROW_INVALID("LayerNorm %s must have a floating-point dtype", name);
+        return 0;
+    }
+    if (parameter->ndims != axis_count)
+    {
+        CUDA_THROW_INVALID("LayerNorm %s rank must match the number of normalized axes", name);
+        return 0;
+    }
+    for (int i = 0; i < axis_count; i++)
+        if (parameter->shape[i] != input->shape[axes[i]])
+        {
+            CUDA_THROW_INVALID("LayerNorm %s shape does not match the normalized dimensions",
+                               name);
+            return 0;
+        }
+    return 1;
+}
+
+static tensor_t *cuda_array_layernorm_parameter(tensor_t *parameter,
+                                                tensor_t *input,
+                                                const int *axes,
+                                                int axis_count,
+                                                dtype_t dtype)
+{
+    tensor_t *casted = tensor_cast(parameter, dtype);
+    if (!casted)
+        return NULL;
+
+    int sorted_axes[MAX_DIMS];
+    int permutation[MAX_DIMS];
+    for (int i = 0; i < axis_count; i++)
+    {
+        sorted_axes[i] = axes[i];
+        permutation[i] = i;
+    }
+    for (int i = 1; i < axis_count; i++)
+        for (int j = i; j > 0 && sorted_axes[j] < sorted_axes[j - 1]; j--)
+        {
+            int axis = sorted_axes[j];
+            sorted_axes[j] = sorted_axes[j - 1];
+            sorted_axes[j - 1] = axis;
+            int source = permutation[j];
+            permutation[j] = permutation[j - 1];
+            permutation[j - 1] = source;
+        }
+
+    int needs_transpose = 0;
+    for (int i = 0; i < axis_count; i++)
+        if (permutation[i] != i)
+            needs_transpose = 1;
+
+    tensor_t *ordered = casted;
+    if (needs_transpose)
+    {
+        ordered = cuda_tensor_transpose(casted, permutation, axis_count);
+        cuda_tensor_destroy(casted);
+        if (!ordered)
+            return NULL;
+    }
+
+    int expanded_shape[MAX_DIMS];
+    size_t expanded_strides[MAX_DIMS] = {0};
+    for (int i = 0; i < input->ndims; i++)
+        expanded_shape[i] = 1;
+    for (int i = 0; i < axis_count; i++)
+    {
+        expanded_shape[sorted_axes[i]] = ordered->shape[i];
+        expanded_strides[sorted_axes[i]] = ordered->strides[i];
+    }
+
+    tensor_t *expanded = cuda_array_layernorm_reshape_view(
+        ordered, expanded_shape, expanded_strides, input->ndims);
+    cuda_tensor_destroy(ordered);
+    return expanded;
+}
+
+static tensor_t *cuda_array_layernorm(tensor_t *input, const int *axes,
+                                     int axis_count, double epsilon,
+                                     tensor_t *scale, tensor_t *bias)
+{
+    if (!isfinite(epsilon) || epsilon <= 0.0)
+    {
+        CUDA_THROW_INVALID("LayerNorm epsilon must be finite and greater than zero");
+        return NULL;
+    }
+    for (int i = 0; i < axis_count; i++)
+        if (!input->shape[axes[i]])
+        {
+            CUDA_THROW_INVALID("LayerNorm cannot normalize an empty dimension");
+            return NULL;
+        }
+
+    if ((scale && !cuda_array_validate_layernorm_parameter(
+                      scale, input, axes, axis_count, "scale")) ||
+        (bias && !cuda_array_validate_layernorm_parameter(
+                     bias, input, axes, axis_count, "bias")))
+        return NULL;
+
+    dtype_t dtype = input->dtype == DTYPE_FLOAT64 || !dtype_is_floating(input->dtype)
+        ? DTYPE_FLOAT64 : DTYPE_FLOAT32;
+    if ((scale && scale->dtype == DTYPE_FLOAT64) ||
+        (bias && bias->dtype == DTYPE_FLOAT64))
+        dtype = DTYPE_FLOAT64;
+    if (dtype == DTYPE_FLOAT32 &&
+        (!isfinite((float)epsilon) || (float)epsilon <= 0.0f))
+    {
+        CUDA_THROW_INVALID("LayerNorm epsilon is not representable as float32");
+        return NULL;
+    }
+
+    tensor_t *scale_view = scale
+        ? cuda_array_layernorm_parameter(scale, input, axes, axis_count, dtype)
+        : NULL;
+    if (scale && !scale_view)
+        return NULL;
+    tensor_t *bias_view = bias
+        ? cuda_array_layernorm_parameter(bias, input, axes, axis_count, dtype)
+        : NULL;
+    if (bias && !bias_view)
+    {
+        if (scale_view) cuda_tensor_destroy(scale_view);
+        return NULL;
+    }
+
+    tensor_t *working = tensor_cast(input, dtype);
+    tensor_t *mean = NULL;
+    tensor_t *centered = NULL;
+    tensor_t *squared = NULL;
+    tensor_t *variance = NULL;
+    tensor_t *stabilized = NULL;
+    tensor_t *deviation = NULL;
+    tensor_t *normalized = NULL;
+    tensor_t *adjusted = NULL;
+    tensor_t *result = NULL;
+    if (!working)
+        goto cleanup;
+
+    mean = cuda_array_reduce_axes_keepdims(working, axes, axis_count);
+    if (!mean)
+        goto cleanup;
+    centered = cuda_tensor_op(working, mean, OP_SUB);
+    if (!centered)
+        goto cleanup;
+    squared = cuda_tensor_op(centered, centered, OP_MUL);
+    if (!squared)
+        goto cleanup;
+    variance = cuda_array_reduce_axes_keepdims(squared, axes, axis_count);
+    if (!variance)
+        goto cleanup;
+
+    scalar_value_t epsilon_value = {0};
+    epsilon_value.dtype = dtype;
+    if (dtype == DTYPE_FLOAT64)
+        epsilon_value.v.f64 = epsilon;
+    else
+        epsilon_value.v.f32 = (float)epsilon;
+    stabilized = cuda_scalar_op(variance, epsilon_value, OP_ADD);
+    if (!stabilized)
+        goto cleanup;
+    deviation = cuda_unary_op(stabilized, OP_SQRT);
+    if (!deviation)
+        goto cleanup;
+    normalized = cuda_tensor_op(centered, deviation, OP_DIV);
+    if (!normalized)
+        goto cleanup;
+
+    if (scale_view)
+    {
+        adjusted = cuda_tensor_op(normalized, scale_view, OP_MUL);
+        if (!adjusted)
+            goto cleanup;
+        cuda_tensor_destroy(normalized);
+        normalized = adjusted;
+        adjusted = NULL;
+    }
+    if (bias_view)
+    {
+        adjusted = cuda_tensor_op(normalized, bias_view, OP_ADD);
+        if (!adjusted)
+            goto cleanup;
+        cuda_tensor_destroy(normalized);
+        normalized = adjusted;
+        adjusted = NULL;
+    }
+    result = normalized;
+    normalized = NULL;
+
+cleanup:
+    if (scale_view) cuda_tensor_destroy(scale_view);
+    if (bias_view) cuda_tensor_destroy(bias_view);
+    if (working) cuda_tensor_destroy(working);
+    if (mean) cuda_tensor_destroy(mean);
+    if (centered) cuda_tensor_destroy(centered);
+    if (squared) cuda_tensor_destroy(squared);
+    if (variance) cuda_tensor_destroy(variance);
+    if (stabilized) cuda_tensor_destroy(stabilized);
+    if (deviation) cuda_tensor_destroy(deviation);
+    if (normalized) cuda_tensor_destroy(normalized);
+    if (adjusted) cuda_tensor_destroy(adjusted);
+    return result;
+}
+
+ZEND_METHOD(CudaArray, layerNorm)
+{
+    zval *axes_value, *scale_value = NULL, *bias_value = NULL;
+    double epsilon = 1e-5;
+    ZEND_PARSE_PARAMETERS_START(1, 4)
+        Z_PARAM_ARRAY(axes_value)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_DOUBLE(epsilon)
+        Z_PARAM_OBJECT_OF_CLASS_OR_NULL(scale_value, cuda_array_ce)
+        Z_PARAM_OBJECT_OF_CLASS_OR_NULL(bias_value, cuda_array_ce)
+    ZEND_PARSE_PARAMETERS_END();
+
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object)
+        RETURN_THROWS();
+
+    int axes[MAX_DIMS];
+    int axis_count = 0;
+    if (!cuda_array_parse_normalized_axes(object->tensor_handle, axes_value,
+                                          axes, &axis_count))
+        RETURN_THROWS();
+
+    tensor_t *scale = NULL;
+    tensor_t *bias = NULL;
+    if (scale_value)
+    {
+        cuda_array_obj *scale_object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(scale_value));
+        if (!scale_object)
+            RETURN_THROWS();
+        scale = scale_object->tensor_handle;
+    }
+    if (bias_value)
+    {
+        cuda_array_obj *bias_object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(bias_value));
+        if (!bias_object)
+            RETURN_THROWS();
+        bias = bias_object->tensor_handle;
+    }
+
+    tensor_t *result = cuda_array_layernorm(object->tensor_handle, axes, axis_count,
+                                            epsilon, scale, bias);
     if (!result)
         RETURN_THROWS();
     create_result_object(return_value, result);

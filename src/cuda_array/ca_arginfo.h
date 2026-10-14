@@ -124,6 +124,13 @@ ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cuda_array_softmax, 0, 0, Cuda\\C
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, axis, IS_LONG, 0, "-1")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cuda_array_layerNorm, 0, 1, Cuda\\CudaArray, 0)
+ZEND_ARG_TYPE_INFO(0, axes, IS_ARRAY, 0)
+ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, epsilon, IS_DOUBLE, 0, "0.00001")
+ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, scale, Cuda\\CudaArray, 1, "null")
+ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, bias, Cuda\\CudaArray, 1, "null")
+ZEND_END_ARG_INFO()
+
 ZEND_BEGIN_ARG_INFO_EX(arginfo_cuda_array_clamp, 0, 0, 0)
 ZEND_ARG_TYPE_MASK(0, min, MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_NULL, "null")
 ZEND_ARG_TYPE_MASK(0, max, MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_NULL, "null")
@@ -266,6 +273,7 @@ static zend_function_entry cuda_array_methods[] = {
     ZEND_ME(CudaArray, var, arginfo_cuda_array_stat, ZEND_ACC_PUBLIC)
     ZEND_ME(CudaArray, std, arginfo_cuda_array_stat, ZEND_ACC_PUBLIC)
     ZEND_ME(CudaArray, softmax, arginfo_cuda_array_softmax, ZEND_ACC_PUBLIC)
+    ZEND_ME(CudaArray, layerNorm, arginfo_cuda_array_layerNorm, ZEND_ACC_PUBLIC)
     ZEND_ME(CudaArray, item, arginfo_cuda_array_item, ZEND_ACC_PUBLIC)
     ZEND_ME(CudaArray, gather, arginfo_cuda_array_gather, ZEND_ACC_PUBLIC)
     ZEND_ME(CudaArray, scatterAdd, arginfo_cuda_array_scatter_add, ZEND_ACC_PUBLIC)

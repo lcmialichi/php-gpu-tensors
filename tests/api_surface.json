@@ -1318,6 +1318,50 @@
                     "parameters": [],
                     "returnType": "int|float|bool"
                 },
+                "layerNorm": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axes",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "epsilon",
+                            "type": "float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1.0e-5
+                        },
+                        {
+                            "name": "scale",
+                            "type": "?Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "bias",
+                            "type": "?Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "le": {
                     "static": false,
                     "abstract": false,

@@ -79,6 +79,7 @@ ZEND_METHOD(CudaArray, any);
 ZEND_METHOD(CudaArray, var);
 ZEND_METHOD(CudaArray, std);
 ZEND_METHOD(CudaArray, softmax);
+ZEND_METHOD(CudaArray, layerNorm);
 ZEND_METHOD(CudaArray, item);
 ZEND_METHOD(CudaArray, gather);
 ZEND_METHOD(CudaArray, scatterAdd);
