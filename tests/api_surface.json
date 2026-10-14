@@ -1706,6 +1706,23 @@
                     ],
                     "returnType": "self"
                 },
+                "softmax": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": -1
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "sqrt": {
                     "static": false,
                     "abstract": false,

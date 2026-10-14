@@ -76,6 +76,75 @@ extern "C" void cuda_reduction_shutdown(void)
     reduction_counters = {};
 }
 
+template <typename InputT, typename AccumT>
+static cudaError_t launch_moments_typed(
+    const InputT *input,
+    AccumT *output,
+    const int *input_shape,
+    int input_ndims,
+    const size_t *input_strides,
+    int axis,
+    size_t reduce_size,
+    size_t output_size,
+    size_t denominator,
+    int standard_deviation,
+    cudaStream_t stream)
+{
+    if (reduce_size >= 4096 && (axis < 0 || output_size == 1))
+    {
+        WelfordInputTransform<InputT, AccumT> transform = {};
+        transform.input = input;
+        transform.ndims = input_ndims;
+        transform.axis = axis;
+        memcpy(transform.shape, input_shape, input_ndims * sizeof(int));
+        memcpy(transform.strides, input_strides, input_ndims * sizeof(size_t));
+
+        using State = WelfordState<AccumT>;
+        using Counter = cub::CountingInputIterator<size_t>;
+        using Iterator = cub::TransformInputIterator<State, WelfordInputTransform<InputT, AccumT>, Counter>;
+        Counter counter(0);
+        Iterator iterator(counter, transform);
+        WelfordCombine<AccumT> combine;
+        State identity = {0, static_cast<AccumT>(0), static_cast<AccumT>(0)};
+        size_t temporary_bytes = 0;
+        State *query_output = reinterpret_cast<State *>(output);
+        cudaError_t error = cub::DeviceReduce::Reduce(
+            nullptr, temporary_bytes, iterator, query_output, reduce_size, combine, identity, stream);
+        if (error != cudaSuccess) return error;
+
+        size_t alignment = alignof(State);
+        size_t state_offset = (temporary_bytes + alignment - 1) / alignment * alignment;
+        if (state_offset < temporary_bytes ||
+            state_offset > std::numeric_limits<size_t>::max() - sizeof(State))
+            return cudaErrorMemoryAllocation;
+
+        void *storage = nullptr;
+        error = reduction_workspace(stream, state_offset + sizeof(State), &storage);
+        if (error != cudaSuccess) return error;
+        State *state = reinterpret_cast<State *>(static_cast<char *>(storage) + state_offset);
+        error = cub::DeviceReduce::Reduce(
+            storage, temporary_bytes, iterator, state, reduce_size, combine, identity, stream);
+        if (error != cudaSuccess) return error;
+
+        finalize_moments_kernel<<<1, 1, 0, stream>>>(
+            state, output, denominator, standard_deviation);
+        return cudaGetLastError();
+    }
+
+    MomentsParams params = {};
+    params.ndims = input_ndims;
+    params.axis = axis;
+    params.reduce_size = reduce_size;
+    params.output_size = output_size;
+    params.denominator = denominator;
+    params.standard_deviation = standard_deviation;
+    memcpy(params.shape, input_shape, input_ndims * sizeof(int));
+    memcpy(params.strides, input_strides, input_ndims * sizeof(size_t));
+    moments_axis_kernel<<<output_size, REDUCTION_BLOCK_SIZE, 0, stream>>>(
+        input, output, params);
+    return cudaGetLastError();
+}
+
 extern "C" void launch_reduction(
     void *input, void *output,
     dtype_t dtype, operation_type_t op_type,
@@ -164,6 +233,56 @@ extern "C" void launch_reduction(
                 1, stream);
         });
     });
+}
+
+extern "C" void launch_moments_reduction(
+    const void *input, void *output,
+    dtype_t input_dtype, dtype_t result_dtype,
+    const int *input_shape, int input_ndims,
+    const size_t *input_strides,
+    int axis, size_t total_elements_out,
+    int correction, int standard_deviation, cudaStream_t stream)
+{
+    reduction_error = cudaSuccess;
+    if (!total_elements_out) return;
+
+    size_t reduce_size = axis < 0 ? 1 : static_cast<size_t>(input_shape[axis]);
+    if (axis < 0)
+    {
+        for (int dim = 0; dim < input_ndims; dim++)
+            reduce_size *= static_cast<size_t>(input_shape[dim]);
+    }
+    size_t denominator = reduce_size - static_cast<size_t>(correction);
+    if (!denominator)
+    {
+        reduction_error = cudaErrorInvalidValue;
+        return;
+    }
+
+    if (result_dtype == DTYPE_FLOAT64)
+    {
+        DISPATCH_DTYPE(input_dtype, {
+            reduction_error = launch_moments_typed<scalar_t, double>(
+                static_cast<const scalar_t *>(input), static_cast<double *>(output),
+                input_shape, input_ndims, input_strides, axis,
+                reduce_size, total_elements_out, denominator,
+                standard_deviation, stream);
+        });
+    }
+    else if (result_dtype == DTYPE_FLOAT32)
+    {
+        DISPATCH_DTYPE(input_dtype, {
+            reduction_error = launch_moments_typed<scalar_t, float>(
+                static_cast<const scalar_t *>(input), static_cast<float *>(output),
+                input_shape, input_ndims, input_strides, axis,
+                reduce_size, total_elements_out, denominator,
+                standard_deviation, stream);
+        });
+    }
+    else
+    {
+        reduction_error = cudaErrorInvalidValue;
+    }
 }
 
 extern "C" void launch_arg_reduction(

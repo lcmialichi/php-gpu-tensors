@@ -1,53 +1,64 @@
-# TODO — PHP GPU Tensors
+# Extension Improvement Roadmap
 
-This file lists upcoming features and tasks planned for the PHP CUDA extension.  
-Items are prioritized but not yet scheduled.
+Prioritize correctness, useful tensor operations, supported dtypes and a
+consistent public API across the PHP extension.
 
+## 1. Improve existing reductions
 
-## Matrix Operations
-- [ X ] Implement `matmul` (GPU-accelerated matrix multiplication)
-  - Detect shapes and validate dimensional compatibility
-  - Add broadcasting support if possible
-  - Optimize for contiguous and non-contiguous tensors
+- [x] Add a low-temporary implementation path for `var()` and `std()`.
+- [x] Handle non-contiguous views without unnecessary full-tensor copies.
+- [x] Preserve correction modes, dtype behavior, empty dimensions, NaNs and
+  autograd semantics.
+- [x] Add coverage for contiguous and strided inputs, global and axis
+  reductions, correction values and gradient propagation.
 
+## 2. Expand numerical operations and dtype support
 
-## CudaArray Indexing & Assignment
+- [x] Add general tensor `softmax()` with an axis argument and numerically
+  stable behavior.
+- [ ] Add general tensor `layerNorm()` with explicit normalized axes,
+  epsilon and optional scale/bias tensors.
+- [ ] Extend matrix operations to FP16 and BF16 where the CUDA backend supports
+  them; document accumulation and output dtype rules.
+- [ ] Add tests for dtype conversions, overflow/underflow and numerical
+  tolerances.
 
-- [ ] Add support for ranged write assignment using syntax:
-```php
-$x[[0, 5]] = $x[[1, 6]];
-```
+## 3. Reduce eager dispatch and temporary tensors
 
-## Tasks
-- [ ] Parse slice ranges during assignment
-- [ ] Ensure view semantics (no copy unless necessary)
-- [ ] Handle overlapping ranges safely
+- [ ] Extend Fusion capture to common elementwise expressions that currently
+  require separate native calls.
+- [ ] Review composite operations for avoidable intermediates while preserving
+  eager evaluation semantics.
+- [ ] Keep eager and fused results consistent across supported dtypes, shapes
+  and layouts.
 
-## GPU Device Management
-- [x] Apply `cuda_set_device()` through CUDA's `cudaSetDevice()` API
-- [x] Add regression tests for valid and invalid device selection
-- [ ] Define behavior for existing tensors and memory pools when switching devices
+## 4. Improve data movement and execution
 
-## Data Types
+- [ ] Preserve packed-buffer paths so large transfers do not require PHP scalar
+  expansion.
+- [ ] Define explicit lifetime and synchronization rules for asynchronous
+  host/device transfers.
+- [ ] Add stream-aware transfer support without weakening current synchronous
+  behavior or error reporting.
 
-- [ X ] Add support for float32 and float64
-    - Introduce dtype field inside tensor_t
-    - Implement type-aware kernels
-    - Add casting and type promotion rules
-    - Update memory allocation to match dtype size
+## 5. Improve indexing and autograd coverage
 
-## Conditional Operations
-- [ X ] Implement where operation:
-```php
-$z = CudaArray::where($cond, $x, $y);
-```
- - Condition tensor must be treated as boolean mask
- - Broadcasting support for all arguments
- - Kernel must pick element-wise from ``$x`` or ``$y``
+- [ ] Reduce synchronization in `gather()` and `scatterAdd()` validation while
+  retaining precise invalid-index errors.
+- [ ] Add Fusion support for useful indexed expressions where semantics allow.
+- [ ] Expand autograd coverage for the numerical operations added above,
+  including gradients through non-contiguous views.
 
-## Additional Notes
-Future improvements may include:
+## 6. Keep the public API consistent
 
-- Kernel fusion / operation batching
-- Stream support for async execution
-- Memory pool improvements
+- [ ] Keep README, PHP stubs, runtime arginfo and tests aligned for
+  `CudaArray`, `ContiguousArray`/`HostArray`, `Compiler`, `CompiledModule`,
+  Fusion, optimizers, NN and global `cuda_*` functions.
+- [ ] Document method limits, serialization restrictions, asynchronous
+  lifetime rules and typed error behavior.
+- [ ] Retain CPU/API and PHP NTS/ZTS compatibility checks.
+
+## Next implementation
+
+Next, add a numerically stable tensor `softmax()` with an axis argument and
+tests for layouts, supported dtypes and gradients.

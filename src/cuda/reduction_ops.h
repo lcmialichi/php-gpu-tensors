@@ -20,6 +20,13 @@ extern "C"
         size_t *input_strides,
         int result_ndims, int axis,
         size_t total_elements_out, size_t input_base_offset, cudaStream_t stream);
+    void launch_moments_reduction(
+        const void *input, void *output,
+        dtype_t input_dtype, dtype_t result_dtype,
+        const int *input_shape, int input_ndims,
+        const size_t *input_strides,
+        int axis, size_t total_elements_out,
+        int correction, int standard_deviation, cudaStream_t stream);
 
     void launch_arg_reduction(
         void *input, int *output,

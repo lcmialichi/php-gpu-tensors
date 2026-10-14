@@ -6,6 +6,7 @@
 #include <float.h>
 #include <cstdint>
 #include <cmath>
+#include <limits>
 #include <cub/cub.cuh>
 #include "backend_info.h"
 
@@ -76,6 +77,154 @@ struct ReductionParams
     size_t output_offsets[MAX_DIMS];
     size_t output_strides[MAX_DIMS];
 };
+
+template <typename T>
+struct WelfordState
+{
+    size_t count;
+    T mean;
+    T m2;
+};
+
+template <typename T>
+__host__ __device__ WelfordState<T> welford_single(T value)
+{
+    return {1, value, isfinite(value) ? static_cast<T>(0) : value - value};
+}
+
+template <typename T>
+struct WelfordCombine
+{
+    __host__ __device__ WelfordState<T> operator()(WelfordState<T> a, WelfordState<T> b) const
+    {
+        if (!a.count) return b;
+        if (!b.count) return a;
+        T delta = b.mean - a.mean;
+        size_t count = a.count + b.count;
+        T count_value = static_cast<T>(count);
+        T mean = a.mean + delta * static_cast<T>(b.count) / count_value;
+        T m2 = a.m2 + b.m2 + delta * delta *
+            static_cast<T>(a.count) * static_cast<T>(b.count) / count_value;
+        return {count, mean, m2};
+    }
+};
+
+template <typename InputT, typename AccumT>
+struct WelfordInputTransform
+{
+    const InputT *input;
+    int ndims;
+    int axis;
+    int shape[MAX_DIMS];
+    size_t strides[MAX_DIMS];
+
+    __host__ __device__ WelfordState<AccumT> operator()(size_t index) const
+    {
+        size_t offset = 0;
+        if (axis < 0)
+        {
+            size_t remaining = index;
+            for (int dim = ndims - 1; dim >= 0; dim--)
+            {
+                size_t coordinate = remaining % static_cast<size_t>(shape[dim]);
+                remaining /= static_cast<size_t>(shape[dim]);
+                offset += coordinate * strides[dim];
+            }
+        }
+        else
+        {
+            offset = index * strides[axis];
+        }
+        return welford_single(static_cast<AccumT>(input[offset]));
+    }
+};
+
+struct MomentsParams
+{
+    int ndims;
+    int axis;
+    size_t reduce_size;
+    size_t output_size;
+    size_t denominator;
+    int standard_deviation;
+    int shape[MAX_DIMS];
+    size_t strides[MAX_DIMS];
+};
+
+template <typename InputT, typename AccumT>
+__global__ void moments_axis_kernel(
+    const InputT *__restrict__ input,
+    AccumT *__restrict__ output,
+    MomentsParams params)
+{
+    __shared__ WelfordState<AccumT> partial[REDUCTION_BLOCK_SIZE];
+    size_t output_index = blockIdx.x;
+    if (output_index >= params.output_size) return;
+
+    size_t base = 0;
+    if (params.axis >= 0)
+    {
+        size_t remaining = output_index;
+        for (int dim = params.ndims - 1; dim >= 0; dim--)
+        {
+            if (dim != params.axis)
+            {
+                size_t dim_size = static_cast<size_t>(params.shape[dim]);
+                base += (remaining % dim_size) * params.strides[dim];
+                remaining /= dim_size;
+            }
+        }
+    }
+
+    WelfordState<AccumT> value = {0, static_cast<AccumT>(0), static_cast<AccumT>(0)};
+    for (size_t index = threadIdx.x; index < params.reduce_size; index += blockDim.x)
+    {
+        size_t offset = base;
+        if (params.axis < 0)
+        {
+            size_t remaining = index;
+            for (int dim = params.ndims - 1; dim >= 0; dim--)
+            {
+                size_t dim_size = static_cast<size_t>(params.shape[dim]);
+                offset += (remaining % dim_size) * params.strides[dim];
+                remaining /= dim_size;
+            }
+        }
+        else
+            offset += index * params.strides[params.axis];
+        value = WelfordCombine<AccumT>()(
+            value,
+            welford_single(static_cast<AccumT>(input[offset])));
+    }
+
+    partial[threadIdx.x] = value;
+    __syncthreads();
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1)
+    {
+        if (threadIdx.x < stride)
+            partial[threadIdx.x] = WelfordCombine<AccumT>()(
+                partial[threadIdx.x], partial[threadIdx.x + stride]);
+        __syncthreads();
+    }
+
+    if (threadIdx.x == 0)
+    {
+        AccumT result = partial[0].m2 / static_cast<AccumT>(params.denominator);
+        output[output_index] = params.standard_deviation ? sqrt(result) : result;
+    }
+}
+
+template <typename AccumT>
+__global__ void finalize_moments_kernel(
+    const WelfordState<AccumT> *__restrict__ state,
+    AccumT *__restrict__ output,
+    size_t denominator,
+    int standard_deviation)
+{
+    if (blockIdx.x || threadIdx.x) return;
+    AccumT result = state->m2 / static_cast<AccumT>(denominator);
+    output[0] = standard_deviation ? sqrt(result) : result;
+}
 
 template <typename InputT, typename AccumT, typename Op>
 __global__ void reduce_columns(const InputT *input, AccumT *output, ReductionParams params, size_t offset, size_t divisor)

@@ -294,6 +294,60 @@ tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operati
     return result;
 }
 
+tensor_t *cuda_tensor_moments_reduce(tensor_t *input, int axis, int correction,
+                                     int standard_deviation)
+{
+    if (!input || input->requires_grad || fusion_active())
+    {
+        CUDA_THROW_INVALID("Direct moments reduction requires an untracked tensor outside Fusion capture");
+        return NULL;
+    }
+    if (!fusion_materialize(input)) return NULL;
+
+    int result_shape[MAX_DIMS];
+    int result_ndims;
+    size_t total_elements_out;
+    if (axis == REDUCE_GLOBAL_FLAG)
+    {
+        result_shape[0] = 1;
+        result_ndims = 1;
+        total_elements_out = 1;
+    }
+    else
+    {
+        result_ndims = calculate_reduction_shape(input, axis, result_shape, &total_elements_out);
+        if (result_ndims <= 0) return NULL;
+    }
+
+    dtype_t result_dtype = input->dtype == DTYPE_FLOAT32 ? DTYPE_FLOAT32 : DTYPE_FLOAT64;
+    tensor_t *result = cuda_tensor_create_empty_dtype(result_shape, result_ndims, result_dtype);
+    if (!result) return NULL;
+
+    launch_moments_reduction(
+        input->data,
+        result->data,
+        input->dtype,
+        result_dtype,
+        input->shape,
+        input->ndims,
+        input->strides,
+        axis == REDUCE_GLOBAL_FLAG ? -1 : axis,
+        total_elements_out,
+        correction,
+        standard_deviation,
+        NULL);
+
+    cudaError_t error = cuda_reduction_status();
+    if (error != cudaSuccess)
+    {
+        CUDA_THROW_RUNTIME("Variance reduction kernel failed: %s", cudaGetErrorString(error));
+        cuda_tensor_destroy(result);
+        return NULL;
+    }
+
+    return result;
+}
+
 tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
 {
     if (original == NULL || new_shape == NULL || new_ndims <= 0)

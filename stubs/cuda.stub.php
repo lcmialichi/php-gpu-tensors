@@ -280,6 +280,8 @@ class CudaArray
     public function var(?int $axis = null, int $correction = 0): CudaArray {}
     /** Square root of var(). */
     public function std(?int $axis = null, int $correction = 0): CudaArray {}
+    /** Numerically stable softmax across an axis; defaults to the last axis. */
+    public function softmax(int $axis = -1): CudaArray {}
     /** Index of maximum across an axis. */
     public function argMax(?int $axis = null): CudaArray {}
     /** Index of minimum across an axis. */

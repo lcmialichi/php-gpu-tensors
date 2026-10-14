@@ -788,7 +788,8 @@ ZEND_METHOD(CudaArray, any)
     create_result_object(return_value, result);
 }
 
-static tensor_t *cuda_array_variance(tensor_t *input, int axis, zend_long correction)
+static tensor_t *cuda_array_variance(tensor_t *input, int axis, zend_long correction,
+                                     int standard_deviation)
 {
     size_t count = axis == REDUCE_GLOBAL_FLAG
         ? input->total_size : (size_t)input->shape[axis];
@@ -797,6 +798,10 @@ static tensor_t *cuda_array_variance(tensor_t *input, int axis, zend_long correc
         CUDA_THROW_INVALID("Variance correction must be non-negative and smaller than the reduced dimension");
         return NULL;
     }
+    if (!fusion_active() && !input->requires_grad &&
+        (axis != REDUCE_GLOBAL_FLAG || input->total_size <= INT_MAX))
+        return cuda_tensor_moments_reduce(input, axis, (int)correction, standard_deviation);
+
     tensor_t *mean = cuda_array_public_reduce(input, axis, OP_REDUCE_MEAN);
     if (!mean) return NULL;
     tensor_t *expanded = mean;
@@ -817,16 +822,26 @@ static tensor_t *cuda_array_variance(tensor_t *input, int axis, zend_long correc
     if (!squared) return NULL;
     tensor_t *variance = cuda_array_public_reduce(squared, axis, OP_REDUCE_MEAN);
     cuda_tensor_destroy(squared);
-    if (!variance || correction == 0) return variance;
+    if (!variance || correction == 0)
+    {
+        if (!standard_deviation) return variance;
+    }
+    else
+    {
+        scalar_value_t factor = {0};
+        factor.dtype = variance->dtype;
+        double scale = (double)count / (double)(count - (size_t)correction);
+        if (factor.dtype == DTYPE_FLOAT64) factor.v.f64 = scale;
+        else factor.v.f32 = (float)scale;
+        tensor_t *corrected = cuda_scalar_op(variance, factor, OP_MUL);
+        cuda_tensor_destroy(variance);
+        variance = corrected;
+    }
+    if (!variance || !standard_deviation) return variance;
 
-    scalar_value_t factor = {0};
-    factor.dtype = variance->dtype;
-    double scale = (double)count / (double)(count - (size_t)correction);
-    if (factor.dtype == DTYPE_FLOAT64) factor.v.f64 = scale;
-    else factor.v.f32 = (float)scale;
-    tensor_t *corrected = cuda_scalar_op(variance, factor, OP_MUL);
+    tensor_t *result = cuda_unary_op(variance, OP_SQRT);
     cuda_tensor_destroy(variance);
-    return corrected;
+    return result;
 }
 
 ZEND_METHOD(CudaArray, var)
@@ -843,7 +858,7 @@ ZEND_METHOD(CudaArray, var)
     int axis;
     if (!cuda_array_parse_axis(object->tensor_handle, axis_value, 1, &axis))
         RETURN_THROWS();
-    tensor_t *result = cuda_array_variance(object->tensor_handle, axis, correction);
+    tensor_t *result = cuda_array_variance(object->tensor_handle, axis, correction, 0);
     if (!result) RETURN_THROWS();
     create_result_object(return_value, result);
 }
@@ -862,11 +877,103 @@ ZEND_METHOD(CudaArray, std)
     int axis;
     if (!cuda_array_parse_axis(object->tensor_handle, axis_value, 1, &axis))
         RETURN_THROWS();
-    tensor_t *variance = cuda_array_variance(object->tensor_handle, axis, correction);
-    if (!variance) RETURN_THROWS();
-    tensor_t *result = cuda_unary_op(variance, OP_SQRT);
-    cuda_tensor_destroy(variance);
+    tensor_t *result = cuda_array_variance(object->tensor_handle, axis, correction, 1);
     if (!result) RETURN_THROWS();
+    create_result_object(return_value, result);
+}
+
+static tensor_t *cuda_array_softmax(tensor_t *input, int axis)
+{
+    dtype_t output_dtype = input->dtype == DTYPE_FLOAT64 ||
+                                   dtype_is_integer(input->dtype) ||
+                                   input->dtype == DTYPE_BOOL
+                               ? DTYPE_FLOAT64
+                               : DTYPE_FLOAT32;
+    tensor_t *working = tensor_cast(input, output_dtype);
+    if (!working)
+        return NULL;
+
+    tensor_t *maximum = cuda_tensor_reduce(working, axis, OP_REDUCE_MAX);
+    if (!maximum)
+    {
+        cuda_tensor_destroy(working);
+        return NULL;
+    }
+
+    int expanded_shape[MAX_DIMS];
+    memcpy(expanded_shape, input->shape, input->ndims * sizeof(int));
+    expanded_shape[axis] = 1;
+    tensor_t *expanded_maximum = cuda_tensor_reshape(maximum, expanded_shape, input->ndims);
+    cuda_tensor_destroy(maximum);
+    if (!expanded_maximum)
+    {
+        cuda_tensor_destroy(working);
+        return NULL;
+    }
+
+    tensor_t *shifted = cuda_tensor_op(working, expanded_maximum, OP_SUB);
+    cuda_tensor_destroy(expanded_maximum);
+    cuda_tensor_destroy(working);
+    if (!shifted)
+        return NULL;
+
+    tensor_t *exponentials = cuda_unary_op(shifted, OP_EXP);
+    cuda_tensor_destroy(shifted);
+    if (!exponentials)
+        return NULL;
+
+    tensor_t *normalizer = cuda_tensor_reduce(exponentials, axis, OP_REDUCE_SUM);
+    if (!normalizer)
+    {
+        cuda_tensor_destroy(exponentials);
+        return NULL;
+    }
+
+    tensor_t *expanded_normalizer = cuda_tensor_reshape(normalizer, expanded_shape, input->ndims);
+    cuda_tensor_destroy(normalizer);
+    if (!expanded_normalizer)
+    {
+        cuda_tensor_destroy(exponentials);
+        return NULL;
+    }
+
+    tensor_t *result = cuda_tensor_op(exponentials, expanded_normalizer, OP_DIV);
+    cuda_tensor_destroy(expanded_normalizer);
+    cuda_tensor_destroy(exponentials);
+    return result;
+}
+
+ZEND_METHOD(CudaArray, softmax)
+{
+    zend_long requested_axis = -1;
+    ZEND_PARSE_PARAMETERS_START(0, 1)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(requested_axis)
+    ZEND_PARSE_PARAMETERS_END();
+
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object)
+        RETURN_THROWS();
+
+    if (requested_axis < INT_MIN || requested_axis > INT_MAX)
+    {
+        CUDA_THROW_INVALID("Softmax axis is outside the supported integer range");
+        RETURN_THROWS();
+    }
+
+    int axis = (int)requested_axis;
+    if (axis < 0)
+        axis += object->tensor_handle->ndims;
+    if (axis < 0 || axis >= object->tensor_handle->ndims)
+    {
+        CUDA_THROW_INVALID("Softmax axis is out of range for tensor rank %d",
+                           object->tensor_handle->ndims);
+        RETURN_THROWS();
+    }
+
+    tensor_t *result = cuda_array_softmax(object->tensor_handle, axis);
+    if (!result)
+        RETURN_THROWS();
     create_result_object(return_value, result);
 }
 
