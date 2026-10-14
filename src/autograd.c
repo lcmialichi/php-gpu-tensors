@@ -854,12 +854,30 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
             tensor_t *parent = node->parents[i];
             if (parent->requires_grad)
             {
-                size_t offset = axis_offset * upstream->strides[node->parameter];
-                tensor_t *part = cuda_tensor_create_view(
-                    upstream, parent->shape, upstream->strides, parent->ndims,
-                    offset, parent->total_size);
-                if (part)
-                    part->offset = 0;
+                tensor_t *part = NULL;
+                if (fusion_active())
+                {
+                    int axes[MAX_DIMS], starts[MAX_DIMS], steps[MAX_DIMS];
+                    size_t strides[MAX_DIMS];
+                    for (int dimension = 0; dimension < parent->ndims; dimension++)
+                    {
+                        axes[dimension] = dimension;
+                        starts[dimension] = 0;
+                        steps[dimension] = 1;
+                        strides[dimension] = upstream->strides[dimension];
+                    }
+                    starts[node->parameter] = (int)axis_offset;
+                    part = fusion_slice(upstream, parent->shape, strides, parent->ndims,
+                                        axes, starts, steps);
+                }
+                else
+                {
+                    size_t offset = axis_offset * upstream->strides[node->parameter];
+                    part = cuda_tensor_create_view(
+                        upstream, parent->shape, upstream->strides, parent->ndims,
+                        offset, parent->total_size);
+                    if (part) part->offset = 0;
+                }
                 if (!part || !gradient_add(entries, count, capacity, gradient_index, parent, part))
                 {
                     success = 0;

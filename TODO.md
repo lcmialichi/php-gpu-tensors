@@ -25,6 +25,8 @@ consistent public API across the PHP extension.
 
 ## 3. Complete autograd and Fusion coverage
 
+- [x] Add Fusion concat capture, native execution and autograd coverage for
+  strided inputs and supported dtypes.
 - [ ] Audit differentiable `CudaArray` and NN operations against implemented
   backward rules.
 - [ ] Audit tensor operations against Fusion capture, code generation and
@@ -54,6 +56,11 @@ consistent public API across the PHP extension.
 
 ## 6. Improve indexing and autograd coverage
 
+- [x] Complete the audit of `gather()` and `scatterAdd()` validation and
+  gradients across eager and Fusion execution.
+- [x] Add synchronous Fusion support for `gather()` and `scatterAdd()`; keep
+  asynchronous execution and CUDA Graph capture explicitly unsupported while
+  index validation synchronizes with the host.
 - [ ] Reduce synchronization in `gather()` and `scatterAdd()` validation while
   retaining precise invalid-index errors.
 - [ ] Add Fusion support for useful indexed expressions where semantics allow.
@@ -70,5 +77,5 @@ consistent public API across the PHP extension.
 
 ## Next implementation
 
-Next, audit `CudaArray` operations for missing autograd and Fusion support,
-then implement and test the highest-priority gaps.
+Next, complete the audit of differentiable `CudaArray` and NN operations for
+missing autograd and Fusion coverage, then implement the highest-priority gaps.

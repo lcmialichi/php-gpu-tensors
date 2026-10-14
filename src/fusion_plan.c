@@ -23,7 +23,9 @@ size_t fusion_find(fusion_plan *plan, tensor_t *tensor)
 int fusion_preallocated(fusion_plan *plan, fusion_step *step)
 {
     fusion_kind kind = plan->items[step->root].tensor->fusion->kind;
-    return step->name[0] || kind == FUSION_MATMUL || kind == FUSION_REDUCE || kind == FUSION_ARG_REDUCE;
+    return step->name[0] || kind == FUSION_MATMUL || kind == FUSION_REDUCE ||
+        kind == FUSION_ARG_REDUCE || kind == FUSION_GATHER ||
+        kind == FUSION_SCATTER_ADD || kind == FUSION_CONCAT;
 }
 
 static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
@@ -68,9 +70,12 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
             plan->items[id].cut = 1;
             plan->items[id].reason = node->kind == FUSION_MATMUL ? "native-matmul" :
                 node->kind == FUSION_REDUCE || node->kind == FUSION_ARG_REDUCE ? "native-reduction" :
+                node->kind == FUSION_GATHER || node->kind == FUSION_SCATTER_ADD ? "native-indexed" :
+                node->kind == FUSION_CONCAT ? "native-concat" :
                 "native-power";
             if (a != SIZE_MAX && plan->items[a].cost) plan->items[a].cut = 1;
             if (b != SIZE_MAX && plan->items[b].cost) plan->items[b].cut = 1;
+            if (c != SIZE_MAX && plan->items[c].cost) plan->items[c].cut = 1;
         }
     }
     return id;
@@ -251,7 +256,8 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
             if (consumer->a != i && consumer->b != i && consumer->c != i) continue;
             fusion_node *operation = consumer->tensor->fusion;
             if (!operation || (operation->kind != FUSION_MATMUL &&
-                operation->kind != FUSION_REDUCE && operation->kind != FUSION_ARG_REDUCE))
+                operation->kind != FUSION_REDUCE && operation->kind != FUSION_ARG_REDUCE &&
+                operation->kind != FUSION_CONCAT))
                 compatible = 0;
             if (operation && (operation->kind == FUSION_REDUCE || operation->kind == FUSION_ARG_REDUCE) &&
                 operation->parameter == -1 && !is_contiguous(item->tensor))
@@ -272,6 +278,16 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
             fusion_kind kind = plan->items[plan->steps[i].root].tensor->fusion->kind;
             if (kind != FUSION_MATMUL && kind != FUSION_REDUCE && kind != FUSION_ARG_REDUCE)
                 plan->graph_compatible = 0;
+            if (kind == FUSION_GATHER || kind == FUSION_SCATTER_ADD)
+            {
+                plan->stream_compatible = 0;
+                plan->incompatibility = "indexed-operation";
+            }
+            if (kind == FUSION_CONCAT)
+            {
+                plan->stream_compatible = 0;
+                plan->incompatibility = "concat-operation";
+            }
             if (!fusion_preallocated(plan, &plan->steps[i]))
             {
                 plan->stream_compatible = 0;

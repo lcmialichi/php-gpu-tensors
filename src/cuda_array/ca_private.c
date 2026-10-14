@@ -483,7 +483,7 @@ tensor_t *cuda_tensor_broadcast_to(tensor_t *original, int *new_shape, int new_n
     return view;
 }
 
-static int cuda_indexed_validate_shapes(tensor_t *input, tensor_t *indices,
+int cuda_tensor_validate_indexed_shapes(tensor_t *input, tensor_t *indices,
                                        tensor_t *updates, int axis, const char *operation)
 {
     if (!input || !indices || axis < 0 || axis >= input->ndims ||
@@ -516,11 +516,8 @@ static int cuda_indexed_validate_shapes(tensor_t *input, tensor_t *indices,
 tensor_t *cuda_tensor_gather(tensor_t *input, tensor_t *indices, int axis)
 {
     if (fusion_active())
-    {
-        CUDA_THROW_INVALID("gather is not supported during Fusion capture");
-        return NULL;
-    }
-    if (!cuda_indexed_validate_shapes(input, indices, NULL, axis, "gather"))
+        return fusion_indexed_gather(input, indices, axis);
+    if (!cuda_tensor_validate_indexed_shapes(input, indices, NULL, axis, "gather"))
         return NULL;
     if (!fusion_materialize(input) || !fusion_materialize(indices))
         return NULL;
@@ -555,11 +552,8 @@ tensor_t *cuda_tensor_scatter_add(tensor_t *input, tensor_t *indices,
                                   tensor_t *updates, int axis)
 {
     if (fusion_active())
-    {
-        CUDA_THROW_INVALID("scatterAdd is not supported during Fusion capture");
-        return NULL;
-    }
-    if (!cuda_indexed_validate_shapes(input, indices, updates, axis, "scatterAdd"))
+        return fusion_indexed_scatter_add(input, indices, updates, axis);
+    if (!cuda_tensor_validate_indexed_shapes(input, indices, updates, axis, "scatterAdd"))
         return NULL;
     if (input->dtype != DTYPE_FLOAT32 && input->dtype != DTYPE_FLOAT64)
     {

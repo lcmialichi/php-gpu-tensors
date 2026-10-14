@@ -17,6 +17,7 @@
 #include "fusion.h"
 #include "autograd.h"
 #include <math.h>
+#include <limits.h>
 
 zend_class_entry *cuda_array_ce;
 static zend_object_handlers cuda_array_handlers;
@@ -3137,7 +3138,9 @@ static tensor_t *cuda_tensor_concat(zval *tensors_array, int axis)
             return NULL;
         }
 
-        cuda_array_obj *other_obj = php_cuda_array_fetch_valid_object(Z_OBJ_P(pzval));
+        cuda_array_obj *other_obj = fusion_active()
+            ? php_cuda_array_fetch_deferred_object(Z_OBJ_P(pzval))
+            : php_cuda_array_fetch_valid_object(Z_OBJ_P(pzval));
         if (!other_obj)
         {
             efree(tensor_list);
@@ -3159,6 +3162,12 @@ static tensor_t *cuda_tensor_concat(zval *tensors_array, int axis)
         }
         else
         {
+            if (current_tensor->dtype != tensor_list[0]->dtype)
+            {
+                CUDA_THROW_INVALID("All tensors must have the same dtype.");
+                efree(tensor_list);
+                return NULL;
+            }
             if (current_tensor->ndims != first_ndims)
             {
                 CUDA_THROW_INVALID("All tensors must have the same number of dimensions (%d != %d).",
@@ -3177,15 +3186,30 @@ static tensor_t *cuda_tensor_concat(zval *tensors_array, int axis)
             }
         }
 
-        total_length_on_axis += current_tensor->shape[axis];
+        if (current_tensor->shape[axis] < 0 ||
+            total_length_on_axis > (size_t)INT_MAX - (size_t)current_tensor->shape[axis])
+        {
+            CUDA_THROW_INVALID("Concatenated axis exceeds the supported dimension size.");
+            efree(tensor_list);
+            return NULL;
+        }
+        total_length_on_axis += (size_t)current_tensor->shape[axis];
         i++;
     }
     ZEND_HASH_FOREACH_END();
 
+    if (fusion_active())
+    {
+        tensor_t *result = fusion_concat(tensor_list, (size_t)list_count, axis);
+        efree(tensor_list);
+        return result;
+    }
+
     int *new_shape = (int *)emalloc(sizeof(int) * first_ndims);
     memcpy(new_shape, tensor_list[0]->shape, sizeof(int) * first_ndims);
     new_shape[axis] = (int)total_length_on_axis;
-    tensor_t *new_tensor = cuda_tensor_create_empty(new_shape, first_ndims);
+    tensor_t *new_tensor = cuda_tensor_create_empty_dtype(
+        new_shape, first_ndims, tensor_list[0]->dtype);
 
     efree(new_shape);
 
@@ -3196,26 +3220,7 @@ static tensor_t *cuda_tensor_concat(zval *tensors_array, int axis)
         return NULL;
     }
 
-    size_t outer_dims = 1;
-    for (int d = 0; d < axis; d++)
-    {
-        outer_dims *= new_tensor->shape[d];
-    }
-
-    size_t inner_dims = 1;
-    for (int d = axis + 1; d < new_tensor->ndims; d++)
-    {
-        inner_dims *= new_tensor->shape[d];
-    }
-
-    int result = launch_concat_kernel_host(
-        tensor_list,
-        list_count,
-        new_tensor,
-        axis,
-        outer_dims,
-        inner_dims,
-        (int)total_length_on_axis);
+    int result = launch_concat_kernel_host(tensor_list, list_count, new_tensor, axis);
 
     if (result != SUCCESS)
     {

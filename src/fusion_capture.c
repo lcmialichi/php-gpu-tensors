@@ -301,6 +301,123 @@ tensor_t *fusion_matmul(tensor_t *a, tensor_t *b)
     return tensor;
 }
 
+tensor_t *fusion_indexed_gather(tensor_t *input, tensor_t *indices, int axis)
+{
+    if (!cuda_tensor_validate_indexed_shapes(input, indices, NULL, axis, "gather"))
+        return NULL;
+
+    tensor_t *tensor = fusion_record(FUSION_GATHER, input, indices, OP_ADD,
+                                     indices->shape, indices->ndims, input->dtype);
+    if (tensor)
+    {
+        tensor->fusion->parameter = axis;
+        autograd_record_gather(tensor, input, indices, axis);
+    }
+    return tensor;
+}
+
+tensor_t *fusion_indexed_scatter_add(tensor_t *input, tensor_t *indices,
+                                     tensor_t *updates, int axis)
+{
+    if (!cuda_tensor_validate_indexed_shapes(input, indices, updates, axis, "scatterAdd"))
+        return NULL;
+    if (input->dtype != DTYPE_FLOAT32 && input->dtype != DTYPE_FLOAT64)
+    {
+        CUDA_THROW_INVALID("scatterAdd currently supports float32 and float64 tensors");
+        return NULL;
+    }
+
+    tensor_t *tensor = fusion_record(FUSION_SCATTER_ADD, input, indices, OP_ADD,
+                                     input->shape, input->ndims, input->dtype);
+    if (tensor)
+    {
+        tensor->fusion->c = updates;
+        updates->ref_count++;
+        tensor->fusion->parameter = axis;
+        autograd_record_scatter_add(tensor, input, indices, updates, axis);
+    }
+    return tensor;
+}
+
+tensor_t *fusion_concat(tensor_t **inputs, size_t input_count, int axis)
+{
+    if (!inputs || !input_count || input_count > MAX_CONCAT_TENSORS ||
+        !inputs[0] || axis < 0 || axis >= inputs[0]->ndims)
+    {
+        CUDA_THROW_INVALID("concat requires tensors and a valid axis");
+        return NULL;
+    }
+
+    int output_shape[MAX_DIMS];
+    memcpy(output_shape, inputs[0]->shape, inputs[0]->ndims * sizeof(int));
+    size_t axis_size = 0;
+    for (size_t i = 0; i < input_count; i++)
+    {
+        tensor_t *input = inputs[i];
+        if (!input || input->ndims != inputs[0]->ndims ||
+            input->dtype != inputs[0]->dtype)
+        {
+            CUDA_THROW_INVALID("concat inputs must have the same rank and dtype");
+            return NULL;
+        }
+        for (int dimension = 0; dimension < input->ndims; dimension++)
+            if (dimension != axis &&
+                input->shape[dimension] != inputs[0]->shape[dimension])
+            {
+                CUDA_THROW_INVALID("concat input shapes must match outside the concatenated axis");
+                return NULL;
+            }
+        if (input->shape[axis] < 0 ||
+            axis_size > (size_t)INT_MAX - (size_t)input->shape[axis])
+        {
+            CUDA_THROW_INVALID("Concatenated axis exceeds the supported dimension size");
+            return NULL;
+        }
+        axis_size += (size_t)input->shape[axis];
+    }
+    output_shape[axis] = (int)axis_size;
+
+    tensor_t *current = inputs[0];
+    int current_owned = 0;
+    size_t first_input = 1;
+    if (input_count == 1)
+    {
+        tensor_t *copy = fusion_record(FUSION_CONCAT, current, NULL, OP_ADD,
+                                       output_shape, current->ndims, current->dtype);
+        if (!copy) return NULL;
+        copy->fusion->parameter = axis;
+        autograd_record_concat(copy, inputs, 1, axis);
+        return copy;
+    }
+
+    for (size_t i = first_input; i < input_count; i++)
+    {
+        int shape[MAX_DIMS];
+        memcpy(shape, current->shape, current->ndims * sizeof(int));
+        if (inputs[i]->shape[axis] > INT_MAX - shape[axis])
+        {
+            if (current_owned) cuda_tensor_destroy(current);
+            CUDA_THROW_INVALID("Concatenated axis exceeds the supported dimension size");
+            return NULL;
+        }
+        shape[axis] += inputs[i]->shape[axis];
+        tensor_t *concat = fusion_record(FUSION_CONCAT, current, inputs[i], OP_ADD,
+                                         shape, current->ndims, current->dtype);
+        if (!concat)
+        {
+            if (current_owned) cuda_tensor_destroy(current);
+            return NULL;
+        }
+        concat->fusion->parameter = axis;
+        tensor_t *parents[] = {current, inputs[i]};
+        autograd_record_concat(concat, parents, 2, axis);
+        if (current_owned) cuda_tensor_destroy(current);
+        current = concat;
+        current_owned = 1;
+    }
+    return current;
+}
+
 tensor_t *fusion_view(tensor_t *a, operation_type_t op, int *shape, size_t *strides, int ndims, int *axes)
 {
     tensor_t *tensor = fusion_record(FUSION_VIEW, a, NULL, op, shape, ndims, a->dtype);

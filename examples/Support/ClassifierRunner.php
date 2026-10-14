@@ -524,6 +524,7 @@ function runClassifier(array $settings = []): int
     if (!$cfg['load']) {
         $buffers = initializeModelBuffers($configuration, $cfg['seed'] + 1);
     }
+
     $consts = [
         'zero' => CudaArray::zeros([1]),
         'one' => CudaArray::full([1], 1.0),
@@ -538,6 +539,7 @@ function runClassifier(array $settings = []): int
     $cpuSample = array_slice($data['val']['rows'], 0, min(32, $nVal));
     $predictRows = $data['test']['rows'];
     $perms = [];
+
     if (!$cfg['load']) {
         $trainMb = $nTrain * $data['features'] * 4 / 1048576;
         printf("  Uploading %d epoch permutation(s) (~%.0f MB each)%s...\n",
@@ -545,7 +547,9 @@ function runClassifier(array $settings = []): int
         for ($p = 0; $p < $cfg['permutations']; $p++) {
             $perms[$p] = buildBatches($data, $cfg['batchSize'], $cfg['seed'] + 100 + $p, $cfg['shift']);
         }
+        
     }
+
     $data['train'] = ['rows' => [], 'labels' => []];
     $data['val']['rows'] = [];
     $data['test']['rows'] = $cfg['predictIndex'] !== null ? $predictRows : [];

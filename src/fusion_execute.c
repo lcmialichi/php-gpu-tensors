@@ -2,6 +2,8 @@
 #include "matmul_kernels.h"
 #include "backend_info.h"
 #include "reduction_ops.h"
+#include "indexed_ops.h"
+#include "concat_kernels.h"
 void fusion_cleanup_error(const char *operation, CUresult error)
 {
     if (error != CUDA_SUCCESS)
@@ -83,11 +85,15 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
     fusion_node *node = item->tensor->fusion;
     tensor_t *a = values[item->a];
     tensor_t *b = item->b != SIZE_MAX ? values[item->b] : NULL;
+    tensor_t *c = item->c != SIZE_MAX ? values[item->c] : NULL;
     tensor_t *result = values[step->root];
-    if (!node || !result || !a || (node->kind == FUSION_MATMUL && !b))
+    int needs_b = node && (node->kind == FUSION_MATMUL ||
+        node->kind == FUSION_GATHER || node->kind == FUSION_SCATTER_ADD);
+    int needs_c = node && node->kind == FUSION_SCATTER_ADD;
+    if (!node || !result || !a || (needs_b && !b) || (needs_c && !c))
     {
-        CUDA_THROW_RUNTIME("Fusion native step %zu has an unresolved input buffer (a=%zu, b=%zu)",
-                           step->root, item->a, item->b);
+        CUDA_THROW_RUNTIME("Fusion native step %zu has an unresolved input buffer (a=%zu, b=%zu, c=%zu)",
+                           step->root, item->a, item->b, item->c);
         return 0;
     }
     if (node->kind == FUSION_MATMUL)
@@ -111,6 +117,60 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
         return 1;
     }
     int axis = node->parameter;
+    if (node->kind == FUSION_GATHER || node->kind == FUSION_SCATTER_ADD)
+    {
+        const char *operation = node->kind == FUSION_GATHER ? "gather" : "scatterAdd";
+        if (!cuda_tensor_validate_indexed_shapes(a, b, c, axis, operation))
+            return 0;
+
+        cudaError_t error = cuda_validate_indices(b->data, b->shape, b->strides,
+            b->ndims, axis, a->shape[axis], b->total_size);
+        if (error == cudaErrorInvalidValue)
+        {
+            CUDA_THROW_INVALID("%s indices must be within [0, %d)", operation, a->shape[axis]);
+            return 0;
+        }
+        if (error != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Failed to validate %s indices: %s",
+                               operation, cudaGetErrorString(error));
+            return 0;
+        }
+
+        if (node->kind == FUSION_GATHER)
+        {
+            error = cuda_launch_gather(a->data, b->data, result->data, a->dtype,
+                a->shape, a->strides, b->shape, b->strides,
+                a->ndims, axis, b->total_size);
+        }
+        else
+        {
+            error = cuda_launch_scatter_copy(a->data, result->data, a->dtype,
+                a->shape, a->strides, a->ndims, a->total_size);
+            if (error == cudaSuccess)
+                error = cuda_launch_scatter_add(b->data, c->data, result->data,
+                    a->dtype, b->shape, result->strides, b->strides,
+                    c->strides, a->ndims, axis, a->shape[axis], c->total_size);
+        }
+        if (error != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Fusion %s kernel failed: %s",
+                               operation, cudaGetErrorString(error));
+            return 0;
+        }
+        return 1;
+    }
+    if (node->kind == FUSION_CONCAT)
+    {
+        tensor_t *inputs[] = {a, b};
+        int input_count = b ? 2 : 1;
+        if (launch_concat_kernel_host(inputs, input_count, result, axis) != 0)
+        {
+            CUDA_THROW_RUNTIME("Fusion concat kernel failed");
+            return 0;
+        }
+        return 1;
+    }
     if (axis == -1 && a->total_size > INT_MAX)
     {
         CUDA_THROW_INVALID("Global fusion reduction exceeds INT_MAX elements");

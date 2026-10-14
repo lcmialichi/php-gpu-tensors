@@ -22,6 +22,10 @@ tensor_t *fusion_cast_eager(tensor_t *a, dtype_t dtype);
 tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y);
 tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg);
 tensor_t *fusion_matmul(tensor_t *a, tensor_t *b);
+tensor_t *fusion_indexed_gather(tensor_t *input, tensor_t *indices, int axis);
+tensor_t *fusion_indexed_scatter_add(tensor_t *input, tensor_t *indices,
+                                     tensor_t *updates, int axis);
+tensor_t *fusion_concat(tensor_t **inputs, size_t input_count, int axis);
 tensor_t *fusion_view(tensor_t *a, operation_type_t op, int *shape, size_t *strides, int ndims, int *axes);
 tensor_t *fusion_slice(tensor_t *a, int *shape, size_t *strides, int ndims,
                        int *axes, int *starts, int *steps);

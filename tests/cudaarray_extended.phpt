@@ -40,17 +40,28 @@ echo json_encode($all->toArray()), "\n";
 echo json_encode($any->toArray()), "\n";
 $broadcastGraph = Fusion::compile(fn($x) => $x->broadcastTo([2, 2])->sum(0), [new CudaArray([1.0, 2.0])]);
 echo json_encode($broadcastGraph->run(new CudaArray([1.0, 2.0]))->toArray()), "\n";
+$gatherGraph = Fusion::compile(fn($x, $i) => $x->gather($i, 1), [$source, $indices]);
+echo json_encode($gatherGraph->run($source, $indices)->toArray()), "\n";
+$scatterGraph = Fusion::compile(fn($x, $i, $u) => $x->scatterAdd($i, $u, 1), [$base, $indices, $updates]);
+echo json_encode($scatterGraph->run($base, $indices, $updates)->toArray()), "\n";
+var_dump($gatherGraph->getStats()['asyncCompatible']);
+$transposedSource = $source->transpose();
+$transposedIndices = CudaArray::fromFlatArray([2, 0, 1, 2, 0, 1], [3, 2], 'int32');
+$transposedGather = Fusion::compile(fn($x, $i) => $x->gather($i, 0), [$transposedSource, $transposedIndices]);
+echo json_encode($transposedGather->run($transposedSource, $transposedIndices)->toArray()), "\n";
 
 function fails(callable $callback): void {
     try { $callback(); echo "MISSED\n"; }
     catch (Throwable $error) { echo get_class($error), "\n"; }
 }
 $badIndices = CudaArray::fromFlatArray([3, 0], [1, 2], 'int32');
+$badFusionIndices = CudaArray::fromFlatArray([3, 0, 1, 1], [2, 2], 'int32');
 fails(fn() => $source->gather($badIndices, 1));
 fails(fn() => $source->gather($indices, 3));
 fails(fn() => $input->var(1, 2));
-fails(fn() => Fusion::compile(fn($x) => $x->gather($indices, 1), [$source]));
-fails(fn() => Fusion::compile(fn($x) => $x->scatterAdd($indices, $updates, 1), [$base]));
+fails(fn() => $gatherGraph->run($source, $badFusionIndices));
+fails(fn() => $scatterGraph->run($base, $badFusionIndices, $updates));
+fails(fn() => $gatherGraph->runAsync($source, $indices));
 
 $tracked = (new CudaArray([-1.0, 0.5, 3.0]))->requiresGrad();
 $tracked->clamp(0, 2)->sum()->backward();
@@ -59,6 +70,13 @@ $gatherTracked = (new CudaArray([[1.0, 2.0, 3.0]]))->requiresGrad();
 $gatherIndices = CudaArray::fromFlatArray([2, 0], [1, 2], 'int32');
 $gatherTracked->gather($gatherIndices, 1)->sum()->backward();
 echo json_encode($gatherTracked->grad()->toArray()), "\n";
+$gatherFusion = Fusion::compile(function ($x, $i) {
+    $loss = $x->gather($i, 1)->sum();
+    $loss->backward();
+    return [$loss, $x->grad()];
+}, [$gatherTracked, $gatherIndices]);
+[, $gatherFusionGrad] = $gatherFusion->run($gatherTracked, $gatherIndices);
+echo json_encode($gatherFusionGrad->toArray()), "\n";
 $broadcastTracked = (new CudaArray([[1.0, 2.0, 3.0]]))->requiresGrad();
 $broadcastTracked->broadcastTo([2, 3])->sum()->backward();
 echo json_encode($broadcastTracked->grad()->toArray()), "\n";
@@ -66,6 +84,15 @@ $updateTracked = (new CudaArray([[5.0, 6.0]]))->requiresGrad();
 CudaArray::zeros([1, 3])->requiresGrad()
   ->scatterAdd($gatherIndices, $updateTracked, 1)->sum()->backward();
 echo json_encode($updateTracked->grad()->toArray()), "\n";
+$scatterFusionInput = CudaArray::zeros([1, 3])->requiresGrad();
+$scatterFusionUpdates = (new CudaArray([[5.0, 6.0]]))->requiresGrad();
+$scatterFusion = Fusion::compile(function ($x, $i, $u) {
+    $loss = $x->scatterAdd($i, $u, 1)->sum();
+    $loss->backward();
+    return [$loss, $u->grad()];
+}, [$scatterFusionInput, $gatherIndices, $scatterFusionUpdates]);
+[, $scatterFusionGrad] = $scatterFusion->run($scatterFusionInput, $gatherIndices, $scatterFusionUpdates);
+echo json_encode($scatterFusionGrad->toArray()), "\n";
 ?>
 --EXPECT--
 [[1,0],[3,4]]
@@ -86,12 +113,19 @@ int(42)
 [false,true]
 [true,true]
 [2,4]
+[[30,10],[50,50]]
+[[2,0,1],[0,7,0]]
+bool(false)
+[[30,40],[20,60],[10,50]]
 Cuda\InvalidArgumentException
 Cuda\InvalidArgumentException
 Cuda\InvalidArgumentException
 Cuda\InvalidArgumentException
 Cuda\InvalidArgumentException
+Cuda\RuntimeException
 [0,1,0]
 [[1,0,1]]
+[[1,0,1]]
 [[2,2,2]]
+[[1,1]]
 [[1,1]]
