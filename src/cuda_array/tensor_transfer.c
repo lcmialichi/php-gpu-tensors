@@ -116,6 +116,32 @@ DEFINE_PHP_LEAF(uint32, uint32_t, ZVAL_LONG, zend_long)
 DEFINE_PHP_LEAF(uint64, uint64_t, ZVAL_LONG, zend_long)
 DEFINE_PHP_LEAF(boolean, bool, ZVAL_BOOL, bool)
 
+static void php_leaf_float16(HashTable *array, const void *data, size_t offset, size_t stride, int size)
+{
+    const uint16_t *source = (const uint16_t *)data + offset;
+    ZEND_HASH_FILL_PACKED(array);
+    for (int i = 0; i < size; i++)
+    {
+        zval value;
+        ZVAL_DOUBLE(&value, float16_bits_to_float(source[(size_t)i * stride]));
+        ZEND_HASH_FILL_ADD(&value);
+    }
+    ZEND_HASH_FILL_END();
+}
+
+static void php_leaf_bfloat16(HashTable *array, const void *data, size_t offset, size_t stride, int size)
+{
+    const uint16_t *source = (const uint16_t *)data + offset;
+    ZEND_HASH_FILL_PACKED(array);
+    for (int i = 0; i < size; i++)
+    {
+        zval value;
+        ZVAL_DOUBLE(&value, bfloat16_bits_to_float(source[(size_t)i * stride]));
+        ZEND_HASH_FILL_ADD(&value);
+    }
+    ZEND_HASH_FILL_END();
+}
+
 static const php_leaf_writer php_leaf_writers[] = {
     [DTYPE_FLOAT32] = php_leaf_float32, [DTYPE_FLOAT64] = php_leaf_float64,
     [DTYPE_INT8] = php_leaf_int8, [DTYPE_INT16] = php_leaf_int16,
@@ -123,6 +149,7 @@ static const php_leaf_writer php_leaf_writers[] = {
     [DTYPE_UINT8] = php_leaf_uint8, [DTYPE_UINT16] = php_leaf_uint16,
     [DTYPE_UINT32] = php_leaf_uint32, [DTYPE_UINT64] = php_leaf_uint64,
     [DTYPE_BOOL] = php_leaf_boolean,
+    [DTYPE_FLOAT16] = php_leaf_float16, [DTYPE_BFLOAT16] = php_leaf_bfloat16,
 };
 
 static int build_php_array(zval *result, const void *data, int dim, const tensor_t *tensor,

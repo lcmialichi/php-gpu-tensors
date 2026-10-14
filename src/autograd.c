@@ -144,7 +144,7 @@ void autograd_mark_mutated(tensor_t *tensor)
 
 static int autograd_is_differentiable_type(dtype_t dtype)
 {
-    return dtype_is_floating(dtype);
+    return dtype == DTYPE_FLOAT32 || dtype == DTYPE_FLOAT64;
 }
 
 static void autograd_save_versions(autograd_node_t *node, tensor_t *result)
@@ -403,7 +403,7 @@ int autograd_set_requires_grad(tensor_t *tensor, int requires_grad)
     }
     if (requires_grad && !autograd_is_differentiable_type(tensor->dtype))
     {
-        CUDA_THROW_INVALID("Gradient tracking is only supported for floating-point tensors");
+        CUDA_THROW_INVALID("Gradient tracking currently supports float32 and float64 tensors");
         return 0;
     }
     if (tensor->grad_fn ||

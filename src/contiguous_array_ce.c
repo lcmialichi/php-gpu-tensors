@@ -133,7 +133,10 @@ static void contiguous_array_copy_values(zval *value, void *buffer, dtype_t dtyp
 size_t dtype_to_size(dtype_t dtype)
 {
     static const size_t sizes[] = {
-        [DTYPE_FLOAT32] = 4, [DTYPE_FLOAT64] = 8, [DTYPE_INT8] = 1, [DTYPE_INT16] = 2, [DTYPE_INT32] = 4, [DTYPE_INT64] = 8, [DTYPE_UINT8] = 1, [DTYPE_UINT16] = 2, [DTYPE_UINT32] = 4, [DTYPE_UINT64] = 8, [DTYPE_BOOL] = 1};
+        [DTYPE_FLOAT32] = 4, [DTYPE_FLOAT64] = 8, [DTYPE_INT8] = 1, [DTYPE_INT16] = 2,
+        [DTYPE_INT32] = 4, [DTYPE_INT64] = 8, [DTYPE_UINT8] = 1, [DTYPE_UINT16] = 2,
+        [DTYPE_UINT32] = 4, [DTYPE_UINT64] = 8, [DTYPE_BOOL] = 1,
+        [DTYPE_FLOAT16] = 2, [DTYPE_BFLOAT16] = 2};
     return (dtype < sizeof(sizes) / sizeof(size_t)) ? sizes[dtype] : 8;
 }
 
@@ -146,6 +149,12 @@ static zend_always_inline void get_value(void *ptr, zval *rv, dtype_t dtype)
         break;
     case DTYPE_FLOAT64:
         ZVAL_DOUBLE(rv, *(double *)ptr);
+        break;
+    case DTYPE_FLOAT16:
+        ZVAL_DOUBLE(rv, float16_bits_to_float(*(uint16_t *)ptr));
+        break;
+    case DTYPE_BFLOAT16:
+        ZVAL_DOUBLE(rv, bfloat16_bits_to_float(*(uint16_t *)ptr));
         break;
     case DTYPE_INT8:
         ZVAL_LONG(rv, (zend_long) * (int8_t *)ptr);

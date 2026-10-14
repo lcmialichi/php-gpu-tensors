@@ -18,6 +18,8 @@ typedef enum
     DTYPE_UINT32,
     DTYPE_UINT64,
     DTYPE_BOOL,
+    DTYPE_FLOAT16,
+    DTYPE_BFLOAT16,
     DTYPE_UNKNOWN,
     DTYPE_COUNT,
     DTYPE_LIST,
@@ -45,6 +47,7 @@ typedef struct
         int32_t i32;
         int64_t i64;
         int8_t i8;
+        uint16_t u16;
         bool b;
     } v;
     dtype_t dtype;
@@ -95,6 +98,16 @@ dtype_t promote_types_for_arithmetic(dtype_t a, dtype_t b, operation_type_t op);
 extern const dtype_info_t dtype_infos[DTYPE_COUNT];
 
 scalar_value_t cast_single_value(scalar_value_t value, dtype_t target_dtype);
+#ifdef __cplusplus
+extern "C" {
+#endif
+uint16_t float_to_float16_bits(float value);
+float float16_bits_to_float(uint16_t value);
+uint16_t float_to_bfloat16_bits(float value);
+float bfloat16_bits_to_float(uint16_t value);
+#ifdef __cplusplus
+}
+#endif
 const char *dtype_to_string(dtype_t dtype);
 size_t dtype_size(dtype_t dtype);
 int dtype_is_floating(dtype_t dtype);

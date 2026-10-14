@@ -9,6 +9,8 @@
 #include <unistd.h>
 #include "backend_info.h"
 #include <vector>
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
 #ifdef HAVE_CUBLASLT
 #include <cublasLt.h>
 #endif
@@ -65,6 +67,47 @@ struct MatMulParamsND
     int M, N, K;
     int total_batches;
 };
+
+template <typename T>
+struct LowMatMulParams
+{
+    const T *A, *B;
+    T *C;
+    int shapeA[MAX_DIMS], shapeB[MAX_DIMS], shapeC[MAX_DIMS];
+    size_t strideA[MAX_DIMS], strideB[MAX_DIMS], strideC[MAX_DIMS];
+    int ndA, ndB, ndC;
+    int M, N, K, total_batches;
+};
+
+template <typename T>
+__device__ float low_precision_to_float(T value);
+
+template <>
+__device__ float low_precision_to_float<__half>(__half value)
+{
+    return __half2float(value);
+}
+
+template <>
+__device__ float low_precision_to_float<__nv_bfloat16>(__nv_bfloat16 value)
+{
+    return __bfloat162float(value);
+}
+
+template <typename T>
+__device__ T low_precision_from_float(float value);
+
+template <>
+__device__ __half low_precision_from_float<__half>(float value)
+{
+    return __float2half_rn(value);
+}
+
+template <>
+__device__ __nv_bfloat16 low_precision_from_float<__nv_bfloat16>(float value)
+{
+    return __float2bfloat16_rn(value);
+}
 
 #ifdef HAVE_CUBLAS
 struct BlasContext
@@ -690,6 +733,175 @@ extern "C" int cuda_batched_matmul_nd_launcher(
     backend_info.builtin_matmul_calls++;
     backend_info.last_matmul = "builtin";
     return cuda_launch_status() == cudaSuccess;
+}
+
+template <typename T>
+static __global__ void low_precision_matmul_nd_kernel(LowMatMulParams<T> params)
+{
+    __shared__ float tile_a[TILE_SIZE][TILE_SIZE + 1];
+    __shared__ float tile_b[TILE_SIZE][TILE_SIZE + 1];
+
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int batch_id = blockIdx.z;
+    int global_row = blockIdx.y * TILE_SIZE + ty;
+    int global_col = blockIdx.x * TILE_SIZE + tx;
+    if (batch_id >= params.total_batches) return;
+
+    size_t batch_offset_a = 0, batch_offset_b = 0, batch_offset_c = 0;
+    int remaining = batch_id;
+    for (int i = params.ndC - 3; i >= 0; i--)
+    {
+        int coord = remaining % params.shapeC[i];
+        remaining /= params.shapeC[i];
+        batch_offset_c += (size_t)coord * params.strideC[i];
+        if (params.ndA > i + 2 && params.shapeA[i] > 1)
+            batch_offset_a += (size_t)coord * params.strideA[i];
+        if (params.ndB > i + 2 && params.shapeB[i] > 1)
+            batch_offset_b += (size_t)coord * params.strideB[i];
+    }
+
+    size_t a_row_stride = params.strideA[params.ndA - 2];
+    size_t a_col_stride = params.strideA[params.ndA - 1];
+    size_t b_row_stride = params.strideB[params.ndB - 2];
+    size_t b_col_stride = params.strideB[params.ndB - 1];
+    float sum = 0.0f;
+    for (int k_offset = 0; k_offset < params.K; k_offset += TILE_SIZE)
+    {
+        int a_col = k_offset + tx;
+        int b_row = k_offset + ty;
+        tile_a[ty][tx] = global_row < params.M && a_col < params.K
+            ? low_precision_to_float(params.A[batch_offset_a + (size_t)global_row * a_row_stride +
+                                             (size_t)a_col * a_col_stride]) : 0.0f;
+        tile_b[ty][tx] = b_row < params.K && global_col < params.N
+            ? low_precision_to_float(params.B[batch_offset_b + (size_t)b_row * b_row_stride +
+                                             (size_t)global_col * b_col_stride]) : 0.0f;
+        __syncthreads();
+#pragma unroll
+        for (int i = 0; i < TILE_SIZE; i++)
+            sum += tile_a[ty][i] * tile_b[i][tx];
+        __syncthreads();
+    }
+    if (global_row < params.M && global_col < params.N)
+    {
+        size_t output_index = batch_offset_c +
+            (size_t)global_row * params.strideC[params.ndC - 2] +
+            (size_t)global_col * params.strideC[params.ndC - 1];
+        params.C[output_index] = low_precision_from_float<T>(sum);
+    }
+}
+
+template <typename T>
+static int launch_low_precision_tiled(LowMatMulParams<T> &params, cudaStream_t stream)
+{
+    dim3 block(TILE_SIZE, TILE_SIZE);
+    dim3 grid = cuda_grid_2d(params.N, params.M, TILE_SIZE, TILE_SIZE, params.total_batches);
+    low_precision_matmul_nd_kernel<T><<<grid, block, 0, stream>>>(params);
+    backend_info.builtin_matmul_calls++;
+    backend_info.last_matmul = "builtin-low-precision";
+    return cuda_launch_status() == cudaSuccess;
+}
+
+template <typename T>
+static int launch_low_precision_matmul(LowMatMulParams<T> &params, dtype_t dtype,
+                                       cudaStream_t stream)
+{
+#ifdef HAVE_CUBLAS
+    double work = (double)params.M * params.N * params.K;
+    if (params.ndC == 2 && work >= MATMUL_BLAS_MIN_WORK &&
+        params.strideC[1] == 1 && params.strideC[0] == (size_t)params.N)
+    {
+        cublasOperation_t op_a, op_b;
+        int lda, ldb;
+        if (blas_matrix_layout(params.M, params.K, params.strideA[params.ndA - 2],
+                               params.strideA[params.ndA - 1], &op_a, &lda) &&
+            blas_matrix_layout(params.K, params.N, params.strideB[params.ndB - 2],
+                               params.strideB[params.ndB - 1], &op_b, &ldb))
+        {
+            cublasHandle_t handle = get_blas_handle();
+            if (!handle) return 0;
+            cublasStatus_t status = cublasSetStream(handle, stream);
+            backend_info.last_blas_status = status;
+            if (status != CUBLAS_STATUS_SUCCESS) return 0;
+            const float alpha = 1.0f, beta = 0.0f;
+            cudaDataType_t data_type = dtype == DTYPE_FLOAT16 ? CUDA_R_16F : CUDA_R_16BF;
+            status = cublasGemmEx(handle, op_b, op_a, params.N, params.M, params.K,
+                &alpha, params.B, data_type, ldb, params.A, data_type, lda,
+                &beta, params.C, data_type, params.N, CUBLAS_COMPUTE_32F,
+                CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+            backend_info.last_blas_status = status;
+            if (status == CUBLAS_STATUS_NOT_SUPPORTED ||
+                status == CUBLAS_STATUS_ARCH_MISMATCH)
+            {
+                backend_info.last_blas_status = CUBLAS_STATUS_SUCCESS;
+                return launch_low_precision_tiled(params, stream);
+            }
+            if (status != CUBLAS_STATUS_SUCCESS) return 0;
+            backend_info.blas_calls++;
+            backend_info.last_matmul = "cublas-low-precision";
+            return 1;
+        }
+    }
+#else
+    (void)dtype;
+#endif
+    return launch_low_precision_tiled(params, stream);
+}
+
+extern "C" int cuda_low_precision_matmul_nd_launcher(
+    void *a, void *b, void *c, dtype_t dtype,
+    int *shape_a, size_t *stride_a, int nd_a,
+    int *shape_b, size_t *stride_b, int nd_b,
+    int *shape_c, size_t *stride_c, int nd_c, cudaStream_t stream)
+{
+    if ((dtype != DTYPE_FLOAT16 && dtype != DTYPE_BFLOAT16) ||
+        nd_a < 2 || nd_b < 2 || nd_c < 2 ||
+        nd_a > MAX_DIMS || nd_b > MAX_DIMS || nd_c > MAX_DIMS)
+        return 0;
+
+    int rows = shape_a[nd_a - 2], inner = shape_a[nd_a - 1];
+    int cols = shape_b[nd_b - 1];
+    if (inner != shape_b[nd_b - 2] ||
+        shape_c[nd_c - 2] != rows || shape_c[nd_c - 1] != cols ||
+        rows < 0 || inner < 0 || cols < 0)
+        return 0;
+
+    int batches = 1;
+    for (int i = 0; i < nd_c - 2; i++)
+    {
+        if (shape_c[i] < 0 || (shape_c[i] && batches > 65535 / shape_c[i]))
+            return 0;
+        batches *= shape_c[i];
+    }
+    if (!rows || !cols || !batches) return 1;
+
+    if (dtype == DTYPE_FLOAT16)
+    {
+        LowMatMulParams<__half> params = {};
+        params.A = (const __half *)a; params.B = (const __half *)b; params.C = (__half *)c;
+        memcpy(params.shapeA, shape_a, nd_a * sizeof(int));
+        memcpy(params.strideA, stride_a, nd_a * sizeof(size_t));
+        memcpy(params.shapeB, shape_b, nd_b * sizeof(int));
+        memcpy(params.strideB, stride_b, nd_b * sizeof(size_t));
+        memcpy(params.shapeC, shape_c, nd_c * sizeof(int));
+        memcpy(params.strideC, stride_c, nd_c * sizeof(size_t));
+        params.ndA = nd_a; params.ndB = nd_b; params.ndC = nd_c;
+        params.M = rows; params.N = cols; params.K = inner; params.total_batches = batches;
+        return launch_low_precision_matmul(params, dtype, stream);
+    }
+
+    LowMatMulParams<__nv_bfloat16> params = {};
+    params.A = (const __nv_bfloat16 *)a; params.B = (const __nv_bfloat16 *)b;
+    params.C = (__nv_bfloat16 *)c;
+    memcpy(params.shapeA, shape_a, nd_a * sizeof(int));
+    memcpy(params.strideA, stride_a, nd_a * sizeof(size_t));
+    memcpy(params.shapeB, shape_b, nd_b * sizeof(int));
+    memcpy(params.strideB, stride_b, nd_b * sizeof(size_t));
+    memcpy(params.shapeC, shape_c, nd_c * sizeof(int));
+    memcpy(params.strideC, stride_c, nd_c * sizeof(size_t));
+    params.ndA = nd_a; params.ndB = nd_b; params.ndC = nd_c;
+    params.M = rows; params.N = cols; params.K = inner; params.total_batches = batches;
+    return launch_low_precision_matmul(params, dtype, stream);
 }
 
 extern "C" int cuda_matmul_launcher(float *a, float *b, float *c,

@@ -154,6 +154,12 @@ void fusion_request_shutdown(void)
 
 tensor_t *fusion_binary(tensor_t *a, tensor_t *b, operation_type_t op)
 {
+    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16 ||
+        b->dtype == DTYPE_FLOAT16 || b->dtype == DTYPE_BFLOAT16)
+    {
+        CUDA_THROW_INVALID("Fusion elementwise operations do not yet support float16 or bfloat16");
+        return NULL;
+    }
     int shape[MAX_DIMS], ndims, a_strides[MAX_DIMS], b_strides[MAX_DIMS];
     size_t total;
     if (!prepare_broadcast_operation(a, b, shape, &ndims, a_strides, b_strides, &total))
@@ -175,6 +181,11 @@ tensor_t *fusion_binary(tensor_t *a, tensor_t *b, operation_type_t op)
 
 tensor_t *fusion_scalar(tensor_t *a, scalar_value_t scalar, operation_type_t op, int inverse)
 {
+    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16)
+    {
+        CUDA_THROW_INVALID("Fusion scalar operations do not yet support float16 or bfloat16");
+        return NULL;
+    }
     dtype_t dtype = promote_scalar_for_arithmetic(a->dtype, scalar.dtype, op, scalar.is_neg);
     tensor_t *tensor = fusion_record(FUSION_SCALAR, a, NULL, op, a->shape, a->ndims, dtype);
     if (tensor)
@@ -188,6 +199,11 @@ tensor_t *fusion_scalar(tensor_t *a, scalar_value_t scalar, operation_type_t op,
 
 tensor_t *fusion_unary(tensor_t *a, operation_type_t op)
 {
+    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16)
+    {
+        CUDA_THROW_INVALID("Fusion unary operations do not yet support float16 or bfloat16");
+        return NULL;
+    }
     tensor_t *tensor = fusion_record(FUSION_UNARY, a, NULL, op, a->shape, a->ndims, a->dtype);
     if (tensor) autograd_record_unary(tensor, a, op);
     return tensor;
@@ -195,6 +211,12 @@ tensor_t *fusion_unary(tensor_t *a, operation_type_t op)
 
 tensor_t *fusion_cast(tensor_t *a, dtype_t dtype)
 {
+    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16 ||
+        dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16)
+    {
+        CUDA_THROW_INVALID("Low-precision dtype conversion is not supported inside Fusion");
+        return NULL;
+    }
     tensor_t *tensor = fusion_record(FUSION_CAST, a, NULL, OP_ADD, a->shape, a->ndims, dtype);
     if (tensor && !autograd_record_cast(tensor, a))
     {
@@ -206,6 +228,13 @@ tensor_t *fusion_cast(tensor_t *a, dtype_t dtype)
 
 tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y)
 {
+    if (condition->dtype == DTYPE_FLOAT16 || condition->dtype == DTYPE_BFLOAT16 ||
+        x->dtype == DTYPE_FLOAT16 || x->dtype == DTYPE_BFLOAT16 ||
+        y->dtype == DTYPE_FLOAT16 || y->dtype == DTYPE_BFLOAT16)
+    {
+        CUDA_THROW_INVALID("Fusion where does not yet support float16 or bfloat16");
+        return NULL;
+    }
     if (x->dtype != y->dtype)
     {
         CUDA_THROW_INVALID("where requires x and y to have the same dtype");
@@ -249,6 +278,11 @@ tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y)
 
 tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg)
 {
+    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16)
+    {
+        CUDA_THROW_INVALID("Fusion reductions do not yet support float16 or bfloat16");
+        return NULL;
+    }
     int shape[MAX_DIMS];
     size_t total;
     int ndims;
@@ -291,12 +325,14 @@ tensor_t *fusion_matmul(tensor_t *a, tensor_t *b)
         CUDA_THROW_INVALID("Matrix multiplication failed - incompatible dimensions");
         return NULL;
     }
-    if (a->dtype != DTYPE_FLOAT32 || b->dtype != DTYPE_FLOAT32)
+    if (a->dtype != b->dtype ||
+        (a->dtype != DTYPE_FLOAT32 && a->dtype != DTYPE_FLOAT16 &&
+         a->dtype != DTYPE_BFLOAT16))
     {
-        CUDA_THROW_INVALID("Fusion matmul currently requires float32 operands");
+        CUDA_THROW_INVALID("Fusion matmul requires matching float32, float16 or bfloat16 operands");
         return NULL;
     }
-    tensor_t *tensor = fusion_record(FUSION_MATMUL, a, b, OP_MATMUL, shape, ndims, DTYPE_FLOAT32);
+    tensor_t *tensor = fusion_record(FUSION_MATMUL, a, b, OP_MATMUL, shape, ndims, a->dtype);
     if (tensor) autograd_record_matmul(tensor, a, b);
     return tensor;
 }

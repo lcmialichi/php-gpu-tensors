@@ -16,6 +16,8 @@
     V(DTYPE_UINT16, uint16_t, u16) \
     V(DTYPE_UINT32, uint32_t, u32) \
     V(DTYPE_UINT64, uint64_t, u64) \
+    V(DTYPE_FLOAT16, uint16_t, u16) \
+    V(DTYPE_BFLOAT16, uint16_t, u16) \
     V(DTYPE_BOOL, bool, b)
 
 const dtype_info_t dtype_infos[DTYPE_COUNT] = {
@@ -37,7 +39,96 @@ const dtype_info_t dtype_infos[DTYPE_COUNT] = {
     [DTYPE_UINT16] = {.name = "uint16", .size = sizeof(uint16_t), .is_floating = 0, .is_integer = 1, .is_signed = 0, .is_unsigned = 1, .is_boolean = 0, .default_device = 0},
     [DTYPE_UINT32] = {.name = "uint32", .size = sizeof(uint32_t), .is_floating = 0, .is_integer = 1, .is_signed = 0, .is_unsigned = 1, .is_boolean = 0, .default_device = 0},
     [DTYPE_UINT64] = {.name = "uint64", .size = sizeof(uint64_t), .is_floating = 0, .is_integer = 1, .is_signed = 0, .is_unsigned = 1, .is_boolean = 0, .default_device = 0},
-    [DTYPE_BOOL] = {.name = "bool", .size = sizeof(bool), .is_floating = 0, .is_integer = 0, .is_signed = 0, .is_unsigned = 0, .is_boolean = 1, .default_device = 0}};
+    [DTYPE_BOOL] = {.name = "bool", .size = sizeof(bool), .is_floating = 0, .is_integer = 0, .is_signed = 0, .is_unsigned = 0, .is_boolean = 1, .default_device = 0},
+    [DTYPE_FLOAT16] = {.name = "float16", .size = sizeof(uint16_t), .is_floating = 1, .is_integer = 0, .is_signed = 1, .is_unsigned = 0, .is_boolean = 0, .default_device = 0},
+    [DTYPE_BFLOAT16] = {.name = "bfloat16", .size = sizeof(uint16_t), .is_floating = 1, .is_integer = 0, .is_signed = 1, .is_unsigned = 0, .is_boolean = 0, .default_device = 0}};
+
+uint16_t float_to_float16_bits(float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    uint32_t sign = (bits >> 16) & 0x8000;
+    uint32_t exponent = (bits >> 23) & 0xff;
+    uint32_t mantissa = bits & 0x7fffff;
+    if (exponent == 0xff)
+    {
+        uint32_t payload = mantissa >> 13;
+        if (mantissa && !payload) payload = 1;
+        return (uint16_t)(sign | 0x7c00 | payload);
+    }
+
+    int half_exponent = (int)exponent - 127 + 15;
+    if (half_exponent >= 31) return (uint16_t)(sign | 0x7c00);
+    if (half_exponent <= 0)
+    {
+        if (half_exponent < -10) return (uint16_t)sign;
+        mantissa |= 0x800000;
+        int shift = 14 - half_exponent;
+        uint32_t rounded = mantissa >> shift;
+        uint32_t remainder = mantissa & ((1u << shift) - 1);
+        uint32_t halfway = 1u << (shift - 1);
+        if (remainder > halfway || (remainder == halfway && (rounded & 1)))
+            rounded++;
+        return (uint16_t)(sign | rounded);
+    }
+
+    uint32_t rounded = ((uint32_t)half_exponent << 10) | (mantissa >> 13);
+    uint32_t remainder = mantissa & 0x1fff;
+    if (remainder > 0x1000 || (remainder == 0x1000 && (rounded & 1)))
+        rounded++;
+    return (uint16_t)(sign | rounded);
+}
+
+float float16_bits_to_float(uint16_t value)
+{
+    uint32_t sign = ((uint32_t)value & 0x8000) << 16;
+    uint32_t exponent = (value >> 10) & 0x1f;
+    uint32_t mantissa = value & 0x3ff;
+    uint32_t bits;
+    if (!exponent)
+    {
+        if (!mantissa)
+            bits = sign;
+        else
+        {
+            int unbiased = -14;
+            while (!(mantissa & 0x400))
+            {
+                mantissa <<= 1;
+                unbiased--;
+            }
+            bits = sign | ((uint32_t)(unbiased + 127) << 23) |
+                ((mantissa & 0x3ff) << 13);
+        }
+    }
+    else if (exponent == 0x1f)
+        bits = sign | 0x7f800000 | (mantissa << 13);
+    else
+        bits = sign | ((exponent - 15 + 127) << 23) | (mantissa << 13);
+    float result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
+uint16_t float_to_bfloat16_bits(float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    uint32_t exponent = bits & 0x7f800000;
+    uint32_t mantissa = bits & 0x007fffff;
+    if (exponent == 0x7f800000 && mantissa)
+        return (uint16_t)((bits >> 16) | 0x0040);
+    uint32_t least_significant = (bits >> 16) & 1;
+    return (uint16_t)((bits + 0x7fff + least_significant) >> 16);
+}
+
+float bfloat16_bits_to_float(uint16_t value)
+{
+    uint32_t bits = (uint32_t)value << 16;
+    float result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
 
 static void to_lower_case(char *dest, const char *src, size_t max_len)
 {
@@ -87,6 +178,15 @@ dtype_t dtype_from_string(const char *type_str)
         strcmp(lower, "f64") == 0)
     {
         return DTYPE_FLOAT64;
+    }
+    if (strcmp(lower, "float16") == 0 || strcmp(lower, "half") == 0 ||
+        strcmp(lower, "f16") == 0)
+    {
+        return DTYPE_FLOAT16;
+    }
+    if (strcmp(lower, "bfloat16") == 0 || strcmp(lower, "bf16") == 0)
+    {
+        return DTYPE_BFLOAT16;
     }
     if (strcmp(lower, "int8") == 0 || strcmp(lower, "char") == 0 ||
         strcmp(lower, "i8") == 0)
@@ -208,6 +308,8 @@ static const dtype_t type_hierarchy[] = {
     DTYPE_INT16,
     DTYPE_INT32,
     DTYPE_INT64,
+    DTYPE_FLOAT16,
+    DTYPE_BFLOAT16,
     DTYPE_FLOAT32,
     DTYPE_FLOAT64,
 };
@@ -230,6 +332,18 @@ dtype_t promote_types(dtype_t a, dtype_t b)
 {
     if (a == b)
         return a;
+    if (dtype_is_floating(a) && dtype_is_floating(b) &&
+        (a == DTYPE_FLOAT16 || a == DTYPE_BFLOAT16 ||
+         b == DTYPE_FLOAT16 || b == DTYPE_BFLOAT16))
+    {
+        if (a == DTYPE_FLOAT16 || a == DTYPE_BFLOAT16)
+        {
+            if (b == DTYPE_FLOAT16 || b == DTYPE_BFLOAT16)
+                return DTYPE_FLOAT32;
+            return b;
+        }
+        return a;
+    }
     if (a == DTYPE_BOOL)
         return b;
     if (b == DTYPE_BOOL)
@@ -296,6 +410,14 @@ scalar_value_t cast_single_value(scalar_value_t value, dtype_t target_dtype)
     case DTYPE_FLOAT32:
         new_val.v.f32 = (float)temp_val;
         new_val.is_neg = (new_val.v.f32 < 0);
+        break;
+    case DTYPE_FLOAT16:
+        new_val.v.u16 = float_to_float16_bits((float)temp_val);
+        new_val.is_neg = temp_val < 0;
+        break;
+    case DTYPE_BFLOAT16:
+        new_val.v.u16 = float_to_bfloat16_bits((float)temp_val);
+        new_val.is_neg = temp_val < 0;
         break;
     case DTYPE_FLOAT64:
         new_val.v.f64 = (double)temp_val;
@@ -465,6 +587,11 @@ int can_safely_cast_to(dtype_t from, dtype_t to)
     {
         return 1;
     }
+
+    if (from == DTYPE_FLOAT16 || from == DTYPE_BFLOAT16)
+        return to == DTYPE_FLOAT32 || to == DTYPE_FLOAT64;
+    if (to == DTYPE_FLOAT16 || to == DTYPE_BFLOAT16)
+        return 0;
 
     if (dtype_is_floating(from) && dtype_is_integer(to))
     {

@@ -4,6 +4,7 @@
 #include "reduction_ops.h"
 #include "zend_interfaces.h"
 #include "zend_fibers.h"
+#include "factory_kernels.h"
 #include <time.h>
 
 typedef struct
@@ -116,6 +117,27 @@ static int fusion_materialize_roots(tensor_t **roots, size_t count)
 tensor_t *fusion_cast_eager(tensor_t *a, dtype_t dtype)
 {
     if (!fusion_materialize(a)) return NULL;
+    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16 ||
+        dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16)
+    {
+        tensor_t *result = cuda_tensor_create_empty_with_dtype(a->shape, a->ndims, dtype);
+        if (!result) return NULL;
+        cudaError_t status = launch_tensor_cast(a->data, result->data, a->dtype,
+                                                dtype, a->total_size);
+        if (status != cudaSuccess)
+        {
+            cuda_tensor_destroy(result);
+            CUDA_THROW_RUNTIME("Low-precision dtype conversion failed: %s",
+                               cudaGetErrorString(status));
+            return NULL;
+        }
+        if (!autograd_record_cast(result, a))
+        {
+            cuda_tensor_destroy(result);
+            return NULL;
+        }
+        return result;
+    }
     fusion_scope *scope = ecalloc(1, sizeof(fusion_scope));
     CUDA_G(fusion_scope) = scope;
     tensor_t *result = fusion_cast(a, dtype);

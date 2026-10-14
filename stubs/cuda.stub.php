@@ -159,7 +159,7 @@ class ContiguousArray
     public function getNdims(): int {}
     /** Total number of elements. */
     public function getSize(): int {}
-    /** Element dtype name, e.g. float32. */
+    /** Element dtype name, e.g. float32, float16 or bfloat16. */
     public function getDtype(): string {}
     /** Bytes per element. */
     public function getElementSize(): int {}
@@ -183,7 +183,10 @@ class CudaArray
 {
     /** Import row-major little-endian packed bytes matching shape and dtype. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32'): CudaArray {}
-    /** Copy a flat numeric PHP array directly into the requested row-major shape. */
+    /**
+     * Copy a flat numeric PHP array directly into the requested row-major shape.
+     * Supports float16 and bfloat16 storage.
+     */
     public static function fromFlatArray(array $values, array $shape, ?string $dtype = 'float32'): CudaArray {}
     /** Read raw packed bytes (not .npy) into GPU storage. */
     public static function fromFile(string $path, array $shape, ?string $dtype = 'float32'): CudaArray {}
@@ -222,7 +225,11 @@ class CudaArray
     public function minimum(CudaArray|float|int|bool $other): CudaArray {}
     /** Clamp values to optional inclusive scalar bounds. */
     public function clamp(float|int|null $min = null, float|int|null $max = null): CudaArray {}
-    /** Matrix multiply (2D or batched); cuBLAS is optional when available. */
+    /**
+     * Matrix multiply (2D or batched). Matching float32, float16 and bfloat16
+     * operands are supported; low-precision products accumulate in float32
+     * and retain the operand dtype.
+     */
     public function matmul(CudaArray $other): CudaArray {}
     /** Permute axes; omitting axis reverses their order. */
     public function transpose(?array $axis = null): CudaArray {}
@@ -280,7 +287,7 @@ class CudaArray
     public function var(?int $axis = null, int $correction = 0): CudaArray {}
     /** Square root of var(). */
     public function std(?int $axis = null, int $correction = 0): CudaArray {}
-    /** Numerically stable softmax across an axis; defaults to the last axis. */
+    /** Numerically stable softmax; low-precision input is widened to float32. */
     public function softmax(int $axis = -1): CudaArray {}
     /**
      * Normalize across explicit axes, promoting integer input to float64.
@@ -337,7 +344,7 @@ class CudaArray
      * @throws RuntimeException If compilation or GPU execution fails.
      */
     public function astype(string $dtype): CudaArray {}
-    /** Element dtype name, e.g. float32. */
+    /** Element dtype name, e.g. float32, float16 or bfloat16. */
     public function dtype(): string {}
     /** Enable or disable reverse-mode gradient tracking on a leaf tensor. */
     public function requiresGrad(bool $requiresGrad = true): CudaArray {}

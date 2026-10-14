@@ -164,7 +164,9 @@ mistaken for successful GPU validation.
 
 `CudaArray` stores tensor data on the GPU. The constructor accepts rectangular
 nested PHP arrays; `fromFlatArray()` accepts flat values plus an explicit shape.
-The default dtype is `float32`.
+The default dtype is `float32`. Storage and transfer also support `float16` and
+`bfloat16`; these low-precision dtypes are currently intended for matrix
+multiplication and conversion rather than general tensor arithmetic.
 
 ```php
 use Cuda\CudaArray;
@@ -194,6 +196,11 @@ echo $output->dtype();       // float32
   `ContiguousArray` supports packed buffers and optional pinned host memory.
 - `item()` transfers one value from a tensor containing exactly one element.
 
+`float16` and `bfloat16` values can be created from PHP numeric arrays, packed
+buffers, `zeros()`, `ones()`, `full()` and `rand()`. They can be exported with
+`toArray()`, `toBuffer()` and `toHost()`, and safely widened to `float32` or
+`float64` with `astype()`.
+
 For large inputs and outputs, packed data avoids much of the per-value PHP
 conversion cost. Keep intermediate tensors on the GPU when possible.
 
@@ -206,13 +213,15 @@ conversion cost. Keep intermediate tensors on the GPU when possible.
 - **Elementwise math:** `sqrt()`, `exp()`, `log()`, `sin()`, `cos()`, `tan()`,
   `abs()`, `neg()`, `floor()`, `ceil()` and `round()`.
 - **Normalization:** `softmax()` computes stable probabilities along an axis
-  (last axis by default), preserving floating dtypes and promoting integer and
-  boolean inputs to `float64`. `layerNorm()` normalizes across an explicit
-  axis list; optional `scale` and `bias` shapes follow that list's order.
+  (last axis by default), preserving `float32`/`float64`, widening low-
+  precision inputs to `float32`, and promoting integer and boolean inputs to
+  `float64`. `layerNorm()` normalizes across an explicit axis list; optional
+  `scale` and `bias` shapes follow that list's order.
 - **Comparisons and selection:** `gt()`, `lt()`, `eq()`, `ne()`, `ge()`,
   `le()`, `where()`, `maximum()`, `minimum()` and `clamp()`.
 - **Matrix products:** `matmul()`, including supported batched and broadcast
-  layouts.
+  layouts. Matching `float32`, `float16` and `bfloat16` inputs are supported;
+  low-precision products accumulate in `float32` and return the input dtype.
 - **Reductions:** `sum()`, `mean()`, `min()`, `max()`, `prod()`, `argMin()`,
   `argMax()`, `all()`, `any()`, `var()` and `std()`. Reductions can operate
   globally or on an axis where supported.
@@ -231,6 +240,15 @@ finite positive epsilon. Optional floating-point `scale` and `bias` tensors
 must match the normalized dimensions in axis-list order. It preserves
 `float32`/`float64`, promotes integer and boolean input to `float64`, and uses
 `float64` when either affine parameter is `float64`.
+
+Low-precision `matmul()` uses cuBLAS for eligible 2D workloads and a tiled CUDA
+kernel otherwise, including batched layouts. `float16` and `bfloat16` matmul
+outputs retain the operand dtype after `float32` accumulation. The global
+`cuda_set_matmul_precision()` setting applies to `float32` matmul only.
+Elementwise arithmetic, general reductions, `where()`, indexed operations and
+low-precision autograd are not yet supported for these dtypes and report an
+explicit error. `softmax()` and `layerNorm()` widen low-precision inputs to
+`float32` and return `float32` results.
 
 ### Shape operations, views and indexing
 
@@ -573,7 +591,10 @@ Current limits:
 - Autograd supports a documented subset of operations and floating-point
   tensors; unsupported gradient rules fail explicitly.
 - `astype()` allows safe conversions; autograd tracks floating-point casts.
-- Fusion matmul currently requires `float32`; powers are native boundaries.
+- Fusion matmul supports matching `float32`, `float16` and `bfloat16` operands;
+  low-precision products accumulate in `float32` and retain the input dtype.
+  Low-precision elementwise Fusion operations and casts are not supported yet;
+  powers are native boundaries.
 - `gather()` and `scatterAdd()` are eager-only. `scatterAdd()` supports
   `float32` and `float64`.
 - cuDNN is optional and its CNN inference API is not part of autograd or Fusion.

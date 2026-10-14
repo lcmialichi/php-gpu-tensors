@@ -98,15 +98,21 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
     }
     if (node->kind == FUSION_MATMUL)
     {
-        int ok = a->ndims == 2 && b->ndims == 2
-            ? cuda_matmul_launcher(a->data, b->data, result->data,
-                                  a->shape[0], a->shape[1], b->shape[1],
-                                  a->strides[0], a->strides[1], b->strides[0], b->strides[1],
-                                  result->strides[0], result->strides[1], (cudaStream_t)stream)
-            : cuda_batched_matmul_nd_launcher(a->data, b->data, result->data,
-                                             a->shape, a->strides, a->ndims,
-                                             b->shape, b->strides, b->ndims,
-                                             result->shape, result->strides, result->ndims, (cudaStream_t)stream);
+        int ok = a->dtype == DTYPE_FLOAT32
+            ? (a->ndims == 2 && b->ndims == 2
+                ? cuda_matmul_launcher(a->data, b->data, result->data,
+                                      a->shape[0], a->shape[1], b->shape[1],
+                                      a->strides[0], a->strides[1], b->strides[0], b->strides[1],
+                                      result->strides[0], result->strides[1], (cudaStream_t)stream)
+                : cuda_batched_matmul_nd_launcher(a->data, b->data, result->data,
+                                                 a->shape, a->strides, a->ndims,
+                                                 b->shape, b->strides, b->ndims,
+                                                 result->shape, result->strides, result->ndims, (cudaStream_t)stream))
+            : cuda_low_precision_matmul_nd_launcher(a->data, b->data, result->data, a->dtype,
+                                                  a->shape, a->strides, a->ndims,
+                                                  b->shape, b->strides, b->ndims,
+                                                  result->shape, result->strides, result->ndims,
+                                                  (cudaStream_t)stream);
         if (!ok)
         {
             cuda_backend_info info = {0};

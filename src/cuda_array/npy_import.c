@@ -102,6 +102,7 @@ static dtype_t npy_dtype(const char *descr)
 
     if (strcmp(descr + 1, "f4") == 0) return DTYPE_FLOAT32;
     if (strcmp(descr + 1, "f8") == 0) return DTYPE_FLOAT64;
+    if (strcmp(descr + 1, "f2") == 0) return DTYPE_FLOAT16;
     if (strcmp(descr + 1, "i1") == 0) return DTYPE_INT8;
     if (strcmp(descr + 1, "i2") == 0) return DTYPE_INT16;
     if (strcmp(descr + 1, "i4") == 0) return DTYPE_INT32;

@@ -97,6 +97,52 @@ DEFINE_FLATTENER(uint32, uint32_t)
 DEFINE_FLATTENER(uint64, uint64_t)
 DEFINE_FLATTENER(_bool, bool)
 
+#define DEFINE_LOW_PRECISION_FLATTENER(type_name, converter) \
+    static int flatten_php_array_to_##type_name(zval *data, uint16_t **buffer, \
+                                                const int *shape, int ndims, int dim, \
+                                                php_import_sink *sink, const void *limit) \
+    { \
+        ZVAL_DEREF(data); \
+        if (Z_TYPE_P(data) != IS_ARRAY || zend_hash_num_elements(Z_ARRVAL_P(data)) != (uint32_t)shape[dim]) \
+            return 0; \
+        HashTable *ht = Z_ARRVAL_P(data); \
+        zval *current; \
+        if (dim == ndims - 1) { \
+            uint16_t *destination = *buffer; \
+            if (HT_IS_PACKED(ht) && HT_IS_WITHOUT_HOLES(ht)) { \
+                PHP_CUDA_PACKED_FOREACH_VAL(ht, current) { \
+                    float number; \
+                    COPY_NUMERIC_VALUE(float, current, &number); \
+                    *destination++ = converter(number); \
+                    if (UNEXPECTED(destination == (const uint16_t *)limit)) { \
+                        if (!php_import_flush(sink, (const char *)limit - (const char *)sink->data)) return 0; \
+                        destination = sink->data; \
+                    } \
+                } ZEND_HASH_FOREACH_END(); \
+            } else { \
+                ZEND_HASH_FOREACH_VAL(ht, current) { \
+                    float number; \
+                    COPY_NUMERIC_VALUE(float, current, &number); \
+                    *destination++ = converter(number); \
+                    if (UNEXPECTED(destination == (const uint16_t *)limit)) { \
+                        if (!php_import_flush(sink, (const char *)limit - (const char *)sink->data)) return 0; \
+                        destination = sink->data; \
+                    } \
+                } ZEND_HASH_FOREACH_END(); \
+            } \
+            *buffer = destination; \
+            return 1; \
+        } \
+        ZEND_HASH_FOREACH_VAL(ht, current) { \
+            if (!flatten_php_array_to_##type_name(current, buffer, shape, ndims, dim + 1, sink, limit)) \
+                return 0; \
+        } ZEND_HASH_FOREACH_END(); \
+        return 1; \
+    }
+
+DEFINE_LOW_PRECISION_FLATTENER(float16, float_to_float16_bits)
+DEFINE_LOW_PRECISION_FLATTENER(bfloat16, float_to_bfloat16_bits)
+
 static cudaError_t cuda_copy_host_buffer_to_gpu(void *gpu_data, const void *host_data, size_t byte_count);
 
 tensor_t *tensor_cast_string(tensor_t *tensor, const char *new_dtype_str)
@@ -194,6 +240,15 @@ static tensor_t *create_tensor_from_php_array_impl(zval *data, dtype_t dtype,
         FLATTEN_CASE(DTYPE_UINT32, uint32, uint32_t)
         FLATTEN_CASE(DTYPE_UINT64, uint64, uint64_t)
         FLATTEN_CASE(DTYPE_BOOL, _bool, bool)
+        case DTYPE_FLOAT16:
+        case DTYPE_BFLOAT16: {
+            uint16_t *destination = buffer;
+            valid = dtype == DTYPE_FLOAT16
+                ? flatten_php_array_to_float16(data, &destination, shape, ndims, 0, &sink, limit)
+                : flatten_php_array_to_bfloat16(data, &destination, shape, ndims, 0, &sink, limit);
+            end = destination;
+            break;
+        }
         default: break;
     }
 #undef FLATTEN_CASE
@@ -292,6 +347,8 @@ int cuda_tensor_get_scalar_value(tensor_t *t, float *result_val, int index)
     {
         case DTYPE_FLOAT32: *result_val = value.f32; break;
         case DTYPE_FLOAT64: *result_val = (float)value.f64; break;
+        case DTYPE_FLOAT16: *result_val = float16_bits_to_float(value.u16); break;
+        case DTYPE_BFLOAT16: *result_val = bfloat16_bits_to_float(value.u16); break;
         case DTYPE_INT8: *result_val = (float)value.i8; break;
         case DTYPE_INT16: *result_val = (float)value.i16; break;
         case DTYPE_INT32: *result_val = (float)value.i32; break;
@@ -600,17 +657,25 @@ static cudaError_t cuda_copy_host_buffer_to_gpu(void *gpu_data, const void *host
 
 tensor_t *cuda_tensor_clone(tensor_t *base_tensor)
 {
-    if (base_tensor == NULL)
-    {
-        return NULL;
-    }
+    if (!base_tensor) return NULL;
+    tensor_t *new_tensor = cuda_tensor_create_empty_dtype(
+        base_tensor->shape, base_tensor->ndims, base_tensor->dtype);
+    if (!new_tensor) return NULL;
 
-    tensor_t *new_tensor = cuda_tensor_create(base_tensor->shape, base_tensor->ndims, base_tensor->data, base_tensor->dtype);
-
-    if (new_tensor == NULL || new_tensor->data == NULL)
+    cudaError_t status;
+    if (is_contiguous(base_tensor))
+        status = cudaMemcpy(new_tensor->data, base_tensor->data,
+                            base_tensor->total_size * base_tensor->element_size,
+                            cudaMemcpyDeviceToDevice);
+    else
+        status = launch_pack_strided(base_tensor->data, new_tensor->data,
+                                     base_tensor->total_size, base_tensor->element_size,
+                                     base_tensor->shape, base_tensor->strides,
+                                     base_tensor->ndims);
+    if (status != cudaSuccess)
     {
-        if (new_tensor)
-            cuda_tensor_destroy(new_tensor);
+        cuda_tensor_destroy(new_tensor);
+        CUDA_THROW_RUNTIME("Tensor clone failed: %s", cudaGetErrorString(status));
         return NULL;
     }
     return new_tensor;

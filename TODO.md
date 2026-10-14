@@ -18,9 +18,9 @@ consistent public API across the PHP extension.
   stable behavior.
 - [x] Add general tensor `layerNorm()` with explicit normalized axes,
   epsilon and optional scale/bias tensors.
-- [ ] Extend matrix operations to FP16 and BF16 where the CUDA backend supports
+- [x] Extend matrix operations to FP16 and BF16 where the CUDA backend supports
   them; document accumulation and output dtype rules.
-- [ ] Add tests for dtype conversions, overflow/underflow and numerical
+- [x] Add tests for dtype conversions, overflow/underflow and numerical
   tolerances.
 
 ## 3. Complete autograd and Fusion coverage

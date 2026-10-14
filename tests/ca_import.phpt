@@ -21,6 +21,18 @@ try {
     file_put_contents($npy, "\x93NUMPY" . chr(1) . chr(0) . pack('v', strlen($header)) . $header . $bytes);
     var_dump(Cuda\CudaArray::fromNpy($npy)->toArray());
 
+    $halfBytes = pack('v*', 0x3c00, 0x4000, 0x4200, 0x4400);
+    $halfHeader = "{'descr': '<f2', 'fortran_order': False, 'shape': (2, 2), }";
+    $padding = (16 - ((10 + strlen($halfHeader) + 1) % 16)) % 16;
+    $halfHeader .= str_repeat(' ', $padding) . "\n";
+    file_put_contents($npy, "\x93NUMPY" . chr(1) . chr(0) .
+        pack('v', strlen($halfHeader)) . $halfHeader . $halfBytes);
+    $halfNpy = Cuda\CudaArray::fromNpy($npy);
+    if ($halfNpy->dtype() !== 'float16' ||
+        $halfNpy->toArray() !== [[1.0, 2.0], [3.0, 4.0]]) {
+        throw new RuntimeException('FP16 NumPy import failed');
+    }
+
     try {
         Cuda\CudaArray::fromBuffer($bytes, [3, 2]);
     } catch (Cuda\InvalidArgumentException $error) {

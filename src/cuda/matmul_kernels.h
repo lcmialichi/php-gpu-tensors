@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <cuda_runtime_api.h>
+#include "../data_types.h"
 
 enum {
     CUDA_MATMUL_PRECISION_FP32_STRICT = 0,
@@ -45,6 +46,12 @@ int cuda_matmul_launcher(float *a, float *b, float *c,
 /* Shape and stride pointers refer to host metadata. */
 int cuda_batched_matmul_nd_launcher(
     float *a, float *b, float *c,
+    int *shape_a, size_t *stride_a, int nd_a,
+    int *shape_b, size_t *stride_b, int nd_b,
+    int *shape_c, size_t *stride_c, int nd_c, cudaStream_t stream);
+
+int cuda_low_precision_matmul_nd_launcher(
+    void *a, void *b, void *c, dtype_t dtype,
     int *shape_a, size_t *stride_a, int nd_a,
     int *shape_b, size_t *stride_b, int nd_b,
     int *shape_c, size_t *stride_c, int nd_c, cudaStream_t stream);

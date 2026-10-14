@@ -24,6 +24,11 @@ extern "C"
         scalar_value_t value,
         size_t total_elements);
 
+    cudaError_t launch_tensor_cast(
+        const void *source, void *destination,
+        dtype_t source_dtype, dtype_t destination_dtype,
+        size_t total_elements);
+
     void launch_scale_range_kernel(
         float *values,
         void *base,
