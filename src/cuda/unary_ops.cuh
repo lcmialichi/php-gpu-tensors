@@ -2,6 +2,7 @@
 #define UNARY_OPS_CUH
 
 #include <cuda_runtime.h>
+#include "cast.cuh"
 #include "launch_config.cuh"
 #include <string.h>
 
@@ -12,6 +13,31 @@ struct UnaryParams
     size_t strides[MAX_DIMS];
     int ndims;
 };
+
+template <typename LowT, typename Op>
+__global__ void unary_kernel_low_precision(
+    const LowT *base,
+    LowT *result,
+    size_t base_offset,
+    size_t total_size,
+    UnaryParams params)
+{
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total_size)
+        return;
+
+    size_t offset = 0;
+    size_t remaining = idx;
+    for (int d = params.ndims - 1; d >= 0; d--)
+    {
+        size_t coord = remaining % params.shape[d];
+        remaining /= params.shape[d];
+        offset += coord * params.strides[d];
+    }
+
+    float value = low_precision_to_float(base[base_offset + offset]);
+    result[idx] = low_precision_from_float<LowT>(Op::apply(value));
+}
 
 template <typename T, typename Op>
 __global__ void unary_kernel_strided(
@@ -64,6 +90,28 @@ void launch_unary_op_kernel(
         base_offset,
         total_size,
         h_params);
+}
+
+template <typename LowT, typename Op>
+void launch_unary_op_low_precision_kernel(
+    LowT *base,
+    LowT *result,
+    size_t base_offset,
+    int *shape,
+    size_t *strides,
+    int ndims,
+    size_t total_size)
+{
+    if (total_size == 0)
+        return;
+
+    UnaryParams h_params = {};
+    memcpy(h_params.shape, shape, ndims * sizeof(int));
+    memcpy(h_params.strides, strides, ndims * sizeof(size_t));
+    h_params.ndims = ndims;
+
+    unary_kernel_low_precision<LowT, Op><<<cuda_grid_1d(total_size), 256>>>(
+        base, result, base_offset, total_size, h_params);
 }
 
 #endif

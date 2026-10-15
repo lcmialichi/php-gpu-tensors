@@ -47,8 +47,9 @@ echo "native async completed\n";
 check($native->run($a)->toArray() === [34.0]);
 echo "native replay preserved\n";
 $power = Fusion::compile(fn($x) => $x->power(2) + 1, [$a]);
-try { $power->runAsync($a); echo "MISSED\n"; }
-catch (Cuda\RuntimeException $error) { echo "unsupported power async rejected\n"; }
+$powerResult = $power->runAsync($a)->wait()->toArray();
+check($powerResult === ($a->power(2) + 1)->toArray());
+echo "fused power async completed\n";
 ?>
 --EXPECT--
 mutation blocked
@@ -57,4 +58,4 @@ concurrent replay completed
 destruction waited
 native async completed
 native replay preserved
-unsupported power async rejected
+fused power async completed

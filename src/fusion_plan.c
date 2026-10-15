@@ -13,7 +13,8 @@ int fusion_inline(tensor_t *tensor)
     return (node->kind == FUSION_BINARY || node->kind == FUSION_SCALAR) &&
         (node->op == OP_ADD || node->op == OP_SUB || node->op == OP_MUL ||
          node->op == OP_DIV || node->op == OP_MAXIMUM || node->op == OP_MINIMUM ||
-         (node->op >= OP_GT && node->op <= OP_LE));
+         (node->op >= OP_GT && node->op <= OP_LE) ||
+         (node->op == OP_POW && dtype_is_floating(tensor->dtype)));
 }
 
 size_t fusion_find(fusion_plan *plan, tensor_t *tensor)
@@ -53,7 +54,8 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
             int cost = node->kind == FUSION_UNARY ? 4 :
                        node->kind == FUSION_WHERE ? 3 :
                        node->kind == FUSION_SLICE_SCATTER ? 4 :
-                       node->kind == FUSION_VIEW ? 2 : 1;
+                       node->kind == FUSION_VIEW ? 2 :
+                       node->op == OP_POW ? 7 : 1;
             if (tensor->dtype == DTYPE_FLOAT64) cost *= 2;
             if (a != SIZE_MAX && !plan->items[a].cut) cost += plan->items[a].cost;
             if (b != SIZE_MAX && !plan->items[b].cut) cost += plan->items[b].cost;
@@ -67,7 +69,8 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
                         plan->items[children[i]].cut = 1;
                         plan->items[children[i]].reason = "expression-cost";
                     }
-                cost = node->kind == FUSION_UNARY ? 4 : 1;
+                cost = node->kind == FUSION_UNARY ? 4 :
+                    node->op == OP_POW ? 7 : 1;
             }
             plan->items[id].cost = cost;
         }
@@ -135,6 +138,14 @@ void fusion_plan_free(fusion_plan *plan)
         if (context_error != CUDA_SUCCESS) pushed = 0;
     }
     fusion_cleanup_error("Selecting module context", context_error);
+    if (plan->indexed_validation_error)
+    {
+        cudaError_t status = cudaFree(plan->indexed_validation_error);
+        if (status != cudaSuccess)
+            php_error_docref(NULL, E_WARNING,
+                             "Releasing Fusion index validation status failed: %s",
+                             cudaGetErrorString(status));
+    }
     if (plan->graph_exec) fusion_cleanup_error("Destroying graph executable", cuGraphExecDestroy(plan->graph_exec));
     if (plan->cuda_graph) fusion_cleanup_error("Destroying CUDA graph", cuGraphDestroy(plan->cuda_graph));
     if (plan->graph_nodes) efree(plan->graph_nodes);

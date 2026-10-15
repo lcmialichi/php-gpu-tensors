@@ -15,6 +15,27 @@ extern "C" void launch_unary_op(
     int ndims,
     size_t total_size)
 {
+    if (result_dtype == DTYPE_FLOAT16)
+    {
+        typedef float scalar_t;
+        DISPATCH_UNARY_OP(op_type, {
+            launch_unary_op_low_precision_kernel<__half, bin_op_t>(
+                (__half *)base, (__half *)result, base_offset,
+                shape, strides, ndims, total_size);
+        });
+        return;
+    }
+    if (result_dtype == DTYPE_BFLOAT16)
+    {
+        typedef float scalar_t;
+        DISPATCH_UNARY_OP(op_type, {
+            launch_unary_op_low_precision_kernel<__nv_bfloat16, bin_op_t>(
+                (__nv_bfloat16 *)base, (__nv_bfloat16 *)result, base_offset,
+                shape, strides, ndims, total_size);
+        });
+        return;
+    }
+
     DISPATCH_DTYPE(result_dtype, {
         DISPATCH_UNARY_OP(op_type, {
             launch_unary_op_kernel<scalar_t, bin_op_t>(

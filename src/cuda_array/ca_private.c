@@ -26,11 +26,6 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
     if (!b) return NULL;
-    if (is_low_precision_dtype(a->dtype) || is_low_precision_dtype(b->dtype))
-    {
-        CUDA_THROW_INVALID("Elementwise tensor operations do not yet support float16 or bfloat16");
-        return NULL;
-    }
     if (fusion_active()) return fusion_binary(a, b, operation_type);
     if (!fusion_materialize(a) || !fusion_materialize(b)) return NULL;
 
@@ -103,11 +98,6 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
 tensor_t *cuda_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t operation_type)
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
-    if (is_low_precision_dtype(a->dtype))
-    {
-        CUDA_THROW_INVALID("Elementwise scalar operations do not yet support float16 or bfloat16");
-        return NULL;
-    }
     if (fusion_active()) return fusion_scalar(a, scalar, operation_type, 0);
     if (!fusion_materialize(a)) return NULL;
     if (!is_contiguous(a) && !lazy_copy_metadata_to_gpu(a))
@@ -153,11 +143,6 @@ tensor_t *cuda_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t op
 tensor_t *cuda_inv_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t operation_type)
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
-    if (is_low_precision_dtype(a->dtype))
-    {
-        CUDA_THROW_INVALID("Elementwise scalar operations do not yet support float16 or bfloat16");
-        return NULL;
-    }
     if (fusion_active()) return fusion_scalar(a, scalar, operation_type, 1);
     if (!fusion_materialize(a)) return NULL;
     if (!is_contiguous(a) && !lazy_copy_metadata_to_gpu(a))
@@ -205,11 +190,6 @@ tensor_t *cuda_inv_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_
 tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
 {
     CUDA_CHECK_AND_RETURN_NULL(a);
-    if (is_low_precision_dtype(a->dtype))
-    {
-        CUDA_THROW_INVALID("Unary operations do not yet support float16 or bfloat16");
-        return NULL;
-    }
     if (fusion_active()) return fusion_unary(a, operation_type);
     if (!fusion_materialize(a)) return NULL;
 
@@ -220,7 +200,8 @@ tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
         return NULL;
     }
 
-    launch_unary_op(a->data, result->data, 0, a->dtype, operation_type, a->shape, a->strides, a->ndims, a->total_size);
+    launch_unary_op(a->data, result->data, a->offset, a->dtype, operation_type,
+                    a->shape, a->strides, a->ndims, a->total_size);
     cudaError_t status = cudaGetLastError();
     if (status != cudaSuccess)
     {
@@ -584,7 +565,7 @@ tensor_t *cuda_tensor_gather(tensor_t *input, tensor_t *indices, int axis)
     if (!result) return NULL;
     status = cuda_launch_gather(input->data, indices->data, result->data, input->dtype,
         input->shape, input->strides, indices->shape, indices->strides,
-        input->ndims, axis, indices->total_size);
+        input->ndims, axis, indices->total_size, NULL);
     if (status != cudaSuccess)
     {
         cuda_tensor_destroy(result);
@@ -629,7 +610,8 @@ tensor_t *cuda_tensor_scatter_add(tensor_t *input, tensor_t *indices,
     if (status == cudaSuccess)
         status = cuda_launch_scatter_add(indices->data, updates->data, result->data,
             input->dtype, indices->shape, result->strides, indices->strides,
-            updates->strides, input->ndims, axis, input->shape[axis], updates->total_size);
+            updates->strides, input->ndims, axis, input->shape[axis],
+            updates->total_size, NULL);
     if (status != cudaSuccess)
     {
         cuda_tensor_destroy(result);

@@ -4,9 +4,29 @@ static const char *fusion_ctype(dtype_t dtype)
 {
     static const char *types[] = {"float", "double", "signed char", "short", "int", "long long",
         "unsigned char", "unsigned short", "unsigned int", "unsigned long long", "bool"};
+    if (dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16) return "float";
     ZEND_ASSERT(dtype <= DTYPE_BOOL);
     return types[dtype];
 }
+
+static const char *fusion_storage_type(dtype_t dtype)
+{
+    if (dtype == DTYPE_FLOAT16) return "__half";
+    if (dtype == DTYPE_BFLOAT16) return "__nv_bfloat16";
+    return fusion_ctype(dtype);
+}
+
+static const char *fusion_low_precision_to_float(dtype_t dtype)
+{
+    return dtype == DTYPE_FLOAT16 ? "__half2float" : "__bfloat162float";
+}
+
+static const char *fusion_float_to_low_precision(dtype_t dtype)
+{
+    return dtype == DTYPE_FLOAT16 ? "__float2half_rn" : "__float2bfloat16_rn";
+}
+
+static void fusion_scalar_source(smart_str *source, scalar_value_t scalar);
 
 static const char *fusion_operator(operation_type_t op)
 {
@@ -26,6 +46,50 @@ static const char *fusion_operator(operation_type_t op)
         case OP_LE: return "<=";
         default: ZEND_ASSERT(0); return NULL;
     }
+}
+
+static void fusion_power_helpers(smart_str *source)
+{
+    smart_str_appends(source,
+        "template<typename T> __device__ __forceinline__ T fusion_integer_power(T base,int exponent){"
+        "T result=(T)1;while(exponent>0){if(exponent&1)result*=base;base*=base;exponent>>=1;}return result;}\n"
+        "__device__ __forceinline__ float fusion_power(float a,float b){"
+        "if(b==floorf(b)){int exponent=static_cast<int>(b);"
+        "if(exponent==0)return 1.0f;if(exponent==1)return a;"
+        "if(exponent==2)return a*a;if(exponent==3)return a*a*a;"
+        "if(exponent<0)return 1.0f/fusion_integer_power(a,-exponent);"
+        "return fusion_integer_power(a,exponent);}return powf(a,b);}\n"
+        "__device__ __forceinline__ double fusion_power(double a,double b){"
+        "if(b==floor(b)){int exponent=static_cast<int>(b);"
+        "if(exponent==0)return 1.0;if(exponent==1)return a;"
+        "if(exponent==2)return a*a;if(exponent==3)return a*a*a;"
+        "if(exponent<0)return 1.0/fusion_integer_power(a,-exponent);"
+        "return fusion_integer_power(a,exponent);}return pow(a,b);}\n");
+}
+
+static void fusion_power_operand(smart_str *source, fusion_node *node,
+                                 const char *type, int left)
+{
+    smart_str_append_printf(source, "static_cast<%s>(", type);
+    if (node->kind == FUSION_SCALAR && ((left && node->parameter) ||
+                                         (!left && !node->parameter)))
+        fusion_scalar_source(source, node->scalar);
+    else
+        smart_str_appends(source, node->kind == FUSION_SCALAR
+            ? "a" : (left ? "a" : "b"));
+    smart_str_appends(source, ")");
+}
+
+static int fusion_plan_uses_inline_power(fusion_plan *plan)
+{
+    for (size_t i = 0; i < plan->count; i++)
+    {
+        tensor_t *tensor = plan->items[i].tensor;
+        fusion_node *node = tensor->fusion;
+        if (node && node->op == OP_POW && fusion_inline(tensor))
+            return 1;
+    }
+    return 0;
 }
 
 static void fusion_scalar_source(smart_str *source, scalar_value_t scalar)
@@ -117,7 +181,8 @@ static void fusion_project(smart_str *source, tensor_t *parent, tensor_t *child,
 
 static void fusion_unary_source(smart_str *source, fusion_node *node, dtype_t dtype)
 {
-    int floating = dtype == DTYPE_FLOAT32 || dtype == DTYPE_FLOAT64;
+    int floating = dtype == DTYPE_FLOAT32 || dtype == DTYPE_FLOAT64 ||
+        dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16;
     const char *suffix = dtype == DTYPE_FLOAT64 ? "" : "f";
     switch (node->op)
     {
@@ -180,7 +245,13 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
                                         divisor, tensor->shape[d], stride);
             divisor *= tensor->shape[d];
         }
-        smart_str_append_printf(source, "return static_cast<const %s*>(p%zu)[offset];}\n", type, parameter);
+        if (tensor->dtype == DTYPE_FLOAT16 || tensor->dtype == DTYPE_BFLOAT16)
+            smart_str_append_printf(source, "return %s(static_cast<const %s*>(p%zu)[offset]);}\n",
+                                    fusion_low_precision_to_float(tensor->dtype),
+                                    fusion_storage_type(tensor->dtype), parameter);
+        else
+            smart_str_append_printf(source, "return static_cast<const %s*>(p%zu)[offset];}\n",
+                                    type, parameter);
         return;
     }
     if (node->kind == FUSION_SLICE_SCATTER)
@@ -286,7 +357,13 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
         fusion_call_node(source, step, fusion_find(plan, node->c), "ic");
         smart_str_appends(source, ";\n");
     }
-    smart_str_append_printf(source, "return static_cast<%s>(", type);
+    int low_precision_output = tensor->dtype == DTYPE_FLOAT16 || tensor->dtype == DTYPE_BFLOAT16;
+    if (low_precision_output)
+        smart_str_append_printf(source, "return %s(%s(static_cast<float>(",
+                                fusion_low_precision_to_float(tensor->dtype),
+                                fusion_float_to_low_precision(tensor->dtype));
+    else
+        smart_str_append_printf(source, "return static_cast<%s>(", type);
     if (node->kind == FUSION_UNARY) fusion_unary_source(source, node, tensor->dtype);
     else if (node->kind == FUSION_CAST || node->kind == FUSION_VIEW) smart_str_appends(source, "a");
     else if (node->kind == FUSION_WHERE) smart_str_appends(source, "a!=0?b:c");
@@ -308,6 +385,14 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
             else if (part == 2) smart_str_appends(source, ":");
         }
     }
+    else if (node->op == OP_POW)
+    {
+        smart_str_appends(source, "fusion_power(");
+        fusion_power_operand(source, node, type, 1);
+        smart_str_appends(source, ",");
+        fusion_power_operand(source, node, type, 0);
+        smart_str_appends(source, ")");
+    }
     else
     {
         smart_str_append_printf(source, "static_cast<%s>(", type);
@@ -318,12 +403,16 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
         else smart_str_appends(source, node->kind == FUSION_SCALAR ? "a" : "b");
         smart_str_appends(source, ")");
     }
-    smart_str_appends(source, ");}\n");
+    smart_str_appends(source, low_precision_output ? ")));}\n" : ");}\n");
 }
 
 int fusion_generate_source(fusion_plan *plan)
 {
     smart_str source = {0};
+    smart_str_appends(&source,
+        "#include <cuda_fp16.h>\n#include <cuda_bf16.h>\n");
+    if (fusion_plan_uses_inline_power(plan))
+        fusion_power_helpers(&source);
     for (size_t i = 0; i < plan->step_count; i++)
     {
         fusion_step *step = &plan->steps[i];
@@ -353,9 +442,16 @@ int fusion_generate_source(fusion_plan *plan)
         for (size_t j = 0; j < step->root_count; j++)
         {
             tensor_t *output = plan->items[step->roots[j]].tensor;
-            smart_str_append_printf(&source, "static_cast<%s*>(out%zu)[i]=", fusion_ctype(output->dtype), j);
+            if (output->dtype == DTYPE_FLOAT16 || output->dtype == DTYPE_BFLOAT16)
+                smart_str_append_printf(&source, "static_cast<%s*>(out%zu)[i]=%s(",
+                                        fusion_storage_type(output->dtype), j,
+                                        fusion_float_to_low_precision(output->dtype));
+            else
+                smart_str_append_printf(&source, "static_cast<%s*>(out%zu)[i]=",
+                                        fusion_storage_type(output->dtype), j);
             fusion_call_node(&source, step, step->roots[j], "i");
-            smart_str_appends(&source, ";");
+            smart_str_appends(&source,
+                output->dtype == DTYPE_FLOAT16 || output->dtype == DTYPE_BFLOAT16 ? ");" : ";");
         }
         smart_str_appends(&source, "}}\n");
     }

@@ -88,9 +88,24 @@ __global__ static void validate_indices_kernel(const int *indices, IndexedParams
     }
 }
 
+__device__ static void record_index_validation_error(
+    cuda_index_validation_result *validation,
+    cuda_index_validation_operation operation,
+    int index,
+    int axis_size)
+{
+    if (validation &&
+        atomicCAS(&validation->operation, CUDA_INDEX_VALID, operation) == CUDA_INDEX_VALID)
+    {
+        validation->index = index;
+        validation->axis_size = axis_size;
+    }
+}
+
 template <typename T>
 __global__ static void gather_kernel(const T *input, const int *indices, T *output,
-                                     IndexedParams params, size_t total)
+                                     IndexedParams params, size_t total,
+                                     cuda_index_validation_result *validation)
 {
     for (size_t flat = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
          flat < total; flat += (size_t)blockDim.x * gridDim.x)
@@ -109,7 +124,11 @@ __global__ static void gather_kernel(const T *input, const int *indices, T *outp
         }
         selected = indices[index_offset];
         if (selected < 0 || selected >= params.axis_size)
+        {
+            record_index_validation_error(validation, CUDA_INDEX_GATHER_INVALID,
+                                          selected, params.axis_size);
             output[flat] = T{};
+        }
         else
             output[flat] = input[input_offset + (size_t)selected * params.input_strides[params.axis]];
     }
@@ -151,7 +170,8 @@ __device__ void atomic_add_value<double>(double *address, double value)
 
 template <typename T>
 __global__ static void scatter_add_kernel(const int *indices, const T *updates,
-                                          T *output, IndexedParams params, size_t total)
+                                          T *output, IndexedParams params, size_t total,
+                                          cuda_index_validation_result *validation)
 {
     for (size_t flat = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
          flat < total; flat += (size_t)blockDim.x * gridDim.x)
@@ -171,7 +191,10 @@ __global__ static void scatter_add_kernel(const int *indices, const T *updates,
                 output_offset += coordinate * params.input_strides[axis];
         }
         selected = indices[index_offset];
-        if (selected >= 0 && selected < params.axis_size)
+        if (selected < 0 || selected >= params.axis_size)
+            record_index_validation_error(validation, CUDA_INDEX_SCATTER_ADD_INVALID,
+                                          selected, params.axis_size);
+        else
             atomic_add_value(output + output_offset +
                              (size_t)selected * params.input_strides[params.axis], updates[update_offset]);
     }
@@ -197,10 +220,11 @@ static IndexedParams indexed_params(const int *shape, const size_t *input_stride
 
 template <typename T>
 static cudaError_t launch_gather_t(const void *input, const int *indices, void *output,
-                                   IndexedParams params, size_t total)
+                                   IndexedParams params, size_t total,
+                                   cuda_index_validation_result *validation)
 {
     gather_kernel<T><<<cuda_grid_1d(total, 256), 256>>>(
-        (const T *)input, indices, (T *)output, params, total);
+        (const T *)input, indices, (T *)output, params, total, validation);
     return cudaGetLastError();
 }
 
@@ -245,24 +269,24 @@ extern "C" cudaError_t cuda_launch_gather(const void *input, const int *indices,
                                dtype_t dtype, const int *input_shape,
                                const size_t *input_strides, const int *index_shape,
                                const size_t *index_strides, int ndims, int axis,
-                               size_t total)
+                               size_t total, cuda_index_validation_result *validation)
 {
     if (!total) return cudaSuccess;
     IndexedParams params = indexed_params(index_shape, input_strides, index_strides, NULL,
                                           ndims, axis, input_shape[axis]);
     switch (dtype)
     {
-        case DTYPE_FLOAT32: return launch_gather_t<float>(input, indices, output, params, total);
-        case DTYPE_FLOAT64: return launch_gather_t<double>(input, indices, output, params, total);
-        case DTYPE_INT8: return launch_gather_t<int8_t>(input, indices, output, params, total);
-        case DTYPE_INT16: return launch_gather_t<int16_t>(input, indices, output, params, total);
-        case DTYPE_INT32: return launch_gather_t<int32_t>(input, indices, output, params, total);
-        case DTYPE_INT64: return launch_gather_t<int64_t>(input, indices, output, params, total);
-        case DTYPE_UINT8: return launch_gather_t<uint8_t>(input, indices, output, params, total);
-        case DTYPE_UINT16: return launch_gather_t<uint16_t>(input, indices, output, params, total);
-        case DTYPE_UINT32: return launch_gather_t<uint32_t>(input, indices, output, params, total);
-        case DTYPE_UINT64: return launch_gather_t<uint64_t>(input, indices, output, params, total);
-        case DTYPE_BOOL: return launch_gather_t<bool>(input, indices, output, params, total);
+        case DTYPE_FLOAT32: return launch_gather_t<float>(input, indices, output, params, total, validation);
+        case DTYPE_FLOAT64: return launch_gather_t<double>(input, indices, output, params, total, validation);
+        case DTYPE_INT8: return launch_gather_t<int8_t>(input, indices, output, params, total, validation);
+        case DTYPE_INT16: return launch_gather_t<int16_t>(input, indices, output, params, total, validation);
+        case DTYPE_INT32: return launch_gather_t<int32_t>(input, indices, output, params, total, validation);
+        case DTYPE_INT64: return launch_gather_t<int64_t>(input, indices, output, params, total, validation);
+        case DTYPE_UINT8: return launch_gather_t<uint8_t>(input, indices, output, params, total, validation);
+        case DTYPE_UINT16: return launch_gather_t<uint16_t>(input, indices, output, params, total, validation);
+        case DTYPE_UINT32: return launch_gather_t<uint32_t>(input, indices, output, params, total, validation);
+        case DTYPE_UINT64: return launch_gather_t<uint64_t>(input, indices, output, params, total, validation);
+        case DTYPE_BOOL: return launch_gather_t<bool>(input, indices, output, params, total, validation);
         default: return cudaErrorInvalidValue;
     }
 }
@@ -295,17 +319,18 @@ extern "C" cudaError_t cuda_launch_scatter_add(const int *indices, const void *u
                                     const int *index_shape, const size_t *output_strides,
                                     const size_t *index_strides, const size_t *update_strides,
                                     int ndims, int axis,
-                                    int axis_size, size_t total)
+                                    int axis_size, size_t total,
+                                    cuda_index_validation_result *validation)
 {
     if (!total) return cudaSuccess;
     IndexedParams params = indexed_params(index_shape, output_strides, index_strides, update_strides,
                                           ndims, axis, axis_size);
     if (dtype == DTYPE_FLOAT32)
         scatter_add_kernel<float><<<cuda_grid_1d(total, 256), 256>>>(
-            indices, (const float *)updates, (float *)output, params, total);
+            indices, (const float *)updates, (float *)output, params, total, validation);
     else if (dtype == DTYPE_FLOAT64)
         scatter_add_kernel<double><<<cuda_grid_1d(total, 256), 256>>>(
-            indices, (const double *)updates, (double *)output, params, total);
+            indices, (const double *)updates, (double *)output, params, total, validation);
     else
         return cudaErrorInvalidValue;
     return cudaGetLastError();

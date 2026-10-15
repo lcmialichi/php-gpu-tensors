@@ -154,12 +154,6 @@ void fusion_request_shutdown(void)
 
 tensor_t *fusion_binary(tensor_t *a, tensor_t *b, operation_type_t op)
 {
-    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16 ||
-        b->dtype == DTYPE_FLOAT16 || b->dtype == DTYPE_BFLOAT16)
-    {
-        CUDA_THROW_INVALID("Fusion elementwise operations do not yet support float16 or bfloat16");
-        return NULL;
-    }
     int shape[MAX_DIMS], ndims, a_strides[MAX_DIMS], b_strides[MAX_DIMS];
     size_t total;
     if (!prepare_broadcast_operation(a, b, shape, &ndims, a_strides, b_strides, &total))
@@ -181,11 +175,6 @@ tensor_t *fusion_binary(tensor_t *a, tensor_t *b, operation_type_t op)
 
 tensor_t *fusion_scalar(tensor_t *a, scalar_value_t scalar, operation_type_t op, int inverse)
 {
-    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16)
-    {
-        CUDA_THROW_INVALID("Fusion scalar operations do not yet support float16 or bfloat16");
-        return NULL;
-    }
     dtype_t dtype = promote_scalar_for_arithmetic(a->dtype, scalar.dtype, op, scalar.is_neg);
     tensor_t *tensor = fusion_record(FUSION_SCALAR, a, NULL, op, a->shape, a->ndims, dtype);
     if (tensor)
@@ -199,11 +188,6 @@ tensor_t *fusion_scalar(tensor_t *a, scalar_value_t scalar, operation_type_t op,
 
 tensor_t *fusion_unary(tensor_t *a, operation_type_t op)
 {
-    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16)
-    {
-        CUDA_THROW_INVALID("Fusion unary operations do not yet support float16 or bfloat16");
-        return NULL;
-    }
     tensor_t *tensor = fusion_record(FUSION_UNARY, a, NULL, op, a->shape, a->ndims, a->dtype);
     if (tensor) autograd_record_unary(tensor, a, op);
     return tensor;
@@ -229,11 +213,10 @@ tensor_t *fusion_cast(tensor_t *a, dtype_t dtype)
 
 tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y)
 {
-    if (condition->dtype == DTYPE_FLOAT16 || condition->dtype == DTYPE_BFLOAT16 ||
-        x->dtype == DTYPE_FLOAT16 || x->dtype == DTYPE_BFLOAT16 ||
+    if (x->dtype == DTYPE_FLOAT16 || x->dtype == DTYPE_BFLOAT16 ||
         y->dtype == DTYPE_FLOAT16 || y->dtype == DTYPE_BFLOAT16)
     {
-        CUDA_THROW_INVALID("Fusion where does not yet support float16 or bfloat16");
+        CUDA_THROW_INVALID("Fusion where outputs do not yet support float16 or bfloat16");
         return NULL;
     }
     if (x->dtype != y->dtype)

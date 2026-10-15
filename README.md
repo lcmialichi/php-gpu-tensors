@@ -142,12 +142,16 @@ the CUDA Toolkit or NVIDIA driver. Those must be available on the system.
 
 With the NVIDIA Container Toolkit and a working host driver:
 
+The development image defaults to CUDA 12.6.3 with cuDNN on Ubuntu 22.04, and
+the container requires cuDNN during configuration. Use `--build` to ensure the
+image matches the configured CUDA/cuDNN version:
+
 ```bash
-docker compose run --rm php_cuda_dev bash -lc './compile.sh && ./run-tests.sh --require-gpu'
+docker compose run --build --rm php_cuda_dev bash -lc './compile.sh && ./run-tests.sh --require-gpu'
 ```
 
-The development image defaults to CUDA 12.6.3 with cuDNN on Ubuntu 22.04.
-Set `CUDA_IMAGE` to select another CUDA base image.
+Set `CUDA_IMAGE` to select another CUDA base image. Set `CUDA_USE_CUDNN=no` only
+when intentionally building without cuDNN.
 
 ### Run tests
 
@@ -164,9 +168,9 @@ mistaken for successful GPU validation.
 
 `CudaArray` stores tensor data on the GPU. The constructor accepts rectangular
 nested PHP arrays; `fromFlatArray()` accepts flat values plus an explicit shape.
-The default dtype is `float32`. Storage and transfer also support `float16` and
-`bfloat16`; these low-precision dtypes are currently intended for matrix
-multiplication and conversion rather than general tensor arithmetic.
+The default dtype is `float32`. Storage, transfer and elementwise arithmetic
+also support `float16` and `bfloat16`; low-precision elementwise operations
+compute in `float32` and round to the promoted output dtype.
 
 ```php
 use Cuda\CudaArray;
@@ -243,15 +247,18 @@ must match the normalized dimensions in axis-list order. It preserves
 
 Low-precision `matmul()` uses cuBLAS for eligible 2D workloads and a tiled CUDA
 kernel otherwise, including batched layouts. `float16` and `bfloat16` matmul
-outputs retain the operand dtype after `float32` accumulation. The global
+outputs retain the operand dtype after `float32` accumulation. Elementwise
+arithmetic, unary math and comparisons compute in `float32`, then round to the
+promoted output dtype. Low-precision inputs can also serve as `where()`
+conditions, but low-precision `where()` values, reductions and indexed
+operations remain unsupported and report an explicit error. The global
 `cuda_set_matmul_precision()` setting applies to `float32` matmul only.
-Elementwise arithmetic, general reductions, `where()` and indexed operations
-are not yet supported for these dtypes and report an explicit error.
-`requiresGrad()` supports FP16/BF16 matmul paths, including batched broadcast
-and shape views; the returned leaf gradients use `float32`, while matmul
-outputs and explicit backward seeds retain the operand dtype. Fusion supports
-this backward path with a native low-precision-to-FP32 cast boundary; that
-boundary is not compatible with asynchronous replay or CUDA Graph capture.
+`requiresGrad()` supports low-precision matmul and elementwise arithmetic
+paths; returned leaf gradients use `float32`, while low-precision operation
+outputs and explicit backward seeds retain their dtype. Fusion supports
+low-precision elementwise expressions and the matmul backward path; widening
+FP16/BF16 casts to `float32` use a native boundary, which is not compatible
+with asynchronous replay or CUDA Graph capture.
 `softmax()` and `layerNorm()` widen low-precision inputs to `float32` and
 return `float32` results.
 
@@ -602,9 +609,10 @@ Current limits:
 - `astype()` allows safe conversions; autograd tracks floating-point casts.
 - Fusion matmul supports matching `float32`, `float16` and `bfloat16` operands;
   low-precision products accumulate in `float32` and retain the input dtype.
-  Low-precision elementwise Fusion operations are not supported yet. Widening
-  FP16/BF16 casts to `float32` use a native boundary and are not compatible with
-  asynchronous replay or CUDA Graph capture; powers are also native boundaries.
+  Low-precision elementwise expressions compute in `float32` and round at each
+  node to preserve eager semantics. Widening FP16/BF16 casts to `float32` use a
+  native boundary and are not compatible with asynchronous replay or CUDA
+  Graph capture; integer-output scalar powers remain native boundaries.
 - `gather()` and `scatterAdd()` support synchronous Fusion execution but not
   asynchronous replay or CUDA Graph capture. `scatterAdd()` supports
   `float32` and `float64`.

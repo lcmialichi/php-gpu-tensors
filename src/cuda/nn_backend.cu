@@ -381,6 +381,7 @@ extern "C" int cuda_nn_available(void) { return 0; }
 extern "C" void cuda_nn_shutdown(void) {}
 #endif
 
+#ifdef HAVE_CUDNN
 static int nn_use_fallback(int cudnn_failed, const char *cudnn_error,
                            int fallback_allowed, int fallback_succeeded)
 {
@@ -393,10 +394,11 @@ static int nn_use_fallback(int cudnn_failed, const char *cudnn_error,
         return 0;
     }
     if (cudnn_failed)
-        snprintf(nn_error, sizeof(nn_error), "cuDNN failed (%s); CUDA fallback failed (%s)",
+        snprintf(nn_error, sizeof(nn_error), "cuDNN failed (%.100s); CUDA fallback failed (%.100s)",
                  cudnn_error, fallback_error);
     return 0;
 }
+#endif
 
 extern "C" int cuda_nn_conv(const float *input, const float *weights, const float *bias,
     float *output, const int *input_shape, const int *filter_shape,

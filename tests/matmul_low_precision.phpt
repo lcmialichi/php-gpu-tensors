@@ -158,11 +158,6 @@ foreach (['float16', 'bfloat16'] as $dtype) {
     }
 }
 
-try {
-    $half->add(1);
-    throw new RuntimeException('unsupported low-precision arithmetic was accepted');
-} catch (Cuda\InvalidArgumentException $error) {
-}
 echo "FP16/BF16 conversion and matmul checks passed\n";
 ?>
 --EXPECT--

@@ -81,6 +81,19 @@ static int fusion_prepare_buffers(fusion_plan *plan, tensor_t **values, fusion_b
     return 1;
 }
 
+static int fusion_has_indexed_steps(fusion_plan *plan)
+{
+    for (size_t i = 0; i < plan->step_count; i++)
+    {
+        fusion_step *step = &plan->steps[i];
+        if (step->name[0] || plan->items[step->root].alias) continue;
+        fusion_node *node = plan->items[step->root].tensor->fusion;
+        if (node && (node->kind == FUSION_GATHER || node->kind == FUSION_SCATTER_ADD))
+            return 1;
+    }
+    return 0;
+}
+
 static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t **values, CUstream stream)
 {
     fusion_item *item = &plan->items[step->root];
@@ -145,26 +158,20 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
         const char *operation = node->kind == FUSION_GATHER ? "gather" : "scatterAdd";
         if (!cuda_tensor_validate_indexed_shapes(a, b, c, axis, operation))
             return 0;
-
-        cudaError_t error = cuda_validate_indices(b->data, b->shape, b->strides,
-            b->ndims, axis, a->shape[axis], b->total_size);
-        if (error == cudaErrorInvalidValue)
+        cuda_index_validation_result *validation =
+            (cuda_index_validation_result *)plan->indexed_validation_error;
+        if (!validation)
         {
-            CUDA_THROW_INVALID("%s indices must be within [0, %d)", operation, a->shape[axis]);
-            return 0;
-        }
-        if (error != cudaSuccess)
-        {
-            CUDA_THROW_RUNTIME("Failed to validate %s indices: %s",
-                               operation, cudaGetErrorString(error));
+            CUDA_THROW_RUNTIME("Fusion indexed execution has no validation status buffer");
             return 0;
         }
 
+        cudaError_t error;
         if (node->kind == FUSION_GATHER)
         {
             error = cuda_launch_gather(a->data, b->data, result->data, a->dtype,
                 a->shape, a->strides, b->shape, b->strides,
-                a->ndims, axis, b->total_size);
+                a->ndims, axis, b->total_size, validation);
         }
         else
         {
@@ -173,7 +180,8 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
             if (error == cudaSuccess)
                 error = cuda_launch_scatter_add(b->data, c->data, result->data,
                     a->dtype, b->shape, result->strides, b->strides,
-                    c->strides, a->ndims, axis, a->shape[axis], c->total_size);
+                    c->strides, a->ndims, axis, a->shape[axis],
+                    c->total_size, validation);
         }
         if (error != cudaSuccess)
         {
@@ -536,6 +544,7 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, fusion
 int fusion_execute(fusion_plan *plan, tensor_t **values)
 {
     if (!fusion_context_check(plan)) return 0;
+    plan->execution_complete = 0;
     CUresult error;
     cudaError_t runtime_error;
     if (plan->stream_compatible)
@@ -556,9 +565,32 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
         if (error != CUDA_SUCCESS && !EG(exception))
             CUDA_THROW_RUNTIME("Fusion stream failed (CUDA error %d)", error);
         if (ok && error == CUDA_SUCCESS) plan->executions++;
+        plan->execution_complete = ok && error == CUDA_SUCCESS;
         return ok && error == CUDA_SUCCESS;
     }
     if (!fusion_prepare_buffers(plan, values, plan->compiled ? FUSION_BUFFERS_WORKSPACE : FUSION_BUFFERS_FRESH)) return 0;
+    if (fusion_has_indexed_steps(plan))
+    {
+        if (!plan->indexed_validation_error)
+        {
+            runtime_error = cudaMalloc(&plan->indexed_validation_error,
+                                       sizeof(cuda_index_validation_result));
+            if (runtime_error != cudaSuccess)
+            {
+                CUDA_THROW_RUNTIME("Cannot allocate Fusion index validation status: %s",
+                                   cudaGetErrorString(runtime_error));
+                return 0;
+            }
+        }
+        runtime_error = cudaMemsetAsync(plan->indexed_validation_error, 0,
+            sizeof(cuda_index_validation_result), NULL);
+        if (runtime_error != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Cannot reset Fusion index validation status: %s",
+                               cudaGetErrorString(runtime_error));
+            return 0;
+        }
+    }
     for (size_t i = 0; i < plan->step_count; i++)
     {
         fusion_step *step = &plan->steps[i];
@@ -661,6 +693,32 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
         }
         values[step->root] = result;
     }
+    if (plan->indexed_validation_error)
+    {
+        cuda_index_validation_result validation = {0};
+        runtime_error = cudaMemcpy(&validation, plan->indexed_validation_error,
+            sizeof(validation), cudaMemcpyDeviceToHost);
+        plan->synchronizations++;
+        if (runtime_error != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Fusion index validation synchronization failed: %s",
+                               cudaGetErrorString(runtime_error));
+            return 0;
+        }
+        plan->execution_complete = 1;
+        if (validation.operation == CUDA_INDEX_GATHER_INVALID)
+        {
+            CUDA_THROW_INVALID("gather indices must be within [0, %d)", validation.axis_size);
+            return 0;
+        }
+        if (validation.operation == CUDA_INDEX_SCATTER_ADD_INVALID)
+        {
+            CUDA_THROW_INVALID("scatterAdd indices must be within [0, %d)", validation.axis_size);
+            return 0;
+        }
+        plan->executions++;
+        return 1;
+    }
     runtime_error = cudaDeviceSynchronize();
     plan->synchronizations++;
     if (runtime_error != cudaSuccess)
@@ -668,6 +726,7 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
         CUDA_THROW_RUNTIME("Fusion synchronization failed: %s", cudaGetErrorString(runtime_error));
         return 0;
     }
+    plan->execution_complete = 1;
     plan->executions++;
     return 1;
 }
@@ -682,10 +741,12 @@ tensor_t **fusion_values(fusion_plan *plan)
 
 void fusion_values_free(fusion_plan *plan, tensor_t **values)
 {
-    /* Even a failed launch can leave earlier kernels using these allocations. */
-    cudaError_t error = cudaDeviceSynchronize();
-    if (error != cudaSuccess && !EG(exception))
-        CUDA_THROW_RUNTIME("Fusion cleanup synchronization failed: %s", cudaGetErrorString(error));
+    if (!plan->execution_complete)
+    {
+        cudaError_t error = cudaDeviceSynchronize();
+        if (error != cudaSuccess && !EG(exception))
+            CUDA_THROW_RUNTIME("Fusion cleanup synchronization failed: %s", cudaGetErrorString(error));
+    }
     fusion_values_release(plan, values);
 }
 

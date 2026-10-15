@@ -1,7 +1,45 @@
 #ifndef CAST_CUH
 #define CAST_CUH
 #include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
 #include "../data_types.h"
+
+template <typename T>
+__device__ __forceinline__ float low_precision_to_float(T value)
+{
+    return static_cast<float>(value);
+}
+
+template <>
+__device__ __forceinline__ float low_precision_to_float<__half>(__half value)
+{
+    return __half2float(value);
+}
+
+template <>
+__device__ __forceinline__ float low_precision_to_float<__nv_bfloat16>(__nv_bfloat16 value)
+{
+    return __bfloat162float(value);
+}
+
+template <typename T>
+__device__ __forceinline__ T low_precision_from_float(float value)
+{
+    return static_cast<T>(value);
+}
+
+template <>
+__device__ __forceinline__ __half low_precision_from_float<__half>(float value)
+{
+    return __float2half_rn(value);
+}
+
+template <>
+__device__ __forceinline__ __nv_bfloat16 low_precision_from_float<__nv_bfloat16>(float value)
+{
+    return __float2bfloat16_rn(value);
+}
 
 template <typename T>
 __device__ __forceinline__ T fetch_and_cast(const void *data, const dtype_t type, const size_t idx)
@@ -30,6 +68,10 @@ __device__ __forceinline__ T fetch_and_cast(const void *data, const dtype_t type
         return static_cast<T>(static_cast<const uint64_t *>(data)[idx]);
     case DTYPE_BOOL:
         return static_cast<T>(static_cast<const bool *>(data)[idx]);
+    case DTYPE_FLOAT16:
+        return static_cast<T>(__half2float(__ushort_as_half(static_cast<const uint16_t *>(data)[idx])));
+    case DTYPE_BFLOAT16:
+        return static_cast<T>(__bfloat162float(__ushort_as_bfloat16(static_cast<const uint16_t *>(data)[idx])));
     default:
         return static_cast<T>(0);
     }

@@ -115,6 +115,8 @@ typedef struct
     int cuda_graph_requested;
     size_t tensor_allocations;
     size_t synchronizations;
+    int execution_complete;
+    void *indexed_validation_error;
     int profiling;
     size_t profiled_executions;
     uint64_t bind_ns, execute_ns, collect_ns;

@@ -173,7 +173,9 @@ static int autograd_node_add(tensor_t *result, autograd_kind_t kind,
 {
     int supported_type = result &&
         (autograd_is_differentiable_type(result->dtype) ||
-         ((kind == AUTOGRAD_MATMUL || kind == AUTOGRAD_VIEW) &&
+         ((kind == AUTOGRAD_MATMUL || kind == AUTOGRAD_VIEW ||
+           kind == AUTOGRAD_BINARY || kind == AUTOGRAD_SCALAR ||
+           kind == AUTOGRAD_UNARY) &&
           autograd_is_low_precision_type(result->dtype)));
     if (autograd_suppressed || !supported_type)
         return 1;
@@ -988,30 +990,39 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                     }
                     break;
                 case OP_POW:
-                    temporary = cuda_tensor_op(node->a, node->b, OP_POW);
-                    if (temporary)
                     {
-                        scalar_value_t one = {0};
-                        one.dtype = node->b->dtype;
-                        if (one.dtype == DTYPE_FLOAT64) one.v.f64 = 1.0;
-                        else one.v.f32 = 1.0f;
-                        tensor_t *exponent_minus_one = cuda_scalar_op(node->b, one, OP_SUB);
-                        tensor_t *base_power = exponent_minus_one
-                            ? cuda_tensor_op(node->a, exponent_minus_one, OP_POW) : NULL;
-                        if (exponent_minus_one) cuda_tensor_destroy(exponent_minus_one);
-                        if (base_power)
+                        dtype_t gradient_dtype = output->dtype == DTYPE_FLOAT64
+                            ? DTYPE_FLOAT64 : DTYPE_FLOAT32;
+                        tensor_t *base = gradient_cast(node->a, gradient_dtype);
+                        tensor_t *exponent = gradient_cast(node->b, gradient_dtype);
+                        temporary = base && exponent
+                            ? cuda_tensor_op(base, exponent, OP_POW) : NULL;
+                        if (temporary)
                         {
-                            tensor_t *factor = cuda_tensor_op(node->b, base_power, OP_MUL);
-                            if (factor) ga = cuda_tensor_op(upstream, factor, OP_MUL);
-                            if (factor) cuda_tensor_destroy(factor);
-                            cuda_tensor_destroy(base_power);
+                            scalar_value_t one = {0};
+                            one.dtype = gradient_dtype;
+                            if (one.dtype == DTYPE_FLOAT64) one.v.f64 = 1.0;
+                            else one.v.f32 = 1.0f;
+                            tensor_t *exponent_minus_one = cuda_scalar_op(exponent, one, OP_SUB);
+                            tensor_t *base_power = exponent_minus_one
+                                ? cuda_tensor_op(base, exponent_minus_one, OP_POW) : NULL;
+                            if (exponent_minus_one) cuda_tensor_destroy(exponent_minus_one);
+                            if (base_power)
+                            {
+                                tensor_t *factor = cuda_tensor_op(exponent, base_power, OP_MUL);
+                                if (factor) ga = cuda_tensor_op(upstream, factor, OP_MUL);
+                                if (factor) cuda_tensor_destroy(factor);
+                                cuda_tensor_destroy(base_power);
+                            }
+                            tensor_t *log_base = cuda_unary_op(base, OP_LOG);
+                            tensor_t *factor_y = log_base ? cuda_tensor_op(temporary, log_base, OP_MUL) : NULL;
+                            if (factor_y) gb = cuda_tensor_op(upstream, factor_y, OP_MUL);
+                            if (factor_y) cuda_tensor_destroy(factor_y);
+                            if (log_base) cuda_tensor_destroy(log_base);
+                            cuda_tensor_destroy(temporary);
                         }
-                        tensor_t *log_base = cuda_unary_op(node->a, OP_LOG);
-                        tensor_t *factor_y = log_base ? cuda_tensor_op(temporary, log_base, OP_MUL) : NULL;
-                        if (factor_y) gb = cuda_tensor_op(upstream, factor_y, OP_MUL);
-                        if (factor_y) cuda_tensor_destroy(factor_y);
-                        if (log_base) cuda_tensor_destroy(log_base);
-                        cuda_tensor_destroy(temporary);
+                        if (base) cuda_tensor_destroy(base);
+                        if (exponent) cuda_tensor_destroy(exponent);
                     }
                     break;
                 case OP_MAXIMUM:

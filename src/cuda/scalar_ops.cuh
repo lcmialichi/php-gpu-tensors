@@ -6,6 +6,42 @@
 #include "cast.cuh"
 #include "launch_config.cuh"
 
+template <typename OutputT, typename Op, bool Inverse>
+__global__ void scalar_kernel_low_precision(
+    const void *base,
+    dtype_t base_dtype,
+    float scalar,
+    OutputT *result,
+    size_t base_offset,
+    const int *shape,
+    const size_t *strides,
+    int ndims,
+    size_t total_size,
+    int is_contiguous)
+{
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total_size)
+        return;
+
+    size_t offset = 0;
+    if (is_contiguous)
+        offset = idx;
+    else
+    {
+        size_t remaining = idx;
+        for (int d = ndims - 1; d >= 0; d--)
+        {
+            size_t coord = remaining % shape[d];
+            remaining /= shape[d];
+            offset += coord * strides[d];
+        }
+    }
+
+    float base_value = fetch_and_cast<float>(base, base_dtype, base_offset + offset);
+    float value = Inverse ? Op::apply(scalar, base_value) : Op::apply(base_value, scalar);
+    result[idx] = low_precision_from_float<OutputT>(value);
+}
+
 template <typename T, typename Op>
 __global__ void scalar_kernel_strided(
     const void *base,

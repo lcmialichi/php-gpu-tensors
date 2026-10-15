@@ -102,6 +102,50 @@ __global__ void broadcast_kernel_with_cast(
     }
 }
 
+template <typename OutputT, typename Op>
+__global__ void broadcast_kernel_low_precision(
+    const void *__restrict__ a,
+    const dtype_t dtype_a,
+    const void *__restrict__ b,
+    const dtype_t dtype_b,
+    OutputT *__restrict__ result,
+    const size_t total,
+    const BroadcastParams params,
+    const size_t a_base_offset,
+    const size_t b_base_offset)
+{
+    for (size_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < total; idx += blockDim.x * gridDim.x)
+    {
+        size_t a_idx = 0;
+        size_t b_idx = 0;
+
+        if (params.is_contiguous)
+        {
+            a_idx = idx;
+            b_idx = idx;
+        }
+        else
+        {
+            size_t tmp = idx;
+            #pragma unroll
+            for (int i = MAX_DIMS - 1; i >= 0; --i)
+            {
+                if (i < params.dims)
+                {
+                    const size_t coord = tmp % params.shape[i];
+                    tmp /= params.shape[i];
+                    a_idx += coord * params.a_strides[i];
+                    b_idx += coord * params.b_strides[i];
+                }
+            }
+        }
+
+        const float val_a = fetch_and_cast<float>(a, dtype_a, a_idx + a_base_offset);
+        const float val_b = fetch_and_cast<float>(b, dtype_b, b_idx + b_base_offset);
+        result[idx] = low_precision_from_float<OutputT>(Op::apply(val_a, val_b));
+    }
+}
+
 static inline BroadcastParams setup_params(int *a_strides, int a_dims, int *b_strides, int b_dims, int *result_shape, int result_dims) {
     BroadcastParams h_params;
     h_params.dims = result_dims;
@@ -146,6 +190,27 @@ void launch_broadcast_kernel_with_cast(void *a, dtype_t dtype_a, void *b, dtype_
     broadcast_kernel_with_cast<T, Op><<<cuda_grid_1d(total_elements, blockSize), blockSize>>>(
         a, dtype_a, b, dtype_b, result,
         total_elements, h_params, a_base_offset, b_base_offset);
+}
+
+template <typename OutputT, typename Op>
+void launch_broadcast_kernel_low_precision(void *a, dtype_t dtype_a, void *b, dtype_t dtype_b,
+                                           OutputT *result, int *a_strides, int a_dims,
+                                           int *b_strides, int b_dims, int *result_shape,
+                                           int result_dims, size_t total_elements,
+                                           size_t a_base_offset, size_t b_base_offset)
+{
+    if (total_elements == 0)
+        return;
+
+    BroadcastParams h_params = setup_params(a_strides, a_dims, b_strides, b_dims, result_shape, result_dims);
+
+    int minGridSize;
+    int blockSize;
+    cudaOccupancyMaxPotentialBlockSize(&minGridSize, &blockSize,
+                                       broadcast_kernel_low_precision<OutputT, Op>, 0, 0);
+
+    broadcast_kernel_low_precision<OutputT, Op><<<cuda_grid_1d(total_elements, blockSize), blockSize>>>(
+        a, dtype_a, b, dtype_b, result, total_elements, h_params, a_base_offset, b_base_offset);
 }
 
 template <typename T, typename Op>

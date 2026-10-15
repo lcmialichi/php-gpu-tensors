@@ -41,9 +41,15 @@ echo json_encode($any->toArray()), "\n";
 $broadcastGraph = Fusion::compile(fn($x) => $x->broadcastTo([2, 2])->sum(0), [new CudaArray([1.0, 2.0])]);
 echo json_encode($broadcastGraph->run(new CudaArray([1.0, 2.0]))->toArray()), "\n";
 $gatherGraph = Fusion::compile(fn($x, $i) => $x->gather($i, 1), [$source, $indices]);
+$gatherSyncs = $gatherGraph->getStats()['synchronizations'];
 echo json_encode($gatherGraph->run($source, $indices)->toArray()), "\n";
+if ($gatherGraph->getStats()['synchronizations'] - $gatherSyncs !== 1)
+    throw new RuntimeException('Fusion gather should synchronize only once per execution');
 $scatterGraph = Fusion::compile(fn($x, $i, $u) => $x->scatterAdd($i, $u, 1), [$base, $indices, $updates]);
+$scatterSyncs = $scatterGraph->getStats()['synchronizations'];
 echo json_encode($scatterGraph->run($base, $indices, $updates)->toArray()), "\n";
+if ($scatterGraph->getStats()['synchronizations'] - $scatterSyncs !== 1)
+    throw new RuntimeException('Fusion scatterAdd should synchronize only once per execution');
 var_dump($gatherGraph->getStats()['asyncCompatible']);
 if ($gatherGraph->getStats()['cudaGraphCompatible'] ||
     $scatterGraph->getStats()['cudaGraphCompatible'])
@@ -52,6 +58,15 @@ $transposedSource = $source->transpose();
 $transposedIndices = CudaArray::fromFlatArray([2, 0, 1, 2, 0, 1], [3, 2], 'int32');
 $transposedGather = Fusion::compile(fn($x, $i) => $x->gather($i, 0), [$transposedSource, $transposedIndices]);
 echo json_encode($transposedGather->run($transposedSource, $transposedIndices)->toArray()), "\n";
+$selector = CudaArray::fromFlatArray([1, 0, 0, 1], [2, 2], 'int32');
+$gatherChain = Fusion::compile(
+    fn($x, $i, $j) => $x->gather($i, 1)->gather($j, 1),
+    [$source, $indices, $selector]
+);
+$chainSyncs = $gatherChain->getStats()['synchronizations'];
+if ($gatherChain->run($source, $indices, $selector)->toArray() !== [[10.0, 30.0], [50.0, 50.0]] ||
+    $gatherChain->getStats()['synchronizations'] - $chainSyncs !== 1)
+    throw new RuntimeException('Multiple indexed Fusion steps should share one synchronization');
 
 function fails(callable $callback): void {
     try { $callback(); echo "MISSED\n"; }
@@ -62,8 +77,24 @@ $badFusionIndices = CudaArray::fromFlatArray([3, 0, 1, 1], [2, 2], 'int32');
 fails(fn() => $source->gather($badIndices, 1));
 fails(fn() => $source->gather($indices, 3));
 fails(fn() => $input->var(1, 2));
-fails(fn() => $gatherGraph->run($source, $badFusionIndices));
-fails(fn() => $scatterGraph->run($base, $badFusionIndices, $updates));
+try {
+    $gatherGraph->run($source, $badFusionIndices);
+    throw new RuntimeException('Fusion gather accepted an invalid index');
+} catch (Cuda\InvalidArgumentException $error) {
+    if (!str_contains($error->getMessage(), 'gather indices must be within [0, 3)'))
+        throw $error;
+}
+if ($gatherGraph->run($source, $indices)->toArray() !== [[30.0, 10.0], [50.0, 50.0]])
+    throw new RuntimeException('Fusion gather validation status was not reset after an error');
+try {
+    $scatterGraph->run($base, $badFusionIndices, $updates);
+    throw new RuntimeException('Fusion scatterAdd accepted an invalid index');
+} catch (Cuda\InvalidArgumentException $error) {
+    if (!str_contains($error->getMessage(), 'scatterAdd indices must be within [0, 3)'))
+        throw $error;
+}
+if ($scatterGraph->run($base, $indices, $updates)->toArray() !== [[2.0, 0.0, 1.0], [0.0, 7.0, 0.0]])
+    throw new RuntimeException('Fusion scatterAdd validation status was not reset after an error');
 fails(fn() => $gatherGraph->runAsync($source, $indices));
 try {
     $scatterGraph->runAsync($base, $indices, $updates);
@@ -125,8 +156,6 @@ int(42)
 [[2,0,1],[0,7,0]]
 bool(false)
 [[30,40],[20,60],[10,50]]
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
 Cuda\InvalidArgumentException
 Cuda\InvalidArgumentException
 Cuda\InvalidArgumentException

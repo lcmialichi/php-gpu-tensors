@@ -9,6 +9,7 @@ services:
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_USE_CUDNN=${CUDA_USE_CUDNN:-yes}
     volumes:
       - type: bind
         source: .

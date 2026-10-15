@@ -1,5 +1,7 @@
 #include "where_kernels.h"
 #include "launch_config.cuh"
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
 
 struct WhereParams
 {
@@ -27,6 +29,8 @@ __device__ bool where_condition(const void *data, dtype_t dtype, size_t offset)
     case DTYPE_UINT32: return ((const uint32_t *)data)[offset] != 0;
     case DTYPE_UINT64: return ((const uint64_t *)data)[offset] != 0;
     case DTYPE_BOOL: return ((const bool *)data)[offset];
+    case DTYPE_FLOAT16: return __half2float(__ushort_as_half(((const uint16_t *)data)[offset])) != 0;
+    case DTYPE_BFLOAT16: return __bfloat162float(__ushort_as_bfloat16(((const uint16_t *)data)[offset])) != 0;
     default: return false;
     }
 }

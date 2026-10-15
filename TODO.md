@@ -22,6 +22,8 @@ consistent public API across the PHP extension.
   them; document accumulation and output dtype rules.
 - [x] Add tests for dtype conversions, overflow/underflow and numerical
   tolerances.
+- [x] Add eager and Fusion elementwise arithmetic, unary math and comparison
+  support for FP16/BF16 with FP32 computation and per-operation output rounding.
 
 ## 3. Complete autograd and Fusion coverage
 
@@ -42,6 +44,8 @@ consistent public API across the PHP extension.
 
 - [ ] Extend Fusion capture to common elementwise expressions that currently
   require separate native calls.
+- [x] Fuse floating-output power operations with eager-compatible integer-
+  exponent behavior; retain a native boundary for integer-output scalar power.
 - [x] Capture implicit broadcasting and explicit `broadcastTo()` views,
   including transposed sources and backward reduction through broadcast axes.
 - [ ] Review composite operations for avoidable intermediates while preserving
@@ -65,8 +69,9 @@ consistent public API across the PHP extension.
 - [x] Add synchronous Fusion support for `gather()` and `scatterAdd()`; keep
   asynchronous execution and CUDA Graph capture explicitly unsupported while
   index validation synchronizes with the host.
-- [ ] Reduce synchronization in `gather()` and `scatterAdd()` validation while
-  retaining precise invalid-index errors.
+- [x] Reduce synchronization in Fusion `gather()` and `scatterAdd()` validation
+  by recording invalid indices in their execution kernels and reporting them at
+  the single final synchronization; eager calls retain immediate validation.
 - [ ] Add Fusion support for useful indexed expressions where semantics allow.
 - [ ] Expand gradients through non-contiguous views and indexed expressions.
 
@@ -84,6 +89,6 @@ consistent public API across the PHP extension.
 
 ## Next implementation
 
-Continue closing Fusion's documented limits, prioritizing low-precision
-elementwise expressions, then async indexed execution and broader eager/Fusion
-parity. Preserve explicit errors where a backend boundary remains intentional.
+Continue closing Fusion's documented limits by expanding eager/Fusion parity
+for indexed expressions and gradients. Preserve explicit errors where a backend
+boundary remains intentional.
