@@ -24,6 +24,7 @@ $graph = Fusion::compile(
 check($graph->run($left, $right, $tail)->toArray() === [[1.0, 2.0, 5.0, 7.0], [3.0, 4.0, 6.0, 8.0]],
     'multi-input concat result');
 check($graph->getStats()['asyncCompatible'] === false, 'concat async compatibility');
+check($graph->getStats()['cudaGraphCompatible'] === false, 'concat CUDA Graph compatibility');
 try {
     $graph->runAsync($left, $right, $tail);
     throw new RuntimeException('concat unexpectedly accepted asynchronous execution');

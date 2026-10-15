@@ -2,11 +2,13 @@
 
 namespace Cuda;
 
-/** Optional synchronous cuDNN inference. NCHW inputs, OIHW filters, contiguous FP32; no Fusion capture. */
+/**
+ * Synchronous CUDA inference for contiguous FP32 tensors. Uses cuDNN when
+ * available and native CUDA kernels otherwise; never falls back to CPU.
+ */
 final class NN
 {
     private function __construct() {}
-    public static function isAvailable(): bool {}
     /** Cross-correlation, floor output dimensions, optional bias per output channel. */
     public static function conv2d(CudaArray $input, CudaArray $weights, ?CudaArray $bias = null,
         array $stride = [1, 1], array $padding = [0, 0], array $dilation = [1, 1], int $groups = 1): CudaArray {}
@@ -207,7 +209,8 @@ class CudaArray
     /** Return shape, dtype, and count for debugging. */
     public function __debugInfo(): array {}
     /**
-     * Concatenate tensors along an axis.
+     * Concatenate tensors along an axis. Supported in synchronous Fusion execution,
+     * but not asynchronous replay or CUDA Graph capture.
      * @param list<CudaArray> $tensors
      */
     public function concat(array $tensors, ?int $axis = null): CudaArray {}
@@ -228,7 +231,7 @@ class CudaArray
     /**
      * Matrix multiply (2D or batched). Matching float32, float16 and bfloat16
      * operands are supported; low-precision products accumulate in float32
-     * and retain the operand dtype.
+     * and retain the operand dtype. FP16/BF16 gradients are returned as float32.
      */
     public function matmul(CudaArray $other): CudaArray {}
     /** Permute axes; omitting axis reverses their order. */
@@ -319,7 +322,7 @@ class CudaArray
     public function squeeze(?int $axis = null): CudaArray {}
     /** Insert a singleton dimension at axis. */
     public function unsqueeze(int $axis): CudaArray {}
-    /** Broadcast as a shared-storage view to the requested shape. */
+    /** Broadcast singleton axes or add leading axes without copying; captured by synchronous Fusion. */
     public function broadcastTo(array $shape): CudaArray {}
     /** Create a one-dimensional view. */
     public function flatten(): CudaArray {}
@@ -331,11 +334,15 @@ class CudaArray
     public static function full(array $shape, float|int $value, ?string $dtype = 'float32'): CudaArray {}
     /** Generate uniform random GPU values. */
     public static function rand(array $shape, float|int $min = 0, float|int $max = 1, ?string $dtype = 'float32'): CudaArray {}
-    /** Gather values using same-rank int32 indices along an axis. Not supported in Fusion capture. */
+    /**
+     * Gather values using same-rank int32 indices along an axis.
+     * Synchronous Fusion execution is supported; async and CUDA Graph capture are not.
+     */
     public function gather(CudaArray $indices, int $axis = 0): CudaArray {}
     /**
      * Add updates at indexed positions and return a new tensor. Duplicate indices accumulate.
-     * Currently supports float32/float64 and is not supported in Fusion capture.
+     * Currently supports float32/float64. Synchronous Fusion execution is
+     * supported; async and CUDA Graph capture are not.
      */
     public function scatterAdd(CudaArray $indices, CudaArray $updates, int $axis = 0): CudaArray {}
     /**
@@ -347,6 +354,7 @@ class CudaArray
     /** Element dtype name, e.g. float32, float16 or bfloat16. */
     public function dtype(): string {}
     /** Enable or disable reverse-mode gradient tracking on a leaf tensor. */
+    /** FP16/BF16 tracking is currently supported for matmul and shape views only; gradients use float32. */
     public function requiresGrad(bool $requiresGrad = true): CudaArray {}
     /** Compute gradients; non-scalar tensors require a seed. Graphs are freed unless retained. */
     public function backward(?CudaArray $gradient = null, bool $retainGraph = false): void {}

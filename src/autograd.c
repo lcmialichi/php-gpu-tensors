@@ -3,6 +3,7 @@
 #include "fusion_internal.h"
 #include "tensor_factory.h"
 #include "tensor_where.h"
+#include "factory_kernels.h"
 #include "cuda_exceptions.h"
 #include <math.h>
 #include <string.h>
@@ -147,6 +148,17 @@ static int autograd_is_differentiable_type(dtype_t dtype)
     return dtype == DTYPE_FLOAT32 || dtype == DTYPE_FLOAT64;
 }
 
+static int autograd_is_low_precision_type(dtype_t dtype)
+{
+    return dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16;
+}
+
+static int autograd_is_matmul_differentiable_type(dtype_t dtype)
+{
+    return autograd_is_differentiable_type(dtype) ||
+        autograd_is_low_precision_type(dtype);
+}
+
 static void autograd_save_versions(autograd_node_t *node, tensor_t *result)
 {
     node->result_version = autograd_tensor_version(result);
@@ -159,7 +171,11 @@ static int autograd_node_add(tensor_t *result, autograd_kind_t kind,
                              tensor_t *a, tensor_t *b, tensor_t *c,
                              operation_type_t op)
 {
-    if (autograd_suppressed || !result || !autograd_is_differentiable_type(result->dtype))
+    int supported_type = result &&
+        (autograd_is_differentiable_type(result->dtype) ||
+         ((kind == AUTOGRAD_MATMUL || kind == AUTOGRAD_VIEW) &&
+          autograd_is_low_precision_type(result->dtype)));
+    if (autograd_suppressed || !supported_type)
         return 1;
 
     if (result->grad_fn)
@@ -361,6 +377,14 @@ int autograd_record_scatter_add(tensor_t *result, tensor_t *input, tensor_t *ind
 
 int autograd_record_cast(tensor_t *result, tensor_t *a)
 {
+    if (autograd_suppressed)
+        return 1;
+    if (a->requires_grad && autograd_is_low_precision_type(a->dtype) &&
+        autograd_is_differentiable_type(result->dtype))
+    {
+        CUDA_THROW_INVALID("Autograd through low-precision dtype casts is not supported");
+        return 0;
+    }
     if (a->requires_grad && autograd_is_differentiable_type(a->dtype) &&
         !autograd_is_differentiable_type(result->dtype))
     {
@@ -401,9 +425,9 @@ int autograd_set_requires_grad(tensor_t *tensor, int requires_grad)
         CUDA_THROW_INVALID("Cannot configure gradient tracking on an uninitialized tensor");
         return 0;
     }
-    if (requires_grad && !autograd_is_differentiable_type(tensor->dtype))
+    if (requires_grad && !autograd_is_matmul_differentiable_type(tensor->dtype))
     {
-        CUDA_THROW_INVALID("Gradient tracking currently supports float32 and float64 tensors");
+        CUDA_THROW_INVALID("Gradient tracking supports float32, float64, float16 and bfloat16 tensors");
         return 0;
     }
     if (tensor->grad_fn ||
@@ -565,8 +589,43 @@ static tensor_t *gradient_negate(tensor_t *tensor)
     return cuda_unary_op(tensor, OP_NEG);
 }
 
+static tensor_t *gradient_cast(tensor_t *tensor, dtype_t dtype)
+{
+    if (tensor->dtype == dtype)
+    {
+        tensor->ref_count++;
+        return tensor;
+    }
+    if (fusion_active())
+        return fusion_cast(tensor, dtype);
+
+    tensor_t *result = cuda_tensor_create_empty_dtype(tensor->shape, tensor->ndims, dtype);
+    if (!result)
+        return NULL;
+    tensor_t *packed = is_contiguous(tensor) ? NULL : cuda_tensor_clone(tensor);
+    if (!is_contiguous(tensor) && !packed)
+    {
+        cuda_tensor_destroy(result);
+        return NULL;
+    }
+    cudaError_t status = launch_tensor_cast(packed ? packed->data : tensor->data, result->data,
+                                            tensor->dtype, dtype, tensor->total_size);
+    if (packed) cuda_tensor_destroy(packed);
+    if (status != cudaSuccess)
+    {
+        cuda_tensor_destroy(result);
+        CUDA_THROW_RUNTIME("Gradient dtype conversion failed: %s", cudaGetErrorString(status));
+        return NULL;
+    }
+    return result;
+}
+
 static tensor_t *gradient_unbroadcast(tensor_t *gradient, const tensor_t *target)
 {
+    if (gradient->ndims == target->ndims &&
+        memcmp(gradient->shape, target->shape, target->ndims * sizeof(int)) == 0)
+        return gradient;
+
     if (gradient->total_size == target->total_size)
     {
         int target_shape[MAX_DIMS];
@@ -1162,6 +1221,11 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                 return 0;
             }
             {
+                dtype_t gradient_dtype = autograd_is_low_precision_type(node->a->dtype)
+                    ? DTYPE_FLOAT32 : node->a->dtype;
+                tensor_t *a_values = gradient_cast(node->a, gradient_dtype);
+                tensor_t *b_values = gradient_cast(node->b, gradient_dtype);
+                tensor_t *upstream_values = gradient_cast(upstream, gradient_dtype);
                 int a_axes[MAX_DIMS], b_axes[MAX_DIMS];
                 for (int d = 0; d < node->a->ndims; d++) a_axes[d] = d;
                 for (int d = 0; d < node->b->ndims; d++) b_axes[d] = d;
@@ -1173,18 +1237,27 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                 a_axes[a_second_last] = a_last;
                 b_axes[b_last] = b_second_last;
                 b_axes[b_second_last] = b_last;
-                tensor_t *b_transposed = cuda_tensor_transpose(node->b, b_axes, node->b->ndims);
-                if (b_transposed)
+                tensor_t *b_transposed = b_values
+                    ? cuda_tensor_transpose(b_values, b_axes, node->b->ndims) : NULL;
+                if (upstream_values && b_transposed)
                 {
-                    ga = cuda_tensor_matmul(upstream, b_transposed);
+                    ga = cuda_tensor_matmul(upstream_values, b_transposed);
                     cuda_tensor_destroy(b_transposed);
                 }
-                tensor_t *a_transposed = cuda_tensor_transpose(node->a, a_axes, node->a->ndims);
-                if (a_transposed)
+                else if (b_transposed)
+                    cuda_tensor_destroy(b_transposed);
+                tensor_t *a_transposed = a_values
+                    ? cuda_tensor_transpose(a_values, a_axes, node->a->ndims) : NULL;
+                if (a_transposed && upstream_values)
                 {
-                    gb = cuda_tensor_matmul(a_transposed, upstream);
+                    gb = cuda_tensor_matmul(a_transposed, upstream_values);
                     cuda_tensor_destroy(a_transposed);
                 }
+                else if (a_transposed)
+                    cuda_tensor_destroy(a_transposed);
+                if (a_values) cuda_tensor_destroy(a_values);
+                if (b_values) cuda_tensor_destroy(b_values);
+                if (upstream_values) cuda_tensor_destroy(upstream_values);
             }
             break;
 
@@ -1250,7 +1323,7 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
             break;
 
         case AUTOGRAD_CAST:
-            ga = tensor_cast(upstream, node->a->dtype);
+            ga = gradient_cast(upstream, node->a->dtype);
             break;
 
         case AUTOGRAD_WHERE:
@@ -1310,9 +1383,9 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient, int retain_graph)
         CUDA_THROW_INVALID("backward() requires a tensor marked with requiresGrad()");
         return 0;
     }
-    if (!autograd_is_differentiable_type(tensor->dtype))
+    if (!autograd_is_matmul_differentiable_type(tensor->dtype))
     {
-        CUDA_THROW_INVALID("backward() is only supported for floating-point tensors");
+        CUDA_THROW_INVALID("backward() is only supported for float32, float64, float16 and bfloat16 tensors");
         return 0;
     }
     if (!gradient && tensor->total_size != 1)
@@ -1337,18 +1410,27 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient, int retain_graph)
     if (success && !gradient)
     {
         scalar_value_t one = {0};
-        one.dtype = tensor->dtype;
+        one.dtype = autograd_is_low_precision_type(tensor->dtype)
+            ? DTYPE_FLOAT32 : tensor->dtype;
         if (one.dtype == DTYPE_FLOAT64) one.v.f64 = 1.0;
         else one.v.f32 = 1.0f;
         int shape[MAX_DIMS];
         memcpy(shape, tensor->shape, tensor->ndims * sizeof(int));
-        gradient = cuda_tensor_create_with_value(shape, tensor->ndims, one, tensor->dtype);
+        gradient = cuda_tensor_create_with_value(shape, tensor->ndims, one, one.dtype);
         gradient_owned = gradient != NULL;
     }
     else if (success)
     {
-        gradient->ref_count++;
-        gradient_owned = 1;
+        if (autograd_is_low_precision_type(tensor->dtype))
+        {
+            gradient = gradient_cast(gradient, DTYPE_FLOAT32);
+            gradient_owned = gradient != NULL;
+        }
+        else
+        {
+            gradient->ref_count++;
+            gradient_owned = 1;
+        }
     }
 
     int suppression_active = 0;

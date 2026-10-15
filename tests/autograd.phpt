@@ -193,6 +193,19 @@ try {
 }
 echo "rounding derivatives and cast validation\n";
 
+$castGradient = CudaArray::fromFlatArray([1.5, -2.0], [2])->requiresGrad();
+($castGradient->astype('float64') * 2.0)->sum()->backward();
+check($castGradient->grad()->dtype() === 'float32');
+check($castGradient->grad()->toArray() === [2.0, 2.0]);
+$fusedCastGradient = CudaArray::fromFlatArray([1.5, -2.0], [2])->requiresGrad();
+$fusedCastGraph = Fusion::compile(function ($x) {
+    $loss = ($x->astype('float64') * 2.0)->sum();
+    $loss->backward();
+    return $x->grad();
+}, [$fusedCastGradient]);
+check($fusedCastGraph->run($fusedCastGradient)->toArray() === [2.0, 2.0]);
+echo "widened cast backward gradients\n";
+
 $input = CudaArray::fromFlatArray([1, 2, 3, 4], [2, 2])->requiresGrad();
 $weight = CudaArray::fromFlatArray([1, 0, 0, 1], [2, 2])->requiresGrad();
 $graph = Fusion::compile(function ($x, $w) {
@@ -252,6 +265,7 @@ batched matmul gradients
 saved tensor version checks
 retainGraph and graph release
 rounding derivatives and cast validation
+widened cast backward gradients
 Fusion backward graph
 fused softmax cross-entropy gradients
 Fusion materialization retains gradient history

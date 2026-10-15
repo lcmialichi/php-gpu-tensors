@@ -8,8 +8,6 @@
 #include <limits.h>
 #include <stdint.h>
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(nn_available_args, 0, 0, _IS_BOOL, 0)
-ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_conv_args, 0, 2, Cuda\\CudaArray, 0)
 ZEND_ARG_OBJ_INFO(0, input, Cuda\\CudaArray, 0)
 ZEND_ARG_OBJ_INFO(0, weights, Cuda\\CudaArray, 0)
@@ -41,6 +39,11 @@ static tensor_t *nn_input(zval *value, int ndims)
     cuda_array_obj *object = php_cuda_array_fetch_valid_object(Z_OBJ_P(value));
     if (!object) return NULL;
     tensor_t *tensor = object->tensor_handle;
+    if (tensor->requires_grad)
+    {
+        CUDA_THROW_INVALID("Cuda\\NN inference does not support gradient-tracked tensors");
+        return NULL;
+    }
     if (tensor->dtype != DTYPE_FLOAT32 || tensor->ndims != ndims || !is_contiguous(tensor)) {
         CUDA_THROW_INVALID("Cuda\\NN expects contiguous float32 tensors with %d dimensions", ndims);
         return NULL;
@@ -101,14 +104,13 @@ static void nn_result(INTERNAL_FUNCTION_PARAMETERS, tensor_t *result, int ok)
     if (!ok) {
         cudaStreamSynchronize(NULL);
         cuda_tensor_destroy(result);
-        CUDA_THROW_RUNTIME("cuDNN inference failed: %s", cuda_nn_error());
+        CUDA_THROW_RUNTIME("Cuda\\NN operation failed: %s", cuda_nn_error());
         return;
     }
     create_result_object(return_value, result);
 }
 
 ZEND_METHOD(NN, __construct) { ZEND_PARSE_PARAMETERS_NONE(); }
-ZEND_METHOD(NN, isAvailable) { ZEND_PARSE_PARAMETERS_NONE(); RETURN_BOOL(cuda_nn_available()); }
 ZEND_METHOD(NN, conv2d)
 {
     zval *x, *w, *bias = NULL, *stride_value = NULL, *padding_value = NULL, *dilation_value = NULL;
@@ -146,7 +148,6 @@ ZEND_METHOD(NN, conv2d)
     }
     int shape[4], kernel[] = {weights->shape[2], weights->shape[3]};
     if (!nn_shape(input, weights->shape[0], kernel, stride, padding, dilation, shape)) RETURN_THROWS();
-    if (!cuda_nn_available()) { CUDA_THROW_RUNTIME("%s", cuda_nn_error()); RETURN_THROWS(); }
     tensor_t *result = cuda_tensor_create_empty_dtype(shape, 4, DTYPE_FLOAT32);
     if (!result) RETURN_THROWS();
     nn_result(INTERNAL_FUNCTION_PARAM_PASSTHRU, result, cuda_nn_conv(input->data, weights->data,
@@ -177,7 +178,6 @@ ZEND_METHOD(NN, pool2d)
         RETURN_THROWS();
     }
     if (!nn_shape(input, input->shape[1], window, stride, padding, dilation, shape)) RETURN_THROWS();
-    if (!cuda_nn_available()) { CUDA_THROW_RUNTIME("%s", cuda_nn_error()); RETURN_THROWS(); }
     tensor_t *result = cuda_tensor_create_empty_dtype(shape, 4, DTYPE_FLOAT32);
     if (!result) RETURN_THROWS();
     nn_result(INTERNAL_FUNCTION_PARAM_PASSTHRU, result, cuda_nn_pool(input->data, result->data, input->shape,
@@ -191,14 +191,12 @@ ZEND_METHOD(NN, softmax)
     ZEND_PARSE_PARAMETERS_END();
     tensor_t *input = nn_input(x, 4);
     if (!input) RETURN_THROWS();
-    if (!cuda_nn_available()) { CUDA_THROW_RUNTIME("%s", cuda_nn_error()); RETURN_THROWS(); }
     tensor_t *result = cuda_tensor_create_empty_dtype(input->shape, 4, DTYPE_FLOAT32);
     if (!result) RETURN_THROWS();
     nn_result(INTERNAL_FUNCTION_PARAM_PASSTHRU, result, cuda_nn_softmax(input->data, result->data, input->shape));
 }
 static const zend_function_entry nn_methods[] = {
     ZEND_ME(NN, __construct, nn_private_args, ZEND_ACC_PRIVATE)
-    ZEND_ME(NN, isAvailable, nn_available_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(NN, conv2d, nn_conv_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(NN, pool2d, nn_pool_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(NN, softmax, nn_softmax_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)

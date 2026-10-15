@@ -3,7 +3,7 @@ cuDNN strict FP32 convolution groups, stride, dilation, padding, bias, pooling a
 --SKIPIF--
 <?php
 if (!extension_loaded('cuda') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
-if (!Cuda\NN::isAvailable()) die('skip cuDNN optional backend unavailable');
+if (!cuda_get_backend_info()['cudnn']) die('skip cuDNN optional backend unavailable');
 ?>
 --FILE--
 <?php

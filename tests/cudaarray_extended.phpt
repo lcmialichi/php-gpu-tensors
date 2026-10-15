@@ -45,6 +45,9 @@ echo json_encode($gatherGraph->run($source, $indices)->toArray()), "\n";
 $scatterGraph = Fusion::compile(fn($x, $i, $u) => $x->scatterAdd($i, $u, 1), [$base, $indices, $updates]);
 echo json_encode($scatterGraph->run($base, $indices, $updates)->toArray()), "\n";
 var_dump($gatherGraph->getStats()['asyncCompatible']);
+if ($gatherGraph->getStats()['cudaGraphCompatible'] ||
+    $scatterGraph->getStats()['cudaGraphCompatible'])
+    throw new RuntimeException('indexed Fusion plan unexpectedly supports CUDA Graph capture');
 $transposedSource = $source->transpose();
 $transposedIndices = CudaArray::fromFlatArray([2, 0, 1, 2, 0, 1], [3, 2], 'int32');
 $transposedGather = Fusion::compile(fn($x, $i) => $x->gather($i, 0), [$transposedSource, $transposedIndices]);
@@ -62,6 +65,11 @@ fails(fn() => $input->var(1, 2));
 fails(fn() => $gatherGraph->run($source, $badFusionIndices));
 fails(fn() => $scatterGraph->run($base, $badFusionIndices, $updates));
 fails(fn() => $gatherGraph->runAsync($source, $indices));
+try {
+    $scatterGraph->runAsync($base, $indices, $updates);
+    throw new RuntimeException('scatterAdd Fusion unexpectedly supports async execution');
+} catch (Cuda\RuntimeException $error) {
+}
 
 $tracked = (new CudaArray([-1.0, 0.5, 3.0]))->requiresGrad();
 $tracked->clamp(0, 2)->sum()->backward();

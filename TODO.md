@@ -27,12 +27,14 @@ consistent public API across the PHP extension.
 
 - [x] Add Fusion concat capture, native execution and autograd coverage for
   strided inputs and supported dtypes.
-- [ ] Audit differentiable `CudaArray` and NN operations against implemented
+- [x] Audit differentiable `CudaArray` and NN operations against implemented
   backward rules.
-- [ ] Audit tensor operations against Fusion capture, code generation and
+- [x] Audit tensor operations against Fusion capture, code generation and
   execution support.
 - [ ] Implement missing autograd and Fusion support for useful operations,
   preserving explicit errors where semantics are undefined.
+- [x] Add autograd for FP16/BF16 matmul with documented gradient dtype and
+  broadcasted-batch behavior.
 - [ ] Test eager/Fusion result parity and gradients across supported dtypes,
   shapes and layouts.
 
@@ -40,6 +42,8 @@ consistent public API across the PHP extension.
 
 - [ ] Extend Fusion capture to common elementwise expressions that currently
   require separate native calls.
+- [x] Capture implicit broadcasting and explicit `broadcastTo()` views,
+  including transposed sources and backward reduction through broadcast axes.
 - [ ] Review composite operations for avoidable intermediates while preserving
   eager evaluation semantics.
 - [ ] Keep eager and fused results consistent across supported dtypes, shapes
@@ -68,6 +72,9 @@ consistent public API across the PHP extension.
 
 ## 7. Keep the public API consistent
 
+- [x] Add automatic native CUDA fallback for `Cuda\NN` when cuDNN is absent or
+  reports a recoverable unsupported operation; never fall back to CPU.
+- [x] Remove backend preflight from the `Cuda\NN` inference API.
 - [ ] Keep README, PHP stubs, runtime arginfo and tests aligned for
   `CudaArray`, `ContiguousArray`/`HostArray`, `Compiler`, `CompiledModule`,
   Fusion, optimizers, NN and global `cuda_*` functions.
@@ -77,5 +84,6 @@ consistent public API across the PHP extension.
 
 ## Next implementation
 
-Next, complete the audit of differentiable `CudaArray` and NN operations for
-missing autograd and Fusion coverage, then implement the highest-priority gaps.
+Continue closing Fusion's documented limits, prioritizing low-precision
+elementwise expressions, then async indexed execution and broader eager/Fusion
+parity. Preserve explicit errors where a backend boundary remains intentional.

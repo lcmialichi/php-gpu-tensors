@@ -211,10 +211,11 @@ tensor_t *fusion_unary(tensor_t *a, operation_type_t op)
 
 tensor_t *fusion_cast(tensor_t *a, dtype_t dtype)
 {
-    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16 ||
-        dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16)
+    int low_precision_source = a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16;
+    int low_precision_target = dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16;
+    if ((low_precision_source && dtype != DTYPE_FLOAT32) || low_precision_target)
     {
-        CUDA_THROW_INVALID("Low-precision dtype conversion is not supported inside Fusion");
+        CUDA_THROW_INVALID("Fusion supports widening float16 or bfloat16 to float32 only");
         return NULL;
     }
     tensor_t *tensor = fusion_record(FUSION_CAST, a, NULL, OP_ADD, a->shape, a->ndims, dtype);

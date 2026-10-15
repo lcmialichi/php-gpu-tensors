@@ -91,6 +91,71 @@ foreach (['float16', 'bfloat16'] as $dtype) {
         foreach ($values as $column => $value)
             check(abs($approximate[$row][$column] - $value) < 0.005,
                 "$dtype matmul exceeded the numerical tolerance");
+
+    $scalarLeft = A::fromFlatArray([1, 2], [1, 2], $dtype)->requiresGrad();
+    $scalarRight = A::fromFlatArray([3, 4], [2, 1], $dtype)->requiresGrad();
+    $scalarProduct = $scalarLeft->matmul($scalarRight);
+    $scalarProduct->backward();
+    check($scalarProduct->toArray() === [[11.0]], "$dtype tracked matmul result mismatch");
+    check($scalarLeft->grad()->dtype() === 'float32' &&
+        $scalarLeft->grad()->toArray() === [[3.0, 4.0]],
+        "$dtype left gradient must accumulate in float32");
+    check($scalarRight->grad()->dtype() === 'float32' &&
+        $scalarRight->grad()->toArray() === [[1.0], [2.0]],
+        "$dtype right gradient must accumulate in float32");
+
+    $seededLeft = A::fromFlatArray([1, 2, 3, 4], [2, 2], $dtype)->requiresGrad();
+    $seededRight = A::fromFlatArray([5, 6, 7, 8], [2, 2], $dtype)->requiresGrad();
+    $seededProduct = $seededLeft->matmul($seededRight);
+    $seededProduct->backward(A::fromFlatArray([1, 0, 0, 1], [2, 2], $dtype));
+    check($seededLeft->grad()->dtype() === 'float32' &&
+        $seededLeft->grad()->toArray() === [[5.0, 7.0], [6.0, 8.0]],
+        "$dtype explicit seed gradient mismatch");
+    check($seededRight->grad()->toArray() === [[1.0, 3.0], [2.0, 4.0]],
+        "$dtype right explicit seed gradient mismatch");
+
+    $broadcastTrackedLeft = A::fromFlatArray(
+        [1, 2, 3, 4, 2, 0, 0, 2], [2, 1, 2, 2], $dtype)->requiresGrad();
+    $broadcastTrackedRight = A::fromFlatArray(
+        [5, 6, 1, 2, 2, 1], [1, 3, 2, 1], $dtype)->requiresGrad();
+    $broadcastProduct = $broadcastTrackedLeft->matmul($broadcastTrackedRight);
+    $broadcastProduct->backward(A::ones([2, 3, 2, 1], $dtype));
+    check($broadcastTrackedLeft->grad()->dtype() === 'float32' &&
+        $broadcastTrackedLeft->grad()->toArray() === [
+            [[[8.0, 9.0], [8.0, 9.0]]],
+            [[[8.0, 9.0], [8.0, 9.0]]],
+        ], "$dtype broadcasted left gradient mismatch");
+    check($broadcastTrackedRight->grad()->toArray() === [
+        [[[6.0], [8.0]], [[6.0], [8.0]], [[6.0], [8.0]]],
+    ], "$dtype broadcasted right gradient mismatch");
+
+    $transposedLeaf = A::fromFlatArray([1, 2, 3, 4], [2, 2], $dtype)->requiresGrad();
+    $transposedLeaf->transpose()->matmul(A::ones([2, 1], $dtype))
+        ->backward(A::ones([2, 1], $dtype));
+    check($transposedLeaf->grad()->dtype() === 'float32' &&
+        $transposedLeaf->grad()->toArray() === [[1.0, 1.0], [1.0, 1.0]],
+        "$dtype transposed-view gradient mismatch");
+
+    $fusedLeft = A::fromFlatArray([1, 2], [1, 2], $dtype)->requiresGrad();
+    $fusedRight = A::fromFlatArray([3, 4], [2, 1], $dtype)->requiresGrad();
+    $gradientGraph = Fusion::compile(function ($a, $b) {
+        $product = $a->matmul($b);
+        $product->backward();
+        return [$product, $a->grad(), $b->grad()];
+    }, [$fusedLeft, $fusedRight]);
+    [$fusedProduct, $fusedLeftGradient, $fusedRightGradient] =
+        $gradientGraph->run($fusedLeft, $fusedRight);
+    check($fusedProduct->toArray() === [[11.0]] &&
+        $fusedLeftGradient->dtype() === 'float32' &&
+        $fusedLeftGradient->toArray() === [[3.0, 4.0]] &&
+        $fusedRightGradient->toArray() === [[1.0], [2.0]],
+        "$dtype Fusion matmul backward mismatch");
+
+    try {
+        A::ones([2, 2], $dtype)->requiresGrad()->astype('float32');
+        throw new RuntimeException("$dtype cast silently dropped gradient tracking");
+    } catch (Cuda\InvalidArgumentException) {
+    }
 }
 
 try {
@@ -98,12 +163,6 @@ try {
     throw new RuntimeException('unsupported low-precision arithmetic was accepted');
 } catch (Cuda\InvalidArgumentException $error) {
 }
-try {
-    $half->requiresGrad();
-    throw new RuntimeException('low-precision gradient tracking was accepted');
-} catch (Cuda\InvalidArgumentException $error) {
-}
-
 echo "FP16/BF16 conversion and matmul checks passed\n";
 ?>
 --EXPECT--

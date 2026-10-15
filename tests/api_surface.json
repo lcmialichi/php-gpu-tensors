@@ -2288,13 +2288,6 @@
                     ],
                     "returnType": "Cuda\\CudaArray"
                 },
-                "isAvailable": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "bool"
-                },
                 "pool2d": {
                     "static": true,
                     "abstract": false,

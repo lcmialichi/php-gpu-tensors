@@ -4,6 +4,8 @@
 #include "reduction_ops.h"
 #include "indexed_ops.h"
 #include "concat_kernels.h"
+#include "factory_kernels.h"
+#include "tensor_factory.h"
 void fusion_cleanup_error(const char *operation, CUresult error)
 {
     if (error != CUDA_SUCCESS)
@@ -118,6 +120,21 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
             cuda_backend_info info = {0};
             cuda_blas_info(&info);
             CUDA_THROW_RUNTIME("Fusion matmul submission failed (cuBLAS status %d)", info.last_blas_status);
+            return 0;
+        }
+        return 1;
+    }
+    if (node->kind == FUSION_CAST)
+    {
+        tensor_t *packed = is_contiguous(a) ? NULL : cuda_tensor_clone(a);
+        if (!is_contiguous(a) && !packed) return 0;
+        cudaError_t status = launch_tensor_cast(packed ? packed->data : a->data,
+            result->data, a->dtype, result->dtype, a->total_size);
+        if (packed) cuda_tensor_destroy(packed);
+        if (status != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Fusion low-precision cast failed: %s",
+                               cudaGetErrorString(status));
             return 0;
         }
         return 1;
@@ -623,6 +640,7 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
                 case FUSION_REDUCE: result = cuda_tensor_reduce(a, axis, node->op); break;
                 case FUSION_ARG_REDUCE: result = cuda_tensor_reduce_arg(a, axis, node->op); break;
                 case FUSION_MATMUL: result = cuda_tensor_matmul(a, b); break;
+                case FUSION_CAST: result = fusion_cast_eager(a, tensor->dtype); break;
                 case FUSION_VIEW:
                     if (node->op == OP_RESHAPE)
                         result = cuda_tensor_reshape(a, tensor->shape, tensor->ndims);

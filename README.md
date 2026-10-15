@@ -245,10 +245,15 @@ Low-precision `matmul()` uses cuBLAS for eligible 2D workloads and a tiled CUDA
 kernel otherwise, including batched layouts. `float16` and `bfloat16` matmul
 outputs retain the operand dtype after `float32` accumulation. The global
 `cuda_set_matmul_precision()` setting applies to `float32` matmul only.
-Elementwise arithmetic, general reductions, `where()`, indexed operations and
-low-precision autograd are not yet supported for these dtypes and report an
-explicit error. `softmax()` and `layerNorm()` widen low-precision inputs to
-`float32` and return `float32` results.
+Elementwise arithmetic, general reductions, `where()` and indexed operations
+are not yet supported for these dtypes and report an explicit error.
+`requiresGrad()` supports FP16/BF16 matmul paths, including batched broadcast
+and shape views; the returned leaf gradients use `float32`, while matmul
+outputs and explicit backward seeds retain the operand dtype. Fusion supports
+this backward path with a native low-precision-to-FP32 cast boundary; that
+boundary is not compatible with asynchronous replay or CUDA Graph capture.
+`softmax()` and `layerNorm()` widen low-precision inputs to `float32` and
+return `float32` results.
 
 ### Shape operations, views and indexing
 
@@ -392,17 +397,20 @@ Compatible input shapes, dtypes and strides are required; input values and
 pointers may change between replays. Captured closure tensors stay alive with
 the graph, so use callback parameters for replaceable inputs.
 
-Fusion can combine elementwise arithmetic, scalar operations, unary math,
-comparisons, `where()`, safe `astype()` conversions and supported reshape,
-transpose and slice views. It can build generated kernels around native
-boundaries:
+Fusion can combine elementwise arithmetic with implicit broadcasting, scalar
+operations, unary math, comparisons, `where()`, safe `astype()` conversions,
+and reshape, transpose, slice and explicit `broadcastTo()` views. It can build
+generated kernels around native boundaries:
 
-- **Native boundaries:** reductions, `matmul()` (Fusion matmul currently
-  requires `float32`), and powers use existing kernels.
-- **Not captured:** `gather()` and `scatterAdd()` reject capture. CPU reads and
-  other unsupported operations materialize their inputs during scoped
-  `Fusion::run()`; they are rejected when they would require reading placeholder
-  data during `Fusion::compile()`.
+- **Native boundaries:** reductions, `matmul()` (including matching
+  `float32`, `float16` and `bfloat16` inputs), powers, `concat()`, `gather()`
+  and `scatterAdd()` use existing kernels. Indexed operations validate indices
+  synchronously; `concat()` and indexed operations are not compatible with
+  asynchronous replay or CUDA Graph capture.
+- **Not captured:** cuDNN inference and operations requiring CPU reads are not
+  captured. Other unsupported operations materialize their inputs during
+  scoped `Fusion::run()`; they are rejected when they would require reading
+  placeholder data during `Fusion::compile()`.
 - **Inspect and cache:** `getStats()`, `getPlan()` and `getSource()` describe
   generated work. PTX is cached per PHP request/thread; use
   `Fusion::getCacheStats()` and `Fusion::clearCache()` to inspect or clear it.
@@ -521,16 +529,15 @@ explicit matmul options.
 ## CNN inference with optional cuDNN
 
 `Cuda\NN` provides static inference methods when the extension is built with
-cuDNN. Inputs are initialized, contiguous `float32` tensors in NCHW format;
-filters use OIHW. NN does not silently cast or pack views, run on the CPU,
-participate in autograd or participate in Fusion capture.
+CUDA. Inputs are initialized, contiguous `float32` tensors in NCHW format;
+filters use OIHW. cuDNN is preferred when available and supports the operation;
+otherwise the extension uses native CUDA kernels. There is no CPU fallback.
+NN operations do not require a backend preflight. They do not silently cast or
+pack views, participate in autograd or participate in Fusion capture.
 
 ```php
 use Cuda\NN;
 
-if (!NN::isAvailable()) {
-    throw new RuntimeException('Build with cuDNN to use CNN inference.');
-}
 $features = NN::conv2d($input, $weights, $bias, padding: [1, 1]);
 $pooled = NN::pool2d($features, window: [2, 2], stride: [2, 2]);
 $probabilities = NN::softmax($pooled);
@@ -542,10 +549,12 @@ $probabilities = NN::softmax($pooled);
   excludes padded cells.
 - `softmax()` computes channel softmax.
 
-The current backend uses deterministic FP32 FMA algorithms and reusable
-workspace. Calls complete on the default stream. Backpropagation, mixed
-precision, asynchronous CNN plans and convolution/activation graph fusion are
-not currently included.
+Both backends preserve the same FP32 inference semantics. The cuDNN
+convolution path uses deterministic FMA algorithms and a reusable bounded
+workspace; native CUDA kernels cover convolution, pooling and softmax when
+cuDNN is absent or reports a recoverable unsupported configuration. Calls
+complete on the default stream. Backpropagation, mixed precision, asynchronous
+CNN plans and convolution/activation graph fusion are not currently included.
 
 ## Training example
 
@@ -577,7 +586,7 @@ batch size or learning rate.
 | `Cuda\Fusion` / `Cuda\FusionGraph` | Capture, compiled replay, PTX cache and plan diagnostics |
 | `Cuda\FusionExecution` | Pending asynchronous Fusion execution and result collection |
 | `Cuda\Compiler` / `Cuda\CompiledModule` | NVRTC compilation, kernel launch, async operations and PTX |
-| `Cuda\NN` | Optional cuDNN CNN inference |
+| `Cuda\NN` | CUDA CNN inference with optional cuDNN acceleration |
 | `cuda_*()` functions | Device management, memory, synchronization, backend diagnostics and matmul settings |
 | `Cuda\Exception` | Base class for runtime, argument, allocation and compilation errors |
 
@@ -593,11 +602,14 @@ Current limits:
 - `astype()` allows safe conversions; autograd tracks floating-point casts.
 - Fusion matmul supports matching `float32`, `float16` and `bfloat16` operands;
   low-precision products accumulate in `float32` and retain the input dtype.
-  Low-precision elementwise Fusion operations and casts are not supported yet;
-  powers are native boundaries.
-- `gather()` and `scatterAdd()` are eager-only. `scatterAdd()` supports
+  Low-precision elementwise Fusion operations are not supported yet. Widening
+  FP16/BF16 casts to `float32` use a native boundary and are not compatible with
+  asynchronous replay or CUDA Graph capture; powers are also native boundaries.
+- `gather()` and `scatterAdd()` support synchronous Fusion execution but not
+  asynchronous replay or CUDA Graph capture. `scatterAdd()` supports
   `float32` and `float64`.
-- cuDNN is optional and its CNN inference API is not part of autograd or Fusion.
+- cuDNN is optional. Its CNN inference API rejects Fusion capture and
+  gradient-tracked inputs; it does not participate in autograd.
 
 ## Validation status
 

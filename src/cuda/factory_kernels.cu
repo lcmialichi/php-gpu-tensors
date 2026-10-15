@@ -101,24 +101,24 @@ __global__ static void scale_low_precision_kernel(
     }
 }
 
-__device__ static float read_cast_source(const void *source, dtype_t dtype, size_t index)
+__device__ static double read_cast_source(const void *source, dtype_t dtype, size_t index)
 {
     switch (dtype)
     {
-    case DTYPE_FLOAT16: return __half2float(__ushort_as_half(((const uint16_t *)source)[index]));
-    case DTYPE_BFLOAT16: return __bfloat162float(__ushort_as_bfloat16(((const uint16_t *)source)[index]));
+    case DTYPE_FLOAT16: return (double)__half2float(__ushort_as_half(((const uint16_t *)source)[index]));
+    case DTYPE_BFLOAT16: return (double)__bfloat162float(__ushort_as_bfloat16(((const uint16_t *)source)[index]));
     case DTYPE_FLOAT32: return ((const float *)source)[index];
-    case DTYPE_FLOAT64: return (float)((const double *)source)[index];
-    case DTYPE_INT8: return (float)((const int8_t *)source)[index];
-    case DTYPE_INT16: return (float)((const int16_t *)source)[index];
-    case DTYPE_INT32: return (float)((const int32_t *)source)[index];
-    case DTYPE_INT64: return (float)((const int64_t *)source)[index];
-    case DTYPE_UINT8: return (float)((const uint8_t *)source)[index];
-    case DTYPE_UINT16: return (float)((const uint16_t *)source)[index];
-    case DTYPE_UINT32: return (float)((const uint32_t *)source)[index];
-    case DTYPE_UINT64: return (float)((const uint64_t *)source)[index];
-    case DTYPE_BOOL: return ((const bool *)source)[index] ? 1.0f : 0.0f;
-    default: return 0.0f;
+    case DTYPE_FLOAT64: return ((const double *)source)[index];
+    case DTYPE_INT8: return (double)((const int8_t *)source)[index];
+    case DTYPE_INT16: return (double)((const int16_t *)source)[index];
+    case DTYPE_INT32: return (double)((const int32_t *)source)[index];
+    case DTYPE_INT64: return (double)((const int64_t *)source)[index];
+    case DTYPE_UINT8: return (double)((const uint8_t *)source)[index];
+    case DTYPE_UINT16: return (double)((const uint16_t *)source)[index];
+    case DTYPE_UINT32: return (double)((const uint32_t *)source)[index];
+    case DTYPE_UINT64: return (double)((const uint64_t *)source)[index];
+    case DTYPE_BOOL: return ((const bool *)source)[index] ? 1.0 : 0.0;
+    default: return 0.0;
     }
 }
 
@@ -129,13 +129,13 @@ __global__ static void cast_tensor_kernel(
     for (size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
          i < count; i += (size_t)blockDim.x * gridDim.x)
     {
-        float value = read_cast_source(source, source_dtype, i);
+        double value = read_cast_source(source, source_dtype, i);
         if (destination_dtype == DTYPE_FLOAT16)
-            ((uint16_t *)destination)[i] = __half_as_ushort(__float2half_rn(value));
+            ((uint16_t *)destination)[i] = __half_as_ushort(__float2half_rn((float)value));
         else if (destination_dtype == DTYPE_BFLOAT16)
-            ((uint16_t *)destination)[i] = __bfloat16_as_ushort(__float2bfloat16_rn(value));
+            ((uint16_t *)destination)[i] = __bfloat16_as_ushort(__float2bfloat16_rn((float)value));
         else if (destination_dtype == DTYPE_FLOAT32)
-            ((float *)destination)[i] = value;
+            ((float *)destination)[i] = (float)value;
         else if (destination_dtype == DTYPE_FLOAT64)
             ((double *)destination)[i] = (double)value;
     }
@@ -147,11 +147,12 @@ extern "C" cudaError_t launch_tensor_cast(
     size_t total_elements)
 {
     if (!total_elements) return cudaSuccess;
-    if (!source || !destination ||
-        (source_dtype != DTYPE_FLOAT16 && source_dtype != DTYPE_BFLOAT16 &&
-         destination_dtype != DTYPE_FLOAT16 && destination_dtype != DTYPE_BFLOAT16) ||
-        (destination_dtype != DTYPE_FLOAT16 && destination_dtype != DTYPE_BFLOAT16 &&
-         destination_dtype != DTYPE_FLOAT32 && destination_dtype != DTYPE_FLOAT64))
+    int source_supported = source_dtype == DTYPE_FLOAT16 || source_dtype == DTYPE_BFLOAT16 ||
+        source_dtype == DTYPE_FLOAT32 || source_dtype == DTYPE_FLOAT64;
+    int destination_supported = destination_dtype == DTYPE_FLOAT16 ||
+        destination_dtype == DTYPE_BFLOAT16 || destination_dtype == DTYPE_FLOAT32 ||
+        destination_dtype == DTYPE_FLOAT64;
+    if (!source || !destination || !source_supported || !destination_supported)
         return cudaErrorInvalidValue;
     cast_tensor_kernel<<<cuda_grid_1d(total_elements), 256>>>(
         source, destination, source_dtype, destination_dtype, total_elements);

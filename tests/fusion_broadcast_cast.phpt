@@ -29,6 +29,35 @@ var_dump($graph->run($narrow, $wide)->toArray() === (($narrow * 2) + $wide)->toA
 $u16 = CudaArray::fromBuffer(pack('v*', 1000, 2000), [2], 'uint16');
 $float = new CudaArray([0.5, 1.5]);
 var_dump(Fusion::run(fn() => $u16 + $float)->toArray() === ($u16 + $float)->toArray());
+$row = new CudaArray([1, 2, 3]);
+$matrix = new CudaArray([[10, 20, 30], [40, 50, 60]]);
+$broadcastGraph = Fusion::compile(fn($x) => $x->broadcastTo([2, 3]), [$row]);
+$broadcastResult = $broadcastGraph->run($row);
+var_dump($broadcastResult->getShape(), $broadcastResult->toArray());
+$explicitBroadcastGraph = Fusion::compile(
+    fn($x, $y) => $x->broadcastTo([2, 3]) + $y,
+    [$row, $matrix]
+);
+var_dump($explicitBroadcastGraph->run($row, $matrix)->toArray() ===
+    ($row->broadcastTo([2, 3]) + $matrix)->toArray());
+$layout = new CudaArray([[1, 2, 3], [4, 5, 6]]);
+$layoutBroadcastGraph = Fusion::compile(
+    fn($x) => $x->transpose()->broadcastTo([4, 3, 2]),
+    [$layout]
+);
+var_dump($layoutBroadcastGraph->run($layout)->toArray() ===
+    array_fill(0, 4, $layout->transpose()->toArray()));
+$trackedRow = CudaArray::fromFlatArray([1, 2, 3], [3])->requiresGrad();
+$trackedMatrix = (new CudaArray([[10, 20, 30], [40, 50, 60]]))->requiresGrad();
+$gradientGraph = Fusion::compile(function ($x, $y) {
+    $output = $x->broadcastTo([2, 3]) + $y;
+    $loss = $output->sum();
+    $loss->backward();
+    return [$output, $loss, $x->grad(), $y->grad()];
+}, [$trackedRow, $trackedMatrix]);
+[$broadcastOutput, $broadcastLoss, $rowGradient, $matrixGradient] =
+    $gradientGraph->run($trackedRow, $trackedMatrix);
+var_dump($broadcastLoss->toArray(), $rowGradient->toArray(), $matrixGradient->toArray());
 ?>
 --EXPECT--
 string(7) "float64"
@@ -92,3 +121,63 @@ array(3) {
 }
 bool(true)
 bool(true)
+array(2) {
+  [0]=>
+  int(2)
+  [1]=>
+  int(3)
+}
+array(2) {
+  [0]=>
+  array(3) {
+    [0]=>
+    float(1)
+    [1]=>
+    float(2)
+    [2]=>
+    float(3)
+  }
+  [1]=>
+  array(3) {
+    [0]=>
+    float(1)
+    [1]=>
+    float(2)
+    [2]=>
+    float(3)
+  }
+}
+bool(true)
+bool(true)
+array(1) {
+  [0]=>
+  float(222)
+}
+array(3) {
+  [0]=>
+  float(2)
+  [1]=>
+  float(2)
+  [2]=>
+  float(2)
+}
+array(2) {
+  [0]=>
+  array(3) {
+    [0]=>
+    float(1)
+    [1]=>
+    float(1)
+    [2]=>
+    float(1)
+  }
+  [1]=>
+  array(3) {
+    [0]=>
+    float(1)
+    [1]=>
+    float(1)
+    [2]=>
+    float(1)
+  }
+}

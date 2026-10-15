@@ -4,6 +4,9 @@ int fusion_inline(tensor_t *tensor)
 {
     fusion_node *node = tensor->fusion;
     if (!node) return 0;
+    if (node->kind == FUSION_CAST &&
+        (node->a->dtype == DTYPE_FLOAT16 || node->a->dtype == DTYPE_BFLOAT16))
+        return 0;
     if (node->kind == FUSION_UNARY || node->kind == FUSION_CAST ||
         node->kind == FUSION_WHERE || node->kind == FUSION_VIEW ||
         node->kind == FUSION_SLICE_SCATTER) return 1;
@@ -23,7 +26,10 @@ size_t fusion_find(fusion_plan *plan, tensor_t *tensor)
 int fusion_preallocated(fusion_plan *plan, fusion_step *step)
 {
     fusion_kind kind = plan->items[step->root].tensor->fusion->kind;
-    return step->name[0] || kind == FUSION_MATMUL || kind == FUSION_REDUCE ||
+    fusion_node *node = plan->items[step->root].tensor->fusion;
+    return step->name[0] || (kind == FUSION_CAST &&
+        (node->a->dtype == DTYPE_FLOAT16 || node->a->dtype == DTYPE_BFLOAT16)) ||
+        kind == FUSION_MATMUL || kind == FUSION_REDUCE ||
         kind == FUSION_ARG_REDUCE || kind == FUSION_GATHER ||
         kind == FUSION_SCATTER_ADD || kind == FUSION_CONCAT;
 }
@@ -69,6 +75,7 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
         {
             plan->items[id].cut = 1;
             plan->items[id].reason = node->kind == FUSION_MATMUL ? "native-matmul" :
+                node->kind == FUSION_CAST ? "native-low-precision-cast" :
                 node->kind == FUSION_REDUCE || node->kind == FUSION_ARG_REDUCE ? "native-reduction" :
                 node->kind == FUSION_GATHER || node->kind == FUSION_SCATTER_ADD ? "native-indexed" :
                 node->kind == FUSION_CONCAT ? "native-concat" :
@@ -283,10 +290,11 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
                 plan->stream_compatible = 0;
                 plan->incompatibility = "indexed-operation";
             }
-            if (kind == FUSION_CONCAT)
+            if (kind == FUSION_CONCAT || kind == FUSION_CAST)
             {
                 plan->stream_compatible = 0;
-                plan->incompatibility = "concat-operation";
+                plan->incompatibility = kind == FUSION_CAST
+                    ? "low-precision-cast" : "concat-operation";
             }
             if (!fusion_preallocated(plan, &plan->steps[i]))
             {

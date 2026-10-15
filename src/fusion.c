@@ -5,6 +5,7 @@
 #include "zend_interfaces.h"
 #include "zend_fibers.h"
 #include "factory_kernels.h"
+#include "tensor_factory.h"
 #include <time.h>
 
 typedef struct
@@ -122,8 +123,16 @@ tensor_t *fusion_cast_eager(tensor_t *a, dtype_t dtype)
     {
         tensor_t *result = cuda_tensor_create_empty_with_dtype(a->shape, a->ndims, dtype);
         if (!result) return NULL;
-        cudaError_t status = launch_tensor_cast(a->data, result->data, a->dtype,
+        tensor_t *packed = is_contiguous(a) ? NULL : cuda_tensor_clone(a);
+        if (!is_contiguous(a) && !packed)
+        {
+            cuda_tensor_destroy(result);
+            return NULL;
+        }
+        cudaError_t status = launch_tensor_cast(packed ? packed->data : a->data,
+                                                result->data, a->dtype,
                                                 dtype, a->total_size);
+        if (packed) cuda_tensor_destroy(packed);
         if (status != cudaSuccess)
         {
             cuda_tensor_destroy(result);
