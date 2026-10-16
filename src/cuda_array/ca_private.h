@@ -5,6 +5,7 @@
 #include "php.h"
 #include "tensor.h"
 #include "operations.h"
+#include "../tensor_transform.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -48,6 +49,10 @@ extern "C"
     tensor_t *cuda_tensor_transpose(tensor_t *tensor, int *axis, int axis_len);
 
     tensor_t *cuda_tensor_copy(tensor_t *tensor);
+    tensor_t *cuda_tensor_index_transform(tensor_t *input,
+                                          tensor_transform_spec_t *spec);
+    tensor_t *cuda_tensor_index_transform_backward(
+        tensor_t *upstream, const tensor_transform_spec_t *spec);
     size_t cuda_tensor_size(tensor_t *tensor);
 
 #ifdef __cplusplus

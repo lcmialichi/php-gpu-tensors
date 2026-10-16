@@ -199,17 +199,128 @@ static void fusion_unary_source(smart_str *source, fusion_node *node, dtype_t dt
     switch (node->op)
     {
         case OP_EXP: name = "exp"; break;
+        case OP_EXPM1: name = "expm1"; break;
+        case OP_EXP2: name = "exp2"; break;
         case OP_LOG: name = "log"; break;
+        case OP_LOG1P: name = "log1p"; break;
+        case OP_LOG2: name = "log2"; break;
+        case OP_LOG10: name = "log10"; break;
         case OP_SQRT: name = "sqrt"; break;
         case OP_SIN: name = "sin"; break;
         case OP_COS: name = "cos"; break;
         case OP_TAN: name = "tan"; break;
+        case OP_ASIN: name = "asin"; break;
+        case OP_ACOS: name = "acos"; break;
+        case OP_ATAN: name = "atan"; break;
+        case OP_SINH: name = "sinh"; break;
+        case OP_COSH: name = "cosh"; break;
+        case OP_TANH: name = "tanh"; break;
         case OP_FLOOR: name = "floor"; break;
         case OP_CEIL: name = "ceil"; break;
         case OP_ROUND: name = "round"; break;
         default: ZEND_ASSERT(0);
     }
     smart_str_append_printf(source, "%s%s(%s)", name, suffix, floating ? "a" : "static_cast<float>(a)");
+}
+
+static void fusion_transform_source(smart_str *source, fusion_node *node)
+{
+    const tensor_transform_spec_t *spec = &node->transform;
+    int flattened = (spec->op == OP_REPEAT || spec->op == OP_ROLL) &&
+        spec->axis < 0;
+    size_t divisor = 1;
+    if (!flattened)
+    {
+        for (int axis = spec->output_ndims - 1; axis >= 0; axis--)
+        {
+            smart_str_append_printf(source, "size_t o%d=(i/%zuULL)%%%dULL;\n",
+                                    axis, divisor, spec->output_shape[axis]);
+            divisor *= (size_t)spec->output_shape[axis];
+        }
+    }
+
+    if (spec->op == OP_REPEAT && spec->axis < 0)
+    {
+        smart_str_append_printf(source, "size_t flat=i/%dULL;\n", spec->repeats);
+        divisor = 1;
+        for (int axis = spec->input_ndims - 1; axis >= 0; axis--)
+        {
+            smart_str_append_printf(source, "size_t c%d=(flat/%zuULL)%%%dULL;\n",
+                                    axis, divisor, spec->input_shape[axis]);
+            divisor *= (size_t)spec->input_shape[axis];
+        }
+    }
+    else if (spec->op == OP_ROLL && spec->axis < 0)
+    {
+        size_t total = 1;
+        for (int axis = 0; axis < spec->input_ndims; axis++)
+            total *= (size_t)spec->input_shape[axis];
+        smart_str_append_printf(source,
+            "size_t flat=i>=%lldULL?i-%lldULL:%zuULL-(%lldULL-i);\n",
+            (long long)spec->shifts[0], (long long)spec->shifts[0], total,
+            (long long)spec->shifts[0]);
+        divisor = 1;
+        for (int axis = spec->input_ndims - 1; axis >= 0; axis--)
+        {
+            smart_str_append_printf(source, "size_t c%d=(flat/%zuULL)%%%dULL;\n",
+                                    axis, divisor, spec->input_shape[axis]);
+            divisor *= (size_t)spec->input_shape[axis];
+        }
+    }
+    else
+    {
+        int diagonal_axis = spec->output_ndims - 1;
+        int retained_axis = 0;
+        int leading_axes = spec->output_ndims - spec->input_ndims;
+        for (int axis = 0; axis < spec->input_ndims; axis++)
+        {
+            if (spec->op == OP_DIAGONAL)
+            {
+                if (axis == spec->axis1)
+                    smart_str_append_printf(source, "size_t c%d=o%d+%dULL;\n",
+                        axis, diagonal_axis,
+                        spec->offset < 0 ? -spec->offset : 0);
+                else if (axis == spec->axis2)
+                    smart_str_append_printf(source, "size_t c%d=o%d+%dULL;\n",
+                        axis, diagonal_axis,
+                        spec->offset > 0 ? spec->offset : 0);
+                else
+                    smart_str_append_printf(source, "size_t c%d=o%d;\n",
+                        axis, retained_axis++);
+            }
+            else
+            {
+                int output_axis = axis + leading_axes;
+                if (spec->op == OP_REPEAT && axis == spec->axis)
+                    smart_str_append_printf(source, "size_t c%d=o%d/%dULL;\n",
+                                            axis, output_axis, spec->repeats);
+                else if (spec->op == OP_TILE)
+                    smart_str_append_printf(source, "size_t c%d=o%d%%%dULL;\n",
+                                            axis, output_axis, spec->input_shape[axis]);
+                else if (spec->op == OP_FLIP && spec->axes[axis])
+                    smart_str_append_printf(source, "size_t c%d=%dULL-1ULL-o%d;\n",
+                                            axis, spec->input_shape[axis], output_axis);
+                else if (spec->op == OP_ROLL && spec->shifts[axis])
+                    smart_str_append_printf(source,
+                        "size_t c%d=o%d>=%lldULL?o%d-%lldULL:%dULL-(%lldULL-o%d);\n",
+                        axis, output_axis, (long long)spec->shifts[axis],
+                        output_axis, (long long)spec->shifts[axis],
+                        spec->input_shape[axis], (long long)spec->shifts[axis],
+                        output_axis);
+                else
+                    smart_str_append_printf(source, "size_t c%d=o%d;\n",
+                                            axis, output_axis);
+            }
+        }
+    }
+
+    smart_str_appends(source, "size_t ia=0;\n");
+    divisor = 1;
+    for (int axis = spec->input_ndims - 1; axis >= 0; axis--)
+    {
+        smart_str_append_printf(source, "ia+=c%d*%zuULL;\n", axis, divisor);
+        divisor *= (size_t)spec->input_shape[axis];
+    }
 }
 
 static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
@@ -303,6 +414,14 @@ static void fusion_emit_node(fusion_plan *plan, fusion_step *step, size_t id,
         smart_str_appends(source, ">(");
         fusion_call_node(source, step, updates, "ia");
         smart_str_appends(source, ");}\n");
+        return;
+    }
+    if (node->kind == FUSION_TRANSFORM)
+    {
+        fusion_transform_source(source, node);
+        smart_str_appends(source, "return ");
+        fusion_call_node(source, step, fusion_find(plan, node->a), "ia");
+        smart_str_appends(source, ";}\n");
         return;
     }
     size_t a = fusion_find(plan, node->a);

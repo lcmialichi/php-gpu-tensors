@@ -236,20 +236,80 @@ class CudaArray
     public function matmul(CudaArray $other): CudaArray {}
     /** Permute axes; omitting axis reverses their order. */
     public function transpose(?array $axis = null): CudaArray {}
+    /** Copy logical elements to independent contiguous storage. */
+    public function copy(): CudaArray {}
+    /** Swap two axes and return a view. */
+    public function swapaxes(int $axis1, int $axis2): CudaArray {}
+    /**
+     * Move one or more axes to new positions and return a view.
+     * @param int|list<int> $source
+     * @param int|list<int> $destination
+     */
+    public function moveaxis(int|array $source, int|array $destination): CudaArray {}
+    /**
+     * Extract a diagonal into a tensor; supported by Fusion kernels.
+     */
+    public function diagonal(int $offset = 0, int $axis1 = 0, int $axis2 = 1): CudaArray {}
+    /**
+     * Repeat each element a fixed number of times; null axis flattens first.
+     * Supported by Fusion kernels.
+     */
+    public function repeat(int $repeats, ?int $axis = null): CudaArray {}
+    /**
+     * Repeat the tensor by scalar or per-axis repetition counts.
+     * Supported by Fusion kernels.
+     * @param int|list<int> $reps
+     */
+    public function tile(int|array $reps): CudaArray {}
+    /**
+     * Reverse selected axes, or all axes by default.
+     * Supported by Fusion kernels.
+     * @param int|list<int>|null $axis
+     */
+    public function flip(int|array|null $axis = null): CudaArray {}
+    /**
+     * Circularly shift values; null axis rolls the flattened logical tensor.
+     * Supported by Fusion kernels.
+     * @param int|list<int> $shift
+     * @param int|list<int>|null $axis
+     */
+    public function roll(int|array $shift, int|array|null $axis = null): CudaArray {}
     /** Elementwise exponentiation. */
     public function power(CudaArray|float|int $other): CudaArray {}
     /** Elementwise square root. */
     public function sqrt(): CudaArray {}
     /** Elementwise exponential. */
     public function exp(): CudaArray {}
+    /** Elementwise exp(x) - 1, evaluated with improved precision near zero. */
+    public function expm1(): CudaArray {}
+    /** Elementwise base-2 exponential. */
+    public function exp2(): CudaArray {}
     /** Elementwise natural logarithm. */
     public function log(): CudaArray {}
+    /** Elementwise log(1 + x), evaluated with improved precision near zero. */
+    public function log1p(): CudaArray {}
+    /** Elementwise base-2 logarithm. */
+    public function log2(): CudaArray {}
+    /** Elementwise base-10 logarithm. */
+    public function log10(): CudaArray {}
     /** Elementwise sine. */
     public function sin(): CudaArray {}
     /** Elementwise cosine. */
     public function cos(): CudaArray {}
     /** Elementwise tangent. */
     public function tan(): CudaArray {}
+    /** Elementwise inverse sine. */
+    public function asin(): CudaArray {}
+    /** Elementwise inverse cosine. */
+    public function acos(): CudaArray {}
+    /** Elementwise inverse tangent. */
+    public function atan(): CudaArray {}
+    /** Elementwise hyperbolic sine. */
+    public function sinh(): CudaArray {}
+    /** Elementwise hyperbolic cosine. */
+    public function cosh(): CudaArray {}
+    /** Elementwise hyperbolic tangent. */
+    public function tanh(): CudaArray {}
     /** Elementwise absolute value. */
     public function abs(): CudaArray {}
     /** Elementwise negation. */
@@ -332,8 +392,37 @@ class CudaArray
     public static function ones(array $shape, ?string $dtype = 'float32'): CudaArray {}
     /** Allocate a constant-filled GPU tensor. */
     public static function full(array $shape, float|int $value, ?string $dtype = 'float32'): CudaArray {}
-    /** Generate uniform random GPU values. */
-    public static function rand(array $shape, float|int $min = 0, float|int $max = 1, ?string $dtype = 'float32'): CudaArray {}
+    /** Allocate a zero-filled tensor with a prototype's shape and, by default, dtype. */
+    public static function zerosLike(CudaArray $prototype, ?string $dtype = null): CudaArray {}
+    /** Allocate a one-filled tensor with a prototype's shape and, by default, dtype. */
+    public static function onesLike(CudaArray $prototype, ?string $dtype = null): CudaArray {}
+    /** Allocate a constant-filled tensor with a prototype's shape and, by default, dtype. */
+    public static function fullLike(CudaArray $prototype, float|int $value, ?string $dtype = null): CudaArray {}
+    /** Create a rectangular identity matrix with an optional diagonal offset. */
+    public static function eye(int $rows, ?int $columns = null, int $k = 0, ?string $dtype = 'float32'): CudaArray {}
+    /** Create a square identity matrix. */
+    public static function identity(int $size, ?string $dtype = 'float32'): CudaArray {}
+    /**
+     * Create evenly spaced values in the half-open interval [start, stop).
+     * With one argument, it is interpreted as stop. Integer arguments default to int64;
+     * any floating-point argument defaults to float64.
+     */
+    public static function arange(float|int $start, float|int|null $stop = null, float|int $step = 1, ?string $dtype = null): CudaArray {}
+    /**
+     * Create num evenly spaced values between start and stop.
+     * The default output dtype is float64.
+     */
+    public static function linspace(float|int $start, float|int $stop, int $num = 50, bool $endpoint = true, ?string $dtype = 'float64'): CudaArray {}
+    /**
+     * Generate uniformly distributed GPU values in [min, max).
+     * Omitted seeds produce new values; a seed makes the result reproducible.
+     */
+    public static function rand(array $shape, float|int $min = 0, float|int $max = 1, ?string $dtype = 'float32', ?int $seed = null): CudaArray {}
+    /**
+     * Generate standard-normal GPU values.
+     * Omitted seeds produce new values; a seed makes the result reproducible.
+     */
+    public static function randn(array $shape, ?string $dtype = 'float32', ?int $seed = null): CudaArray {}
     /**
      * Gather values using same-rank int32 indices along an axis.
      * Synchronous Fusion execution is supported; async and CUDA Graph capture are not.

@@ -9,7 +9,8 @@ int fusion_inline(tensor_t *tensor)
         return 0;
     if (node->kind == FUSION_UNARY || node->kind == FUSION_CAST ||
         node->kind == FUSION_WHERE || node->kind == FUSION_VIEW ||
-        node->kind == FUSION_SLICE_SCATTER) return 1;
+        node->kind == FUSION_SLICE_SCATTER ||
+        node->kind == FUSION_TRANSFORM) return 1;
     return (node->kind == FUSION_BINARY || node->kind == FUSION_SCALAR) &&
         (node->op == OP_ADD || node->op == OP_SUB || node->op == OP_MUL ||
          node->op == OP_DIV || node->op == OP_MAXIMUM || node->op == OP_MINIMUM ||
@@ -32,7 +33,8 @@ int fusion_preallocated(fusion_plan *plan, fusion_step *step)
         (node->a->dtype == DTYPE_FLOAT16 || node->a->dtype == DTYPE_BFLOAT16)) ||
         kind == FUSION_MATMUL || kind == FUSION_REDUCE ||
         kind == FUSION_ARG_REDUCE || kind == FUSION_GATHER ||
-        kind == FUSION_SCATTER_ADD || kind == FUSION_CONCAT;
+        kind == FUSION_SCATTER_ADD || kind == FUSION_CONCAT ||
+        kind == FUSION_TRANSFORM_BACKWARD;
 }
 
 static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
@@ -54,6 +56,7 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
             int cost = node->kind == FUSION_UNARY ? 4 :
                        node->kind == FUSION_WHERE ? 3 :
                        node->kind == FUSION_SLICE_SCATTER ? 4 :
+                       node->kind == FUSION_TRANSFORM ? 4 :
                        node->kind == FUSION_VIEW ? 2 :
                        node->op == OP_POW ? 7 : 1;
             if (tensor->dtype == DTYPE_FLOAT64) cost *= 2;
@@ -82,6 +85,7 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
                 node->kind == FUSION_REDUCE || node->kind == FUSION_ARG_REDUCE ? "native-reduction" :
                 node->kind == FUSION_GATHER || node->kind == FUSION_SCATTER_ADD ? "native-indexed" :
                 node->kind == FUSION_CONCAT ? "native-concat" :
+                node->kind == FUSION_TRANSFORM_BACKWARD ? "native-transform-gradient" :
                 "native-power";
             if (a != SIZE_MAX && plan->items[a].cost) plan->items[a].cut = 1;
             if (b != SIZE_MAX && plan->items[b].cost) plan->items[b].cut = 1;
@@ -294,7 +298,8 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
         {
             plan->native_steps++;
             fusion_kind kind = plan->items[plan->steps[i].root].tensor->fusion->kind;
-            if (kind != FUSION_MATMUL && kind != FUSION_REDUCE && kind != FUSION_ARG_REDUCE)
+            if (kind != FUSION_MATMUL && kind != FUSION_REDUCE &&
+                kind != FUSION_ARG_REDUCE && kind != FUSION_TRANSFORM_BACKWARD)
                 plan->graph_compatible = 0;
             if (kind == FUSION_GATHER || kind == FUSION_SCATTER_ADD)
             {

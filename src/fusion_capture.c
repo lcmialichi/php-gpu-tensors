@@ -438,6 +438,55 @@ tensor_t *fusion_concat(tensor_t **inputs, size_t input_count, int axis)
     return current;
 }
 
+tensor_t *fusion_transform(tensor_t *a, const tensor_transform_spec_t *spec)
+{
+    if (!a || !spec || spec->input_ndims != a->ndims ||
+        spec->output_ndims < 1 || spec->output_ndims > MAX_DIMS ||
+        spec->op < OP_DIAGONAL || spec->op > OP_ROLL)
+    {
+        CUDA_THROW_INVALID("Invalid Fusion tensor transform metadata");
+        return NULL;
+    }
+
+    tensor_t *tensor = fusion_record(FUSION_TRANSFORM, a, NULL, spec->op,
+                                     spec->output_shape, spec->output_ndims,
+                                     a->dtype);
+    if (tensor)
+    {
+        tensor->fusion->transform = *spec;
+        if (!autograd_record_index_transform(tensor, a, spec))
+        {
+            cuda_tensor_destroy(tensor);
+            return NULL;
+        }
+    }
+    return tensor;
+}
+
+tensor_t *fusion_transform_backward(tensor_t *upstream,
+                                    const tensor_transform_spec_t *spec)
+{
+    if (!upstream || !spec ||
+        (upstream->dtype != DTYPE_FLOAT32 && upstream->dtype != DTYPE_FLOAT64) ||
+        upstream->ndims != spec->output_ndims)
+    {
+        CUDA_THROW_INVALID("Invalid Fusion tensor transform gradient metadata");
+        return NULL;
+    }
+    for (int axis = 0; axis < upstream->ndims; axis++)
+        if (upstream->shape[axis] != spec->output_shape[axis])
+        {
+            CUDA_THROW_INVALID("Fusion tensor transform gradient shape mismatch");
+            return NULL;
+        }
+
+    tensor_t *tensor = fusion_record(FUSION_TRANSFORM_BACKWARD, upstream, NULL,
+                                    spec->op, spec->input_shape,
+                                    spec->input_ndims, upstream->dtype);
+    if (tensor) tensor->fusion->transform = *spec;
+    return tensor;
+}
+
 tensor_t *fusion_view(tensor_t *a, operation_type_t op, int *shape, size_t *strides, int ndims, int *axes)
 {
     tensor_t *tensor = fusion_record(FUSION_VIEW, a, NULL, op, shape, ndims, a->dtype);

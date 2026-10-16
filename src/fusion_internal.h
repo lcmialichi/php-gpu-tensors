@@ -7,6 +7,7 @@
 #include "ca_private.h"
 #include "compiler_ce.h"
 #include "kernel_types.h"
+#include "tensor_transform.h"
 #include "zend_smart_str.h"
 #include <cuda.h>
 #include <limits.h>
@@ -25,7 +26,8 @@ typedef enum
     FUSION_INPUT, FUSION_BINARY, FUSION_SCALAR, FUSION_UNARY,
     FUSION_REDUCE, FUSION_ARG_REDUCE, FUSION_MATMUL, FUSION_VIEW,
     FUSION_CAST, FUSION_WHERE, FUSION_SLICE_SCATTER,
-    FUSION_GATHER, FUSION_SCATTER_ADD, FUSION_CONCAT
+    FUSION_GATHER, FUSION_SCATTER_ADD, FUSION_CONCAT, FUSION_TRANSFORM,
+    FUSION_TRANSFORM_BACKWARD
 } fusion_kind;
 
 typedef struct fusion_node
@@ -42,6 +44,7 @@ typedef struct fusion_node
     size_t slice_strides[MAX_DIMS];
     int slice_starts[MAX_DIMS];
     int slice_steps[MAX_DIMS];
+    tensor_transform_spec_t transform;
 } fusion_node;
 
 typedef struct fusion_scope

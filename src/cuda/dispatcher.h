@@ -168,6 +168,18 @@
         __VA_ARGS__;                         \
         break;                               \
     }                                        \
+    case OP_EXPM1:                           \
+    {                                        \
+        typedef Expm1OpT<scalar_t> bin_op_t; \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_EXP2:                            \
+    {                                        \
+        typedef Exp2OpT<scalar_t> bin_op_t;  \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
     case OP_SQRT:                            \
     {                                        \
         typedef SqrtOpT<scalar_t> bin_op_t;  \
@@ -177,6 +189,60 @@
     case OP_LOG:                             \
     {                                        \
         typedef LogOpT<scalar_t> bin_op_t;   \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_LOG1P:                           \
+    {                                        \
+        typedef Log1pOpT<scalar_t> bin_op_t; \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_LOG2:                            \
+    {                                        \
+        typedef Log2OpT<scalar_t> bin_op_t;  \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_LOG10:                           \
+    {                                        \
+        typedef Log10OpT<scalar_t> bin_op_t; \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_ASIN:                            \
+    {                                        \
+        typedef AsinOpT<scalar_t> bin_op_t;  \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_ACOS:                            \
+    {                                        \
+        typedef AcosOpT<scalar_t> bin_op_t;  \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_ATAN:                            \
+    {                                        \
+        typedef AtanOpT<scalar_t> bin_op_t;  \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_SINH:                            \
+    {                                        \
+        typedef SinhOpT<scalar_t> bin_op_t;  \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_COSH:                            \
+    {                                        \
+        typedef CoshOpT<scalar_t> bin_op_t;  \
+        __VA_ARGS__;                         \
+        break;                               \
+    }                                        \
+    case OP_TANH:                            \
+    {                                        \
+        typedef TanhOpT<scalar_t> bin_op_t;  \
         __VA_ARGS__;                         \
         break;                               \
     }                                        \

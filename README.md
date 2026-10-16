@@ -193,7 +193,15 @@ echo $output->dtype();       // float32
 - `fromFile($path, $shape, $dtype)` reads raw tensor bytes.
 - `fromNpy($path)` imports C-order, little-endian numeric and boolean `.npy`
   arrays. Fortran-order and big-endian files are not supported.
-- `zeros()`, `ones()`, `full()` and `rand()` create GPU tensors.
+- `zeros()`, `ones()`, `full()`, `eye()` and `identity()` create GPU tensors;
+  `arange()` and `linspace()` generate numeric sequences directly on the GPU.
+  Integer-only `arange()` calls default to `int64`; floating-point sequences
+  default to `float64`, and `linspace()` includes its endpoint by default.
+  `zerosLike()`, `onesLike()` and `fullLike()` use a prototype's shape and
+  preserve its dtype unless one is specified.
+- `rand()` generates uniform values in the requested range and `randn()`
+  generates standard-normal values. Calls without a seed generate fresh
+  values; passing an integer seed makes the result reproducible.
 - `toArray()` copies values into nested PHP arrays; `toBuffer()` returns packed
   bytes without expanding every value into a PHP scalar.
 - `toHost()` returns a CPU `ContiguousArray` (`Cuda\HostArray` is an alias).
@@ -201,7 +209,7 @@ echo $output->dtype();       // float32
 - `item()` transfers one value from a tensor containing exactly one element.
 
 `float16` and `bfloat16` values can be created from PHP numeric arrays, packed
-buffers, `zeros()`, `ones()`, `full()` and `rand()`. They can be exported with
+buffers, fill/like factories, `eye()` and `randn()`. They can be exported with
 `toArray()`, `toBuffer()` and `toHost()`, and safely widened to `float32` or
 `float64` with `astype()`.
 
@@ -214,8 +222,11 @@ conversion cost. Keep intermediate tensors on the GPU when possible.
 
 - **Arithmetic:** `add()`, `subtract()`, `multiply()`, `divide()`, `power()`,
   scalar arithmetic, and PHP arithmetic operators.
-- **Elementwise math:** `sqrt()`, `exp()`, `log()`, `sin()`, `cos()`, `tan()`,
-  `abs()`, `neg()`, `floor()`, `ceil()` and `round()`.
+- **Elementwise math:** `sqrt()`, `exp()`, `expm1()`, `exp2()`, `log()`,
+  `log1p()`, `log2()`, `log10()`, `sin()`, `cos()`, `tan()`, `abs()`, `neg()`,
+  `asin()`, `acos()`, `atan()`, `sinh()`, `cosh()`, `tanh()`, `floor()`,
+  `ceil()` and `round()`. `expm1()` and `log1p()` use numerically stable CUDA
+  functions near zero.
 - **Normalization:** `softmax()` computes stable probabilities along an axis
   (last axis by default), preserving `float32`/`float64`, widening low-
   precision inputs to `float32`, and promoting integer and boolean inputs to
@@ -264,11 +275,17 @@ return `float32` results.
 
 ### Shape operations, views and indexing
 
-`reshape()`, `flatten()`, `transpose()`, `squeeze()`, `unsqueeze()` and
-`broadcastTo()` manipulate tensor shape. `slice()` provides Python-style
-positive-step slicing. Views can share storage with their parent; a transpose,
-broadcast or slice does not necessarily copy tensor data. Reshape requires a
-contiguous input.
+`reshape()`, `flatten()`, `transpose()`, `swapaxes()`, `moveaxis()`,
+`squeeze()`, `unsqueeze()` and `broadcastTo()` manipulate tensor shape.
+`slice()` provides Python-style positive-step slicing. Views can share storage
+with their parent; use `copy()` for independent contiguous storage. Reshape
+requires a contiguous input. `diagonal()`, `repeat()`, `tile()`, `flip()` and
+`roll()` materialize contiguous GPU results and support float32/float64
+autograd. Fusion captures their index mappings directly in generated kernels,
+including expressions that combine transforms with elementwise operations.
+Backward propagation inside Fusion uses a native GPU scatter-add boundary.
+`repeat()` currently accepts one scalar repeat count rather than per-element
+counts.
 
 ```php
 $row = new CudaArray([[1.0, 2.0, 3.0]]);

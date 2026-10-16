@@ -175,7 +175,7 @@ static int autograd_node_add(tensor_t *result, autograd_kind_t kind,
         (autograd_is_differentiable_type(result->dtype) ||
          ((kind == AUTOGRAD_MATMUL || kind == AUTOGRAD_VIEW ||
            kind == AUTOGRAD_BINARY || kind == AUTOGRAD_SCALAR ||
-           kind == AUTOGRAD_UNARY) &&
+           kind == AUTOGRAD_UNARY || kind == AUTOGRAD_INDEX_TRANSFORM) &&
           autograd_is_low_precision_type(result->dtype)));
     if (autograd_suppressed || !supported_type)
         return 1;
@@ -263,11 +263,22 @@ int autograd_record_unary(tensor_t *result, tensor_t *a, operation_type_t op)
     switch (op)
     {
         case OP_EXP:
+        case OP_EXPM1:
+        case OP_EXP2:
         case OP_SQRT:
         case OP_LOG:
+        case OP_LOG1P:
+        case OP_LOG2:
+        case OP_LOG10:
         case OP_SIN:
         case OP_COS:
         case OP_TAN:
+        case OP_ASIN:
+        case OP_ACOS:
+        case OP_ATAN:
+        case OP_SINH:
+        case OP_COSH:
+        case OP_TANH:
         case OP_ABS:
         case OP_NEG:
         case OP_CEIL:
@@ -325,6 +336,18 @@ int autograd_record_slice(tensor_t *result, tensor_t *a, const int *axes,
         memcpy(node->starts, starts, a->ndims * sizeof(int));
         memcpy(node->steps, steps, a->ndims * sizeof(int));
     }
+    return 1;
+}
+
+int autograd_record_index_transform(tensor_t *result, tensor_t *a,
+                                    const tensor_transform_spec_t *spec)
+{
+    if (!spec ||
+        !autograd_node_add(result, AUTOGRAD_INDEX_TRANSFORM, a, NULL, NULL,
+                           spec->op))
+        return 0;
+    if (result->grad_fn && result->grad_fn->a == a)
+        result->grad_fn->transform = *spec;
     return 1;
 }
 
@@ -1144,12 +1167,100 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
         case AUTOGRAD_UNARY:
             switch (node->op)
             {
+                case OP_EXPM1:
+                {
+                    temporary = cuda_unary_op(node->a, OP_EXP);
+                    if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_MUL);
+                    if (temporary) cuda_tensor_destroy(temporary);
+                    break;
+                }
                 case OP_EXP:
                     ga = cuda_tensor_op(upstream, output, OP_MUL);
                     break;
+                case OP_EXP2:
+                {
+                    scalar_value_t ln2 = {.v.f32 = 0.6931471805599453f,
+                                          .dtype = DTYPE_FLOAT32};
+                    temporary = cuda_scalar_op(output, ln2, OP_MUL);
+                    if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_MUL);
+                    if (temporary) cuda_tensor_destroy(temporary);
+                    break;
+                }
                 case OP_LOG:
                     ga = cuda_tensor_op(upstream, node->a, OP_DIV);
                     break;
+                case OP_LOG1P:
+                {
+                    scalar_value_t one = {.v.f32 = 1.0f, .dtype = DTYPE_FLOAT32};
+                    temporary = cuda_scalar_op(node->a, one, OP_ADD);
+                    if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_DIV);
+                    if (temporary) cuda_tensor_destroy(temporary);
+                    break;
+                }
+                case OP_LOG2:
+                case OP_LOG10:
+                {
+                    scalar_value_t scale = {
+                        .v.f32 = node->op == OP_LOG2
+                            ? 0.6931471805599453f : 2.302585092994046f,
+                        .dtype = DTYPE_FLOAT32};
+                    temporary = cuda_scalar_op(node->a, scale, OP_MUL);
+                    if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_DIV);
+                    if (temporary) cuda_tensor_destroy(temporary);
+                    break;
+                }
+                case OP_ASIN:
+                case OP_ACOS:
+                case OP_ATAN:
+                {
+                    scalar_value_t one = {.v.f32 = 1.0f, .dtype = DTYPE_FLOAT32};
+                    temporary = cuda_tensor_op(node->a, node->a, OP_MUL);
+                    tensor_t *denominator_squared = temporary
+                        ? (node->op == OP_ATAN
+                            ? cuda_scalar_op(temporary, one, OP_ADD)
+                            : cuda_inv_scalar_op(temporary, one, OP_SUB))
+                        : NULL;
+                    tensor_t *denominator = denominator_squared &&
+                        node->op != OP_ATAN
+                            ? cuda_unary_op(denominator_squared, OP_SQRT)
+                            : denominator_squared;
+                    if (denominator) ga = cuda_tensor_op(upstream, denominator, OP_DIV);
+                    if (node->op == OP_ACOS && ga)
+                    {
+                        tensor_t *negative = gradient_negate(ga);
+                        if (negative)
+                        {
+                            cuda_tensor_destroy(ga);
+                            ga = negative;
+                        }
+                    }
+                    if (denominator && denominator != denominator_squared)
+                        cuda_tensor_destroy(denominator);
+                    if (denominator_squared) cuda_tensor_destroy(denominator_squared);
+                    if (temporary) cuda_tensor_destroy(temporary);
+                    break;
+                }
+                case OP_SINH:
+                case OP_COSH:
+                {
+                    temporary = cuda_unary_op(node->a,
+                        node->op == OP_SINH ? OP_COSH : OP_SINH);
+                    if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_MUL);
+                    if (temporary) cuda_tensor_destroy(temporary);
+                    break;
+                }
+                case OP_TANH:
+                {
+                    scalar_value_t one = {.v.f32 = 1.0f, .dtype = DTYPE_FLOAT32};
+                    temporary = cuda_tensor_op(output, output, OP_MUL);
+                    tensor_t *derivative = temporary
+                        ? cuda_inv_scalar_op(temporary, one, OP_SUB)
+                        : NULL;
+                    if (derivative) ga = cuda_tensor_op(upstream, derivative, OP_MUL);
+                    if (derivative) cuda_tensor_destroy(derivative);
+                    if (temporary) cuda_tensor_destroy(temporary);
+                    break;
+                }
                 case OP_SQRT:
                     temporary = cuda_scalar_op(output, (scalar_value_t){.v.f32 = 2.0f, .dtype = DTYPE_FLOAT32}, OP_MUL);
                     if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_DIV);
@@ -1303,6 +1414,11 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
         case AUTOGRAD_SLICE:
             ga = cuda_tensor_slice_scatter(upstream, node->input_shape,
                 node->input_ndims, node->axes, node->starts, node->steps);
+            break;
+
+        case AUTOGRAD_INDEX_TRANSFORM:
+            ga = cuda_tensor_index_transform_backward(upstream,
+                                                       &node->transform);
             break;
 
         case AUTOGRAD_UNSUPPORTED:

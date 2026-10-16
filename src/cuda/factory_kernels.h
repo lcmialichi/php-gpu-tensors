@@ -1,6 +1,7 @@
 #ifndef FACTORY_KERNELS_H
 #define FACTORY_KERNELS_H
 #include "../data_types.h"
+#include "../tensor_transform.h"
 #include <cuda_runtime.h>
 
 #ifdef __cplusplus
@@ -36,6 +37,31 @@ extern "C"
         scalar_value_t min,
         scalar_value_t max,
         size_t total_elements);
+
+    cudaError_t launch_eye(void *output, dtype_t dtype, int columns,
+                           int diagonal, size_t total_elements);
+    cudaError_t launch_arange(void *output, dtype_t dtype, size_t total_elements,
+                              double start, double step, int exact_integer,
+                              int64_t integer_start, int64_t integer_step);
+    cudaError_t launch_linspace(void *output, dtype_t dtype, size_t total_elements,
+                                double start, double stop, int endpoint);
+    cudaError_t launch_tensor_transform(const void *input, void *output,
+                                        dtype_t dtype,
+                                        const tensor_transform_spec_t *spec,
+                                        size_t total_elements);
+    cudaError_t launch_tensor_transform_gradient(
+        const void *upstream, void *input_gradient, dtype_t dtype,
+        const tensor_transform_spec_t *spec, size_t total_elements,
+        cudaStream_t stream);
+
+    cudaError_t launch_scale_normal_kernel(const float *values, void *output,
+                                           dtype_t dtype, double mean,
+                                           double standard_deviation,
+                                           size_t total_elements);
+    cudaError_t launch_scale_normal_double_kernel(const double *values, void *output,
+                                                  double mean,
+                                                  double standard_deviation,
+                                                  size_t total_elements);
 
 #ifdef __cplusplus
 }

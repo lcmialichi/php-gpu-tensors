@@ -2,6 +2,7 @@
 #define CUDA_AUTOGRAD_H
 
 #include "tensor.h"
+#include "tensor_transform.h"
 #include "operations_strctures.h"
 
 typedef enum
@@ -18,7 +19,8 @@ typedef enum
     AUTOGRAD_SCATTER_ADD,
     AUTOGRAD_UNSUPPORTED,
     AUTOGRAD_CONCAT,
-    AUTOGRAD_SLICE
+    AUTOGRAD_SLICE,
+    AUTOGRAD_INDEX_TRANSFORM
 } autograd_kind_t;
 
 typedef struct autograd_node
@@ -43,6 +45,7 @@ typedef struct autograd_node
     int input_ndims;
     int starts[MAX_DIMS];
     int steps[MAX_DIMS];
+    tensor_transform_spec_t transform;
 } autograd_node_t;
 
 void autograd_release_node(tensor_t *tensor);
@@ -55,6 +58,8 @@ int autograd_record_matmul(tensor_t *result, tensor_t *a, tensor_t *b);
 int autograd_record_view(tensor_t *result, tensor_t *a, operation_type_t op, const int *axes);
 int autograd_record_slice(tensor_t *result, tensor_t *a, const int *axes,
                           const int *starts, const int *steps);
+int autograd_record_index_transform(tensor_t *result, tensor_t *a,
+                                    const tensor_transform_spec_t *spec);
 int autograd_record_concat(tensor_t *result, tensor_t **parents,
                            size_t parent_count, int axis);
 int autograd_record_gather(tensor_t *result, tensor_t *input, tensor_t *indices, int axis);

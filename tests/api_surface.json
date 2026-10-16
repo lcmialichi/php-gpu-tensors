@@ -779,6 +779,13 @@
                     "parameters": [],
                     "returnType": "self"
                 },
+                "acos": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
                 "add": {
                     "static": false,
                     "abstract": false,
@@ -830,6 +837,50 @@
                     ],
                     "returnType": "self"
                 },
+                "arange": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "start",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "stop",
+                            "type": "int|float|null",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "step",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "argMax": {
                     "static": false,
                     "abstract": false,
@@ -864,6 +915,13 @@
                     ],
                     "returnType": "self"
                 },
+                "asin": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
                 "astype": {
                     "static": false,
                     "abstract": false,
@@ -879,6 +937,13 @@
                             "default": null
                         }
                     ],
+                    "returnType": "self"
+                },
+                "atan": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
                     "returnType": "self"
                 },
                 "backward": {
@@ -983,7 +1048,21 @@
                     ],
                     "returnType": "self"
                 },
+                "copy": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
                 "cos": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "cosh": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
@@ -995,6 +1074,41 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
+                    "returnType": "self"
+                },
+                "diagonal": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "offset",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        },
+                        {
+                            "name": "axis1",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        },
+                        {
+                            "name": "axis2",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1
+                        }
+                    ],
                     "returnType": "self"
                 },
                 "divide": {
@@ -1045,11 +1159,86 @@
                     "parameters": [],
                     "returnType": "self"
                 },
+                "exp2": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "expm1": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "eye": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "rows",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "columns",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "k",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "flatten": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
+                    "returnType": "self"
+                },
+                "flip": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "array|int|null",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
                     "returnType": "self"
                 },
                 "floor": {
@@ -1216,6 +1405,41 @@
                     ],
                     "returnType": "self"
                 },
+                "fullLike": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "prototype",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "value",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "gather": {
                     "static": false,
                     "abstract": false,
@@ -1311,6 +1535,32 @@
                     ],
                     "returnType": "self"
                 },
+                "identity": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "size",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "item": {
                     "static": false,
                     "abstract": false,
@@ -1379,7 +1629,81 @@
                     ],
                     "returnType": "self"
                 },
+                "linspace": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "start",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "stop",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "num",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 50
+                        },
+                        {
+                            "name": "endpoint",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": true
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float64"
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "log": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "log10": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "log1p": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "log2": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
@@ -1505,6 +1829,32 @@
                     ],
                     "returnType": "self"
                 },
+                "moveaxis": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "source",
+                            "type": "array|int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "destination",
+                            "type": "array|int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "multiply": {
                     "static": false,
                     "abstract": false,
@@ -1568,6 +1918,32 @@
                             "optional": true,
                             "hasDefault": true,
                             "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "onesLike": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "prototype",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
                         }
                     ],
                     "returnType": "self"
@@ -1646,6 +2022,76 @@
                             "optional": true,
                             "hasDefault": true,
                             "default": "float32"
+                        },
+                        {
+                            "name": "seed",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "randn": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        },
+                        {
+                            "name": "seed",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "repeat": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "repeats",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
                         }
                     ],
                     "returnType": "self"
@@ -1679,6 +2125,32 @@
                             "variadic": false,
                             "optional": false,
                             "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "roll": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shift",
+                            "type": "array|int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis",
+                            "type": "array|int|null",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
                             "default": null
                         }
                     ],
@@ -1727,6 +2199,13 @@
                     "returnType": "self"
                 },
                 "sin": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "sinh": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
@@ -1851,11 +2330,61 @@
                     ],
                     "returnType": "self"
                 },
+                "swapaxes": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis1",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis2",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "tan": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
+                    "returnType": "self"
+                },
+                "tanh": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "tile": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "reps",
+                            "type": "array|int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
                     "returnType": "self"
                 },
                 "toArray": {
@@ -2003,6 +2532,32 @@
                             "optional": true,
                             "hasDefault": true,
                             "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "zerosLike": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "prototype",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
                         }
                     ],
                     "returnType": "self"

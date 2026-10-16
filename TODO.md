@@ -83,12 +83,27 @@ consistent public API across the PHP extension.
 - [ ] Keep README, PHP stubs, runtime arginfo and tests aligned for
   `CudaArray`, `ContiguousArray`/`HostArray`, `Compiler`, `CompiledModule`,
   Fusion, optimizers, NN and global `cuda_*` functions.
+- [x] Add CuPy-like matrix and tensor factories: `eye()`, `identity()`,
+  `zerosLike()`, `onesLike()`, `fullLike()` and standard-normal `randn()`;
+  random constructors use fresh default seeds and support reproducible seeds.
+- [x] Add GPU-generated `arange()` and `linspace()` sequence factories with
+  endpoint, step, dtype inference and integer precision handling.
+- [x] Add `copy()`, `swapaxes()` and `moveaxis()` with Fusion and autograd
+  support for copies and axis permutations.
+- [x] Add `diagonal()`, `repeat()`, `tile()`, `flip()` and `roll()` with
+  device-side transformations and autograd gradient mappings.
+- [x] Capture `diagonal()`, `repeat()`, `tile()`, `flip()` and `roll()` as
+  index mappings in generated Fusion kernels, including chained expressions.
+- [ ] Support per-element repeat counts in `repeat()`.
+- [x] Add eager, Fusion and autograd support for `expm1()`, `exp2()`, `log1p()`,
+  `log2()`, `log10()`, `asin()`, `acos()`, `atan()`, `sinh()`, `cosh()` and
+  `tanh()`.
 - [ ] Document method limits, serialization restrictions, asynchronous
   lifetime rules and typed error behavior.
 - [ ] Retain CPU/API and PHP NTS/ZTS compatibility checks.
 
 ## Next implementation
 
-Continue closing Fusion's documented limits by expanding eager/Fusion parity
-for indexed expressions and gradients. Preserve explicit errors where a backend
-boundary remains intentional.
+Continue auditing common CuPy mathematical and cumulative methods, starting
+with cumulative sum/product support; preserve eager/Fusion parity and keep
+README, PHP stubs, runtime arginfo and tests aligned.

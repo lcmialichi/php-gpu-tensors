@@ -186,6 +186,34 @@ struct ExpOpT
 };
 
 template <typename T>
+struct Expm1OpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return expm1f(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return expm1(a);
+        else
+            return static_cast<T>(expm1f(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct Exp2OpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return exp2f(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return exp2(a);
+        else
+            return static_cast<T>(exp2f(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
 struct LogOpT
 {
     static __device__ __forceinline__ T apply(T a)
@@ -200,6 +228,48 @@ struct LogOpT
 };
 
 template <typename T>
+struct Log1pOpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return log1pf(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return log1p(a);
+        else
+            return static_cast<T>(log1pf(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct Log2OpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return log2f(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return log2(a);
+        else
+            return static_cast<T>(log2f(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct Log10OpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return log10f(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return log10(a);
+        else
+            return static_cast<T>(log10f(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
 struct SqrtOpT
 {
     static __device__ __forceinline__ T apply(T a)
@@ -210,6 +280,90 @@ struct SqrtOpT
             return sqrt(a);
         else
             return static_cast<T>(sqrtf(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct AsinOpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return asinf(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return asin(a);
+        else
+            return static_cast<T>(asinf(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct AcosOpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return acosf(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return acos(a);
+        else
+            return static_cast<T>(acosf(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct AtanOpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return atanf(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return atan(a);
+        else
+            return static_cast<T>(atanf(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct SinhOpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return sinhf(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return sinh(a);
+        else
+            return static_cast<T>(sinhf(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct CoshOpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return coshf(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return cosh(a);
+        else
+            return static_cast<T>(coshf(static_cast<float>(a)));
+    }
+};
+
+template <typename T>
+struct TanhOpT
+{
+    static __device__ __forceinline__ T apply(T a)
+    {
+        if constexpr (std::is_same<T, float>::value)
+            return tanhf(a);
+        else if constexpr (std::is_same<T, double>::value)
+            return tanh(a);
+        else
+            return static_cast<T>(tanhf(static_cast<float>(a)));
     }
 };
 

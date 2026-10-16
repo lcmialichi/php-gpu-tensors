@@ -856,3 +856,120 @@ tensor_t *cuda_tensor_copy(tensor_t *tensor)
 
     return copy;
 }
+
+static int tensor_transform_element_count(const int *shape, int ndims,
+                                          size_t *elements)
+{
+    if (!shape || !elements || ndims < 1 || ndims > MAX_DIMS)
+        return 0;
+    size_t count = 1;
+    for (int axis = 0; axis < ndims; axis++)
+    {
+        if (shape[axis] < 0 ||
+            (shape[axis] != 0 && count > SIZE_MAX / (size_t)shape[axis]))
+        {
+            CUDA_THROW_INVALID("Tensor transform output shape is too large");
+            return 0;
+        }
+        count *= (size_t)shape[axis];
+    }
+    *elements = count;
+    return 1;
+}
+
+tensor_t *cuda_tensor_index_transform(tensor_t *input,
+                                      tensor_transform_spec_t *spec)
+{
+    if (!input || !spec)
+    {
+        CUDA_THROW_INVALID("Tensor transform requires an input and operation metadata");
+        return NULL;
+    }
+    if (spec->output_ndims < 1 || spec->output_ndims > MAX_DIMS)
+    {
+        CUDA_THROW_INVALID("Tensor transform output rank is unsupported");
+        return NULL;
+    }
+    if (fusion_active())
+    {
+        spec->input_ndims = input->ndims;
+        memcpy(spec->input_shape, input->shape, input->ndims * sizeof(int));
+        memcpy(spec->input_strides, input->strides,
+               input->ndims * sizeof(size_t));
+        return fusion_transform(input, spec);
+    }
+    if (!fusion_materialize(input))
+        return NULL;
+    spec->input_ndims = input->ndims;
+    memcpy(spec->input_shape, input->shape, input->ndims * sizeof(int));
+    memcpy(spec->input_strides, input->strides,
+           input->ndims * sizeof(size_t));
+
+    size_t total_elements;
+    if (!tensor_transform_element_count(spec->output_shape,
+                                        spec->output_ndims, &total_elements))
+        return NULL;
+
+    tensor_t *result = cuda_tensor_create_empty_dtype(
+        spec->output_shape, spec->output_ndims, input->dtype);
+    if (!result) return NULL;
+    cudaError_t status = launch_tensor_transform(
+        input->data, result->data, input->dtype, spec, total_elements);
+    if (status != cudaSuccess)
+    {
+        cuda_tensor_destroy(result);
+        CUDA_THROW_RUNTIME("Tensor transform kernel failed: %s",
+                           cudaGetErrorString(status));
+        return NULL;
+    }
+    autograd_record_index_transform(result, input, spec);
+    return result;
+}
+
+tensor_t *cuda_tensor_index_transform_backward(
+    tensor_t *upstream, const tensor_transform_spec_t *spec)
+{
+    if (!upstream || !spec ||
+        (upstream->dtype != DTYPE_FLOAT32 && upstream->dtype != DTYPE_FLOAT64))
+    {
+        CUDA_THROW_INVALID("Tensor transform gradients require float32 or float64 data");
+        return NULL;
+    }
+    if (fusion_active())
+        return fusion_transform_backward(upstream, spec);
+    if (!fusion_materialize(upstream))
+        return NULL;
+    if (upstream->ndims != spec->output_ndims)
+    {
+        CUDA_THROW_INVALID("Tensor transform gradient rank does not match its output");
+        return NULL;
+    }
+    for (int axis = 0; axis < upstream->ndims; axis++)
+    {
+        if (upstream->shape[axis] != spec->output_shape[axis])
+        {
+            CUDA_THROW_INVALID("Tensor transform gradient shape does not match its output");
+            return NULL;
+        }
+    }
+
+    scalar_value_t zero = {0};
+    zero.dtype = upstream->dtype;
+    tensor_t *result = cuda_tensor_create_with_value(
+        (int *)spec->input_shape, spec->input_ndims, zero, upstream->dtype);
+    if (!result) return NULL;
+    tensor_transform_spec_t gradient_spec = *spec;
+    memcpy(gradient_spec.upstream_strides, upstream->strides,
+           upstream->ndims * sizeof(size_t));
+    cudaError_t status = launch_tensor_transform_gradient(
+        upstream->data, result->data, upstream->dtype, &gradient_spec,
+        upstream->total_size, NULL);
+    if (status != cudaSuccess)
+    {
+        cuda_tensor_destroy(result);
+        CUDA_THROW_RUNTIME("Tensor transform gradient kernel failed: %s",
+                           cudaGetErrorString(status));
+        return NULL;
+    }
+    return result;
+}

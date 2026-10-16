@@ -111,6 +111,48 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
                            step->root, item->a, item->b, item->c);
         return 0;
     }
+    if (node->kind == FUSION_TRANSFORM_BACKWARD)
+    {
+        if (a->dtype != result->dtype ||
+            (a->dtype != DTYPE_FLOAT32 && a->dtype != DTYPE_FLOAT64) ||
+            a->ndims != node->transform.output_ndims)
+        {
+            CUDA_THROW_INVALID("Fusion transform gradient received incompatible tensors");
+            return 0;
+        }
+        for (int axis = 0; axis < a->ndims; axis++)
+            if (a->shape[axis] != node->transform.output_shape[axis])
+            {
+                CUDA_THROW_INVALID("Fusion transform gradient shape changed during execution");
+                return 0;
+            }
+
+        if (result->total_size)
+        {
+            cudaError_t error = cudaMemsetAsync(
+                result->data, 0, result->total_size * result->element_size,
+                (cudaStream_t)stream);
+            if (error != cudaSuccess)
+            {
+                CUDA_THROW_RUNTIME("Fusion transform gradient initialization failed: %s",
+                                   cudaGetErrorString(error));
+                return 0;
+            }
+        }
+        tensor_transform_spec_t gradient_spec = node->transform;
+        memcpy(gradient_spec.upstream_strides, a->strides,
+               a->ndims * sizeof(size_t));
+        cudaError_t error = launch_tensor_transform_gradient(
+            a->data, result->data, a->dtype, &gradient_spec, a->total_size,
+            (cudaStream_t)stream);
+        if (error != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Fusion transform gradient kernel failed: %s",
+                               cudaGetErrorString(error));
+            return 0;
+        }
+        return 1;
+    }
     if (node->kind == FUSION_MATMUL)
     {
         int ok = a->dtype == DTYPE_FLOAT32

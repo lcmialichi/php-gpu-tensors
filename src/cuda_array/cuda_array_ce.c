@@ -18,6 +18,7 @@
 #include "autograd.h"
 #include <math.h>
 #include <limits.h>
+#include <float.h>
 
 zend_class_entry *cuda_array_ce;
 static zend_object_handlers cuda_array_handlers;
@@ -33,7 +34,11 @@ static zval *cuda_array_read_dimension(zend_object *object, zval *offset, int ty
 static void cuda_array_write_dimension(zend_object *object, zval *offset, zval *value);
 static tensor_t *cuda_tensor_concat(zval *tensors_array, int axis);
 static void static_tensor_creator(INTERNAL_FUNCTION_PARAMETERS, const char *method_name, scalar_value_t scalar_value);
-static void rand_tensor_creator(INTERNAL_FUNCTION_PARAMETERS, unsigned long long seed);
+static void rand_tensor_creator(INTERNAL_FUNCTION_PARAMETERS);
+static void randn_tensor_creator(INTERNAL_FUNCTION_PARAMETERS);
+static int parse_optional_seed(zval *seed_value, unsigned long long *seed, int *has_seed);
+static tensor_t *cuda_array_like_create(tensor_t *prototype, zend_string *dtype_str,
+                                        scalar_value_t value);
 
 static void reduction_operation_handler(INTERNAL_FUNCTION_PARAMETERS, const char *operation_name, operation_type_t operation_type, int return_arg);
 static void unary_operation_handler(INTERNAL_FUNCTION_PARAMETERS, const char *operation_name, operation_type_t operation_type);
@@ -517,6 +522,24 @@ ZEND_METHOD(CudaArray, zeros)
     static_tensor_creator(INTERNAL_FUNCTION_PARAM_PASSTHRU, "zeros", scalar_value);
 }
 
+ZEND_METHOD(CudaArray, zerosLike)
+{
+    zval *prototype_value;
+    zend_string *dtype_str = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 2)
+        Z_PARAM_OBJECT_OF_CLASS(prototype_value, cuda_array_ce)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_STR_OR_NULL(dtype_str)
+    ZEND_PARSE_PARAMETERS_END();
+
+    cuda_array_obj *prototype = php_cuda_array_fetch_deferred_object(Z_OBJ_P(prototype_value));
+    if (!prototype) RETURN_THROWS();
+    scalar_value_t value = {.v.f32 = 0.0f, .dtype = DTYPE_FLOAT32, .is_neg = 0};
+    tensor_t *tensor = cuda_array_like_create(prototype->tensor_handle, dtype_str, value);
+    if (!tensor) RETURN_THROWS();
+    create_result_object(return_value, tensor);
+}
+
 ZEND_METHOD(CudaArray, ones)
 {
     scalar_value_t scalar_value;
@@ -527,9 +550,330 @@ ZEND_METHOD(CudaArray, ones)
     static_tensor_creator(INTERNAL_FUNCTION_PARAM_PASSTHRU, "ones", scalar_value);
 }
 
+ZEND_METHOD(CudaArray, onesLike)
+{
+    zval *prototype_value;
+    zend_string *dtype_str = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 2)
+        Z_PARAM_OBJECT_OF_CLASS(prototype_value, cuda_array_ce)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_STR_OR_NULL(dtype_str)
+    ZEND_PARSE_PARAMETERS_END();
+
+    cuda_array_obj *prototype = php_cuda_array_fetch_deferred_object(Z_OBJ_P(prototype_value));
+    if (!prototype) RETURN_THROWS();
+    scalar_value_t value = {.v.f32 = 1.0f, .dtype = DTYPE_FLOAT32, .is_neg = 0};
+    tensor_t *tensor = cuda_array_like_create(prototype->tensor_handle, dtype_str, value);
+    if (!tensor) RETURN_THROWS();
+    create_result_object(return_value, tensor);
+}
+
+ZEND_METHOD(CudaArray, fullLike)
+{
+    zval *prototype_value, *value_zv;
+    zend_string *dtype_str = NULL;
+    ZEND_PARSE_PARAMETERS_START(2, 3)
+        Z_PARAM_OBJECT_OF_CLASS(prototype_value, cuda_array_ce)
+        Z_PARAM_ZVAL(value_zv)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_STR_OR_NULL(dtype_str)
+    ZEND_PARSE_PARAMETERS_END();
+
+    cuda_array_obj *prototype = php_cuda_array_fetch_deferred_object(Z_OBJ_P(prototype_value));
+    if (!prototype) RETURN_THROWS();
+    scalar_value_t value;
+    SCALAR_FROM_ZVAL(value_zv, value);
+    if (EG(exception)) RETURN_THROWS();
+    tensor_t *tensor = cuda_array_like_create(prototype->tensor_handle, dtype_str, value);
+    if (!tensor) RETURN_THROWS();
+    create_result_object(return_value, tensor);
+}
+
 ZEND_METHOD(CudaArray, rand)
 {
-    rand_tensor_creator(INTERNAL_FUNCTION_PARAM_PASSTHRU, 4242424242424242ULL);
+    rand_tensor_creator(INTERNAL_FUNCTION_PARAM_PASSTHRU);
+}
+
+ZEND_METHOD(CudaArray, randn)
+{
+    randn_tensor_creator(INTERNAL_FUNCTION_PARAM_PASSTHRU);
+}
+
+ZEND_METHOD(CudaArray, eye)
+{
+    zend_long rows, columns = 0, diagonal = 0;
+    zend_bool columns_is_null = 1;
+    zend_string *dtype_str = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 4)
+        Z_PARAM_LONG(rows)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG_OR_NULL(columns, columns_is_null)
+        Z_PARAM_LONG(diagonal)
+        Z_PARAM_STR_OR_NULL(dtype_str)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (columns_is_null) columns = rows;
+    if (rows < 0 || columns < 0 || rows > INT_MAX || columns > INT_MAX ||
+        diagonal < INT_MIN || diagonal > INT_MAX)
+    {
+        CUDA_THROW_INVALID("eye dimensions and diagonal must fit the supported integer range");
+        RETURN_THROWS();
+    }
+    dtype_t dtype = parse_dtype_param(dtype_str);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Invalid dtype for eye");
+        RETURN_THROWS();
+    }
+    tensor_t *tensor = cuda_tensor_create_eye((int)rows, (int)columns,
+                                               (int)diagonal, dtype);
+    if (!tensor) RETURN_THROWS();
+    create_result_object(return_value, tensor);
+}
+
+ZEND_METHOD(CudaArray, identity)
+{
+    zend_long size;
+    zend_string *dtype_str = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 2)
+        Z_PARAM_LONG(size)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_STR_OR_NULL(dtype_str)
+    ZEND_PARSE_PARAMETERS_END();
+
+    if (size < 0 || size > INT_MAX)
+    {
+        CUDA_THROW_INVALID("identity size must be between 0 and %d", INT_MAX);
+        RETURN_THROWS();
+    }
+    dtype_t dtype = parse_dtype_param(dtype_str);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Invalid dtype for identity");
+        RETURN_THROWS();
+    }
+    tensor_t *tensor = cuda_tensor_create_eye((int)size, (int)size, 0, dtype);
+    if (!tensor) RETURN_THROWS();
+    create_result_object(return_value, tensor);
+}
+
+static int parse_range_number(zval *value, double *number, int64_t *integer,
+                              int *is_integer)
+{
+    ZVAL_DEREF(value);
+    if (Z_TYPE_P(value) == IS_LONG)
+    {
+        *integer = (int64_t)Z_LVAL_P(value);
+        *number = (double)*integer;
+        *is_integer = 1;
+        return 1;
+    }
+    if (Z_TYPE_P(value) == IS_DOUBLE && isfinite(Z_DVAL_P(value)))
+    {
+        *number = Z_DVAL_P(value);
+        *integer = 0;
+        *is_integer = 0;
+        return 1;
+    }
+    CUDA_THROW_INVALID("Range values must be finite integers or floats");
+    return 0;
+}
+
+static int arange_count(double start, double stop, double step,
+                        int exact_integer, int64_t integer_start,
+                        int64_t integer_stop, int64_t integer_step,
+                        int *count)
+{
+    if (step == 0.0)
+    {
+        CUDA_THROW_INVALID("arange step cannot be zero");
+        return 0;
+    }
+
+    uint64_t elements = 0;
+    if (exact_integer)
+    {
+        if (integer_step > 0 && integer_start < integer_stop)
+        {
+            uint64_t distance = (uint64_t)integer_stop - (uint64_t)integer_start;
+            uint64_t stride = (uint64_t)integer_step;
+            elements = distance / stride + (distance % stride != 0);
+        }
+        else if (integer_step < 0 && integer_start > integer_stop)
+        {
+            uint64_t distance = (uint64_t)integer_start - (uint64_t)integer_stop;
+            uint64_t stride = (uint64_t)(-(integer_step + 1)) + 1;
+            elements = distance / stride + (distance % stride != 0);
+        }
+    }
+    else
+    {
+        long double distance = (long double)stop - (long double)start;
+        long double stride = (long double)step;
+        if ((stride > 0 && distance > 0) || (stride < 0 && distance < 0))
+        {
+            long double result = ceill(distance / stride);
+            if (!isfinite(result) || result > INT_MAX)
+            {
+                CUDA_THROW_INVALID("arange result exceeds the supported element count");
+                return 0;
+            }
+            elements = (uint64_t)result;
+        }
+    }
+    if (elements > INT_MAX)
+    {
+        CUDA_THROW_INVALID("arange result exceeds the supported element count");
+        return 0;
+    }
+    *count = (int)elements;
+    return 1;
+}
+
+static int generated_values_fit_dtype(dtype_t dtype, long double minimum,
+                                      long double maximum)
+{
+    long double low, high;
+    switch (dtype)
+    {
+        case DTYPE_FLOAT16: low = -65504.0L; high = 65504.0L; break;
+        case DTYPE_BFLOAT16: low = -3.3895313892515355e38L; high = 3.3895313892515355e38L; break;
+        case DTYPE_FLOAT32: low = -FLT_MAX; high = FLT_MAX; break;
+        case DTYPE_FLOAT64: low = -DBL_MAX; high = DBL_MAX; break;
+        case DTYPE_INT8: low = INT8_MIN; high = INT8_MAX; break;
+        case DTYPE_INT16: low = INT16_MIN; high = INT16_MAX; break;
+        case DTYPE_INT32: low = INT32_MIN; high = INT32_MAX; break;
+        case DTYPE_INT64: low = INT64_MIN; high = INT64_MAX; break;
+        case DTYPE_UINT8: low = 0; high = UINT8_MAX; break;
+        case DTYPE_UINT16: low = 0; high = UINT16_MAX; break;
+        case DTYPE_UINT32: low = 0; high = UINT32_MAX; break;
+        case DTYPE_UINT64: low = 0; high = UINT64_MAX; break;
+        case DTYPE_BOOL: return 1;
+        default: return 0;
+    }
+    return minimum >= low && maximum <= high;
+}
+
+ZEND_METHOD(CudaArray, arange)
+{
+    zval *start_value, *stop_value = NULL, *step_value = NULL;
+    zend_string *dtype_str = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 4)
+        Z_PARAM_ZVAL(start_value)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ZVAL_OR_NULL(stop_value)
+        Z_PARAM_ZVAL(step_value)
+        Z_PARAM_STR_OR_NULL(dtype_str)
+    ZEND_PARSE_PARAMETERS_END();
+
+    double start, stop, step = 1.0;
+    int64_t integer_start = 0, integer_stop = 0, integer_step = 1;
+    int start_is_integer, stop_is_integer = 1, step_is_integer = 1;
+    if (stop_value)
+    {
+        if (!parse_range_number(start_value, &start, &integer_start, &start_is_integer))
+            RETURN_THROWS();
+        if (!parse_range_number(stop_value, &stop, &integer_stop, &stop_is_integer))
+            RETURN_THROWS();
+    }
+    else
+    {
+        if (!parse_range_number(start_value, &stop, &integer_stop, &stop_is_integer))
+            RETURN_THROWS();
+        start = 0.0;
+        integer_start = 0;
+        start_is_integer = stop_is_integer;
+    }
+
+    if (step_value &&
+        !parse_range_number(step_value, &step, &integer_step, &step_is_integer))
+        RETURN_THROWS();
+
+    int exact_integer = start_is_integer && stop_is_integer && step_is_integer;
+    dtype_t dtype = dtype_str ? parse_dtype_param(dtype_str)
+                              : (exact_integer ? DTYPE_INT64 : DTYPE_FLOAT64);
+    if (dtype == DTYPE_UNKNOWN || !dtype_is_numeric_or_bool(dtype))
+    {
+        CUDA_THROW_INVALID("Invalid dtype for arange");
+        RETURN_THROWS();
+    }
+
+    int count;
+    if (!arange_count(start, stop, step, exact_integer, integer_start,
+                      integer_stop, integer_step, &count))
+        RETURN_THROWS();
+
+    long double last = count > 0
+        ? (exact_integer
+            ? (long double)integer_start + (long double)(count - 1) * integer_step
+            : (long double)start + (long double)(count - 1) * step)
+        : (exact_integer ? (long double)integer_start : (long double)start);
+    long double range_start = exact_integer
+        ? (long double)integer_start : (long double)start;
+    long double minimum = count > 0 && last < range_start ? last : range_start;
+    long double maximum = count > 0 && last > range_start ? last : range_start;
+    if (!generated_values_fit_dtype(dtype, minimum, maximum))
+    {
+        CUDA_THROW_INVALID("arange values are outside the range of dtype %s",
+                           dtype_to_string(dtype));
+        RETURN_THROWS();
+    }
+
+    tensor_t *tensor = cuda_tensor_create_arange(count, dtype, start, step,
+                                                  exact_integer,
+                                                  integer_start, integer_step);
+    if (!tensor) RETURN_THROWS();
+    create_result_object(return_value, tensor);
+}
+
+ZEND_METHOD(CudaArray, linspace)
+{
+    zval *start_value, *stop_value;
+    zend_long num = 50;
+    zend_bool endpoint = 1;
+    zend_string *dtype_str = NULL;
+    ZEND_PARSE_PARAMETERS_START(2, 5)
+        Z_PARAM_ZVAL(start_value)
+        Z_PARAM_ZVAL(stop_value)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(num)
+        Z_PARAM_BOOL(endpoint)
+        Z_PARAM_STR_OR_NULL(dtype_str)
+    ZEND_PARSE_PARAMETERS_END();
+
+    double start, stop;
+    int64_t unused_integer;
+    int unused_is_integer;
+    if (!parse_range_number(start_value, &start, &unused_integer,
+                            &unused_is_integer) ||
+        !parse_range_number(stop_value, &stop, &unused_integer,
+                            &unused_is_integer))
+        RETURN_THROWS();
+    if (num < 0 || num > INT_MAX)
+    {
+        CUDA_THROW_INVALID("linspace num must be between 0 and %d", INT_MAX);
+        RETURN_THROWS();
+    }
+
+    dtype_t dtype = dtype_str ? parse_dtype_param(dtype_str) : DTYPE_FLOAT64;
+    if (dtype == DTYPE_UNKNOWN || !dtype_is_numeric_or_bool(dtype))
+    {
+        CUDA_THROW_INVALID("Invalid dtype for linspace");
+        RETURN_THROWS();
+    }
+    long double minimum = start < stop ? start : stop;
+    long double maximum = start > stop ? start : stop;
+    if (!generated_values_fit_dtype(dtype, minimum, maximum))
+    {
+        CUDA_THROW_INVALID("linspace values are outside the range of dtype %s",
+                           dtype_to_string(dtype));
+        RETURN_THROWS();
+    }
+
+    tensor_t *tensor = cuda_tensor_create_linspace((int)num, dtype, start,
+                                                    stop, endpoint);
+    if (!tensor) RETURN_THROWS();
+    create_result_object(return_value, tensor);
 }
 
 ZEND_METHOD(CudaArray, transpose)
@@ -624,6 +968,544 @@ ZEND_METHOD(CudaArray, transpose)
     create_result_object(return_value, result_tensor);
 }
 
+ZEND_METHOD(CudaArray, copy)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+    tensor_t *copy;
+
+    if (fusion_active())
+    {
+        copy = fusion_view(input, OP_RESHAPE, input->shape, input->strides,
+                           input->ndims, NULL);
+    }
+    else
+    {
+        if (!fusion_materialize(input)) RETURN_THROWS();
+        copy = cuda_tensor_copy(input);
+        if (copy) autograd_record_view(copy, input, OP_RESHAPE, NULL);
+    }
+    if (!copy)
+    {
+        if (!EG(exception)) CUDA_THROW_RUNTIME("CudaArray copy failed");
+        RETURN_THROWS();
+    }
+    create_result_object(return_value, copy);
+}
+
+static int cuda_array_parse_axis_collection(zval *value, int ndims,
+                                           int *axes, int *count,
+                                           const char *argument_name)
+{
+    ZVAL_DEREF(value);
+    *count = 0;
+    if (Z_TYPE_P(value) == IS_LONG)
+    {
+        if (Z_LVAL_P(value) < INT_MIN || Z_LVAL_P(value) > INT_MAX)
+        {
+            CUDA_THROW_INVALID("%s axis exceeds the supported integer range",
+                               argument_name);
+            return 0;
+        }
+        axes[(*count)++] = (int)Z_LVAL_P(value);
+    }
+    else if (Z_TYPE_P(value) == IS_ARRAY)
+    {
+        zval *axis_value;
+        ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), axis_value)
+        {
+            ZVAL_DEREF(axis_value);
+            if (Z_TYPE_P(axis_value) != IS_LONG || *count >= MAX_DIMS)
+            {
+                CUDA_THROW_INVALID("%s must contain at most %d integer axes",
+                                   argument_name, MAX_DIMS);
+                return 0;
+            }
+            if (Z_LVAL_P(axis_value) < INT_MIN || Z_LVAL_P(axis_value) > INT_MAX)
+            {
+                CUDA_THROW_INVALID("%s axis exceeds the supported integer range",
+                                   argument_name);
+                return 0;
+            }
+            axes[(*count)++] = (int)Z_LVAL_P(axis_value);
+        }
+        ZEND_HASH_FOREACH_END();
+    }
+    else
+    {
+        CUDA_THROW_INVALID("%s must be an integer axis or an array of axes",
+                           argument_name);
+        return 0;
+    }
+
+    bool used[MAX_DIMS] = {false};
+    for (int i = 0; i < *count; i++)
+    {
+        if (axes[i] < 0) axes[i] += ndims;
+        if (axes[i] < 0 || axes[i] >= ndims)
+        {
+            CUDA_THROW_INVALID("%s axis is out of range for tensor rank %d",
+                               argument_name, ndims);
+            return 0;
+        }
+        if (used[axes[i]])
+        {
+            CUDA_THROW_INVALID("%s contains a duplicate axis %d",
+                               argument_name, axes[i]);
+            return 0;
+        }
+        used[axes[i]] = true;
+    }
+    return 1;
+}
+
+ZEND_METHOD(CudaArray, swapaxes)
+{
+    zend_long first_axis, second_axis;
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_LONG(first_axis)
+        Z_PARAM_LONG(second_axis)
+    ZEND_PARSE_PARAMETERS_END();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+    if (first_axis < INT_MIN || first_axis > INT_MAX ||
+        second_axis < INT_MIN || second_axis > INT_MAX)
+    {
+        CUDA_THROW_INVALID("swapaxes axes exceed the supported integer range");
+        RETURN_THROWS();
+    }
+    int axis_a = (int)first_axis;
+    int axis_b = (int)second_axis;
+    if (axis_a < 0) axis_a += input->ndims;
+    if (axis_b < 0) axis_b += input->ndims;
+    if (axis_a < 0 || axis_a >= input->ndims ||
+        axis_b < 0 || axis_b >= input->ndims)
+    {
+        CUDA_THROW_INVALID("swapaxes axis is out of range for tensor rank %d",
+                           input->ndims);
+        RETURN_THROWS();
+    }
+    int axes[MAX_DIMS];
+    for (int i = 0; i < input->ndims; i++) axes[i] = i;
+    axes[axis_a] = axis_b;
+    axes[axis_b] = axis_a;
+    tensor_t *result = cuda_tensor_transpose(input, axes, input->ndims);
+    if (!result)
+    {
+        if (!EG(exception)) CUDA_THROW_RUNTIME("swapaxes failed");
+        RETURN_THROWS();
+    }
+    create_result_object(return_value, result);
+}
+
+ZEND_METHOD(CudaArray, moveaxis)
+{
+    zval *source_value, *destination_value;
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_ZVAL(source_value)
+        Z_PARAM_ZVAL(destination_value)
+    ZEND_PARSE_PARAMETERS_END();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+    int source[MAX_DIMS], destination[MAX_DIMS];
+    int source_count, destination_count;
+    if (!cuda_array_parse_axis_collection(source_value, input->ndims, source,
+                                          &source_count, "source") ||
+        !cuda_array_parse_axis_collection(destination_value, input->ndims,
+                                          destination, &destination_count,
+                                          "destination"))
+        RETURN_THROWS();
+    if (source_count != destination_count)
+    {
+        CUDA_THROW_INVALID("moveaxis source and destination must contain the same number of axes");
+        RETURN_THROWS();
+    }
+
+    int ordered_source[MAX_DIMS], ordered_destination[MAX_DIMS];
+    memcpy(ordered_source, source, source_count * sizeof(int));
+    memcpy(ordered_destination, destination, destination_count * sizeof(int));
+    for (int i = 1; i < source_count; i++)
+    {
+        int current_source = ordered_source[i];
+        int current_destination = ordered_destination[i];
+        int j = i;
+        while (j > 0 && ordered_destination[j - 1] > current_destination)
+        {
+            ordered_source[j] = ordered_source[j - 1];
+            ordered_destination[j] = ordered_destination[j - 1];
+            j--;
+        }
+        ordered_source[j] = current_source;
+        ordered_destination[j] = current_destination;
+    }
+
+    bool moved[MAX_DIMS] = {false};
+    for (int i = 0; i < source_count; i++) moved[source[i]] = true;
+    int axes[MAX_DIMS], axis_count = 0;
+    for (int i = 0; i < input->ndims; i++)
+        if (!moved[i]) axes[axis_count++] = i;
+    for (int i = 0; i < source_count; i++)
+    {
+        int position = ordered_destination[i];
+        memmove(&axes[position + 1], &axes[position],
+                (size_t)(axis_count - position) * sizeof(int));
+        axes[position] = ordered_source[i];
+        axis_count++;
+    }
+
+    tensor_t *result = cuda_tensor_transpose(input, axes, input->ndims);
+    if (!result)
+    {
+        if (!EG(exception)) CUDA_THROW_RUNTIME("moveaxis failed");
+        RETURN_THROWS();
+    }
+    create_result_object(return_value, result);
+}
+
+static int cuda_array_parse_integer_list(zval *value, int64_t *items,
+                                         int *count, int *is_scalar,
+                                         const char *argument_name)
+{
+    ZVAL_DEREF(value);
+    *count = 0;
+    *is_scalar = Z_TYPE_P(value) == IS_LONG;
+    if (*is_scalar)
+    {
+        items[(*count)++] = (int64_t)Z_LVAL_P(value);
+        return 1;
+    }
+    if (Z_TYPE_P(value) != IS_ARRAY)
+    {
+        CUDA_THROW_INVALID("%s must be an integer or an array of integers",
+                           argument_name);
+        return 0;
+    }
+    zval *item;
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), item)
+    {
+        ZVAL_DEREF(item);
+        if (Z_TYPE_P(item) != IS_LONG || *count >= MAX_DIMS)
+        {
+            CUDA_THROW_INVALID("%s must contain at most %d integers",
+                               argument_name, MAX_DIMS);
+            return 0;
+        }
+        items[(*count)++] = (int64_t)Z_LVAL_P(item);
+    }
+    ZEND_HASH_FOREACH_END();
+    return 1;
+}
+
+ZEND_METHOD(CudaArray, diagonal)
+{
+    zend_long offset = 0, axis1 = 0, axis2 = 1;
+    ZEND_PARSE_PARAMETERS_START(0, 3)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(offset)
+        Z_PARAM_LONG(axis1)
+        Z_PARAM_LONG(axis2)
+    ZEND_PARSE_PARAMETERS_END();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+    if (input->ndims < 2 || offset < INT_MIN || offset > INT_MAX ||
+        axis1 < INT_MIN || axis1 > INT_MAX ||
+        axis2 < INT_MIN || axis2 > INT_MAX)
+    {
+        CUDA_THROW_INVALID("diagonal requires rank >= 2 and supported integer arguments");
+        RETURN_THROWS();
+    }
+
+    int first_axis = (int)axis1;
+    int second_axis = (int)axis2;
+    if (first_axis < 0) first_axis += input->ndims;
+    if (second_axis < 0) second_axis += input->ndims;
+    if (first_axis < 0 || first_axis >= input->ndims ||
+        second_axis < 0 || second_axis >= input->ndims ||
+        first_axis == second_axis)
+    {
+        CUDA_THROW_INVALID("diagonal axes must be distinct and within the tensor rank");
+        RETURN_THROWS();
+    }
+
+    int64_t row_start = offset < 0 ? -(int64_t)offset : 0;
+    int64_t column_start = offset > 0 ? (int64_t)offset : 0;
+    int64_t rows = (int64_t)input->shape[first_axis] - row_start;
+    int64_t columns = (int64_t)input->shape[second_axis] - column_start;
+    int diagonal_size = rows <= 0 || columns <= 0
+        ? 0 : (int)(rows < columns ? rows : columns);
+
+    tensor_transform_spec_t spec = {0};
+    spec.op = OP_DIAGONAL;
+    spec.axis1 = first_axis;
+    spec.axis2 = second_axis;
+    spec.offset = (int)offset;
+    spec.output_ndims = input->ndims - 1;
+    int output_axis = 0;
+    for (int input_axis = 0; input_axis < input->ndims; input_axis++)
+    {
+        if (input_axis != first_axis && input_axis != second_axis)
+            spec.output_shape[output_axis++] = input->shape[input_axis];
+    }
+    spec.output_shape[output_axis] = diagonal_size;
+
+    tensor_t *result = cuda_tensor_index_transform(input, &spec);
+    if (!result) RETURN_THROWS();
+    create_result_object(return_value, result);
+}
+
+ZEND_METHOD(CudaArray, repeat)
+{
+    zend_long repeats;
+    zval *axis_value = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 2)
+        Z_PARAM_LONG(repeats)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ZVAL(axis_value)
+    ZEND_PARSE_PARAMETERS_END();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+    if (axis_value) ZVAL_DEREF(axis_value);
+    if (repeats < 0 || repeats > INT_MAX)
+    {
+        CUDA_THROW_INVALID("repeat count must be between 0 and %d", INT_MAX);
+        RETURN_THROWS();
+    }
+
+    int axis = -1;
+    if (axis_value && Z_TYPE_P(axis_value) != IS_NULL)
+    {
+        if (Z_TYPE_P(axis_value) != IS_LONG ||
+            Z_LVAL_P(axis_value) < INT_MIN || Z_LVAL_P(axis_value) > INT_MAX)
+        {
+            CUDA_THROW_INVALID("repeat axis must be an integer or null");
+            RETURN_THROWS();
+        }
+        axis = (int)Z_LVAL_P(axis_value);
+        if (axis < 0) axis += input->ndims;
+        if (axis < 0 || axis >= input->ndims)
+        {
+            CUDA_THROW_INVALID("repeat axis is out of range for tensor rank %d",
+                               input->ndims);
+            RETURN_THROWS();
+        }
+    }
+
+    tensor_transform_spec_t spec = {0};
+    spec.op = OP_REPEAT;
+    spec.axis = axis;
+    spec.repeats = (int)repeats;
+    if (axis < 0)
+    {
+        if (input->total_size && (size_t)repeats > (size_t)INT_MAX / input->total_size)
+        {
+            CUDA_THROW_INVALID("repeat output exceeds the supported dimension size");
+            RETURN_THROWS();
+        }
+        spec.output_ndims = 1;
+        spec.output_shape[0] = (int)(input->total_size * (size_t)repeats);
+    }
+    else
+    {
+        memcpy(spec.output_shape, input->shape, input->ndims * sizeof(int));
+        if (input->shape[axis] && repeats > INT_MAX / input->shape[axis])
+        {
+            CUDA_THROW_INVALID("repeat output exceeds the supported dimension size");
+            RETURN_THROWS();
+        }
+        spec.output_shape[axis] = input->shape[axis] * (int)repeats;
+        spec.output_ndims = input->ndims;
+    }
+
+    tensor_t *result = cuda_tensor_index_transform(input, &spec);
+    if (!result) RETURN_THROWS();
+    create_result_object(return_value, result);
+}
+
+ZEND_METHOD(CudaArray, tile)
+{
+    zval *reps_value;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ZVAL(reps_value)
+    ZEND_PARSE_PARAMETERS_END();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+
+    int64_t requested[MAX_DIMS];
+    int requested_count, is_scalar;
+    if (!cuda_array_parse_integer_list(reps_value, requested,
+                                      &requested_count, &is_scalar, "reps"))
+        RETURN_THROWS();
+    for (int i = 0; i < requested_count; i++)
+    {
+        if (requested[i] < 0 || requested[i] > INT_MAX)
+        {
+            CUDA_THROW_INVALID("tile repetitions must be between 0 and %d", INT_MAX);
+            RETURN_THROWS();
+        }
+    }
+    int output_ndims = is_scalar
+        ? input->ndims : (requested_count > input->ndims
+            ? requested_count : input->ndims);
+    if (output_ndims < 1) output_ndims = 1;
+    if (output_ndims > MAX_DIMS)
+    {
+        CUDA_THROW_INVALID("tile output rank exceeds the maximum of %d", MAX_DIMS);
+        RETURN_THROWS();
+    }
+    tensor_transform_spec_t spec = {0};
+    spec.op = OP_TILE;
+    spec.output_ndims = output_ndims;
+    int leading = output_ndims - input->ndims;
+    for (int axis = 0; axis < output_ndims; axis++)
+    {
+        int input_axis = axis - leading;
+        int input_extent = input_axis < 0 ? 1 : input->shape[input_axis];
+        int factor;
+        if (is_scalar)
+            factor = (int)requested[0];
+        else
+        {
+            int reps_axis = axis - (output_ndims - requested_count);
+            factor = reps_axis < 0 ? 1 : (int)requested[reps_axis];
+        }
+        if (input_extent && factor > INT_MAX / input_extent)
+        {
+            CUDA_THROW_INVALID("tile output exceeds the supported dimension size");
+            RETURN_THROWS();
+        }
+        spec.factors[axis] = factor;
+        spec.output_shape[axis] = input_extent * factor;
+    }
+
+    tensor_t *result = cuda_tensor_index_transform(input, &spec);
+    if (!result) RETURN_THROWS();
+    create_result_object(return_value, result);
+}
+
+ZEND_METHOD(CudaArray, flip)
+{
+    zval *axis_value = NULL;
+    ZEND_PARSE_PARAMETERS_START(0, 1)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ZVAL(axis_value)
+    ZEND_PARSE_PARAMETERS_END();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+    if (axis_value) ZVAL_DEREF(axis_value);
+    tensor_transform_spec_t spec = {0};
+    spec.op = OP_FLIP;
+    spec.output_ndims = input->ndims;
+    memcpy(spec.output_shape, input->shape, input->ndims * sizeof(int));
+
+    if (!axis_value || Z_TYPE_P(axis_value) == IS_NULL)
+    {
+        for (int axis = 0; axis < input->ndims; axis++) spec.axes[axis] = 1;
+    }
+    else
+    {
+        int axes[MAX_DIMS], axis_count;
+        if (!cuda_array_parse_axis_collection(axis_value, input->ndims, axes,
+                                              &axis_count, "axis"))
+            RETURN_THROWS();
+        for (int i = 0; i < axis_count; i++) spec.axes[axes[i]] = 1;
+    }
+
+    tensor_t *result = cuda_tensor_index_transform(input, &spec);
+    if (!result) RETURN_THROWS();
+    create_result_object(return_value, result);
+}
+
+ZEND_METHOD(CudaArray, roll)
+{
+    zval *shift_value, *axis_value = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 2)
+        Z_PARAM_ZVAL(shift_value)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ZVAL(axis_value)
+    ZEND_PARSE_PARAMETERS_END();
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+    int64_t shifts[MAX_DIMS];
+    int shift_count, shift_is_scalar;
+    if (!cuda_array_parse_integer_list(shift_value, shifts, &shift_count,
+                                       &shift_is_scalar, "shift"))
+        RETURN_THROWS();
+
+    tensor_transform_spec_t spec = {0};
+    spec.op = OP_ROLL;
+    spec.output_ndims = input->ndims;
+    memcpy(spec.output_shape, input->shape, input->ndims * sizeof(int));
+    if (axis_value) ZVAL_DEREF(axis_value);
+    int axis_is_null = !axis_value || Z_TYPE_P(axis_value) == IS_NULL;
+    if (axis_is_null)
+    {
+        int64_t combined_shift = 0;
+        for (int i = 0; i < shift_count; i++)
+        {
+            if ((shifts[i] > 0 && combined_shift > INT64_MAX - shifts[i]) ||
+                (shifts[i] < 0 && combined_shift < INT64_MIN - shifts[i]))
+            {
+                CUDA_THROW_INVALID("Combined roll shift exceeds the supported integer range");
+                RETURN_THROWS();
+            }
+            combined_shift += shifts[i];
+        }
+        if (input->total_size > INT64_MAX)
+        {
+            CUDA_THROW_INVALID("roll does not support tensors larger than INT64_MAX elements");
+            RETURN_THROWS();
+        }
+        if (!input->total_size)
+            spec.shifts[0] = 0;
+        else
+        {
+            int64_t modulus = (int64_t)input->total_size;
+            spec.shifts[0] = combined_shift % modulus;
+            if (spec.shifts[0] < 0) spec.shifts[0] += modulus;
+        }
+        spec.axis = -1;
+    }
+    else
+    {
+        int axes[MAX_DIMS], axis_count;
+        if (!cuda_array_parse_axis_collection(axis_value, input->ndims, axes,
+                                              &axis_count, "axis"))
+            RETURN_THROWS();
+        if (!shift_is_scalar && shift_count != axis_count)
+        {
+            CUDA_THROW_INVALID("roll shift and axis arrays must have the same length");
+            RETURN_THROWS();
+        }
+        spec.axis = 0;
+        for (int i = 0; i < axis_count; i++)
+        {
+            int axis = axes[i];
+            int64_t shift = shifts[shift_is_scalar ? 0 : i];
+            int dimension = input->shape[axis];
+            if (dimension == 0)
+                spec.shifts[axis] = 0;
+            else
+            {
+                spec.shifts[axis] = shift % dimension;
+                if (spec.shifts[axis] < 0) spec.shifts[axis] += dimension;
+            }
+        }
+    }
+
+    tensor_t *result = cuda_tensor_index_transform(input, &spec);
+    if (!result) RETURN_THROWS();
+    create_result_object(return_value, result);
+}
+
 ZEND_METHOD(CudaArray, matmul)
 {
     cuda_array_obj *this_obj = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
@@ -691,9 +1573,34 @@ ZEND_METHOD(CudaArray, exp)
     unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Exp", OP_EXP);
 }
 
+ZEND_METHOD(CudaArray, expm1)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Expm1", OP_EXPM1);
+}
+
+ZEND_METHOD(CudaArray, exp2)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Exp2", OP_EXP2);
+}
+
 ZEND_METHOD(CudaArray, log)
 {
     unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Log", OP_LOG);
+}
+
+ZEND_METHOD(CudaArray, log1p)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Log1p", OP_LOG1P);
+}
+
+ZEND_METHOD(CudaArray, log2)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Log2", OP_LOG2);
+}
+
+ZEND_METHOD(CudaArray, log10)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Log10", OP_LOG10);
 }
 
 ZEND_METHOD(CudaArray, sin)
@@ -709,6 +1616,36 @@ ZEND_METHOD(CudaArray, cos)
 ZEND_METHOD(CudaArray, tan)
 {
     unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Tan", OP_TAN);
+}
+
+ZEND_METHOD(CudaArray, asin)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Asin", OP_ASIN);
+}
+
+ZEND_METHOD(CudaArray, acos)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Acos", OP_ACOS);
+}
+
+ZEND_METHOD(CudaArray, atan)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Atan", OP_ATAN);
+}
+
+ZEND_METHOD(CudaArray, sinh)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Sinh", OP_SINH);
+}
+
+ZEND_METHOD(CudaArray, cosh)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Cosh", OP_COSH);
+}
+
+ZEND_METHOD(CudaArray, tanh)
+{
+    unary_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Tanh", OP_TANH);
 }
 
 ZEND_METHOD(CudaArray, abs)
@@ -1471,36 +2408,26 @@ ZEND_METHOD(CudaArray, full)
     Z_PARAM_STR(dtype_str)
     ZEND_PARSE_PARAMETERS_END();
 
-    int shape[10] = {0};
-    int ndims = 0;
-
-    zval *dim;
-    int i = 0;
-    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(shape_array), dim)
-    {
-        if (i < 10 && Z_TYPE_P(dim) == IS_LONG)
-        {
-            shape[i++] = Z_LVAL_P(dim);
-        }
-    }
-    ZEND_HASH_FOREACH_END();
-    ndims = i;
-
-    if (ndims == 0)
-    {
-        CUDA_THROW_INVALID("Invalid shape: must provide dimensions");
-        RETURN_NULL();
-    }
+    int shape[MAX_DIMS];
+    size_t elements;
+    int ndims = tensor_import_shape(shape_array, shape, &elements);
+    if (!ndims) RETURN_THROWS();
 
     dtype_t dtype = parse_dtype_param(dtype_str);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Invalid dtype for full");
+        RETURN_THROWS();
+    }
     scalar_value_t scalar_value;
     SCALAR_FROM_ZVAL(value, scalar_value);
+    if (EG(exception)) RETURN_THROWS();
 
     tensor_t *tensor = cuda_tensor_create_with_value(shape, ndims, scalar_value, dtype);
     if (!tensor)
     {
-        CUDA_THROW_RUNTIME("Failed to create full tensor");
-        RETURN_NULL();
+        if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to create full tensor");
+        RETURN_THROWS();
     }
 
     create_result_object(return_value, tensor);
@@ -2992,66 +3919,106 @@ static void cuda_array_write_dimension(zend_object *object, zval *offset, zval *
     }
 }
 
-static void rand_tensor_creator(INTERNAL_FUNCTION_PARAMETERS, unsigned long long seed)
+static int parse_optional_seed(zval *seed_value, unsigned long long *seed, int *has_seed)
+{
+    *seed = 0;
+    *has_seed = 0;
+    if (!seed_value) return 1;
+    ZVAL_DEREF(seed_value);
+    if (Z_TYPE_P(seed_value) == IS_NULL) return 1;
+    if (Z_TYPE_P(seed_value) != IS_LONG || Z_LVAL_P(seed_value) < 0)
+    {
+    CUDA_THROW_INVALID("Random seed must be a non-negative integer or null");
+    return 0;
+    }
+    *seed = (unsigned long long)Z_LVAL_P(seed_value);
+    *has_seed = 1;
+    return 1;
+}
+
+static void rand_tensor_creator(INTERNAL_FUNCTION_PARAMETERS)
 {
     zval *shape_array;
     zend_string *dtype_str = NULL;
-
-    zval *z_min = NULL;
-    zval *z_max = NULL;
-
-    ZEND_PARSE_PARAMETERS_START(1, 4)
+    zval *z_min = NULL, *z_max = NULL, *seed_value = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 5)
     Z_PARAM_ARRAY(shape_array)
     Z_PARAM_OPTIONAL
     Z_PARAM_ZVAL_OR_NULL(z_min)
     Z_PARAM_ZVAL_OR_NULL(z_max)
     Z_PARAM_STR_OR_NULL(dtype_str)
+    Z_PARAM_ZVAL_OR_NULL(seed_value)
     ZEND_PARSE_PARAMETERS_END();
 
-    int shape[10] = {0};
-    int ndims = 0;
-
-    zval *dim;
-    int i = 0;
-    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(shape_array), dim)
-    {
-        if (i < 10 && Z_TYPE_P(dim) == IS_LONG)
-        {
-            shape[i++] = Z_LVAL_P(dim);
-        }
-    }
-    ZEND_HASH_FOREACH_END();
-    ndims = i;
-
-    if (ndims == 0)
-    {
-        CUDA_THROW_INVALID("Invalid shape: must provide dimensions");
-        RETURN_NULL();
-    }
+    int shape[MAX_DIMS];
+    size_t elements;
+    int ndims = tensor_import_shape(shape_array, shape, &elements);
+    if (!ndims) RETURN_THROWS();
 
     scalar_value_t min_v = {.v.f32 = 0.00f, .dtype = DTYPE_FLOAT32, .is_neg = 0};
-    scalar_value_t max_v = {.v.f32 = 100.00f, .dtype = DTYPE_FLOAT32, .is_neg = 0};
+    scalar_value_t max_v = {.v.f32 = 1.00f, .dtype = DTYPE_FLOAT32, .is_neg = 0};
 
     if (z_min != NULL)
-    {
-        SCALAR_FROM_ZVAL(z_min, min_v);
-    }
-
+    SCALAR_FROM_ZVAL(z_min, min_v);
     if (z_max != NULL)
-    {
-        SCALAR_FROM_ZVAL(z_max, max_v);
-    }
+    SCALAR_FROM_ZVAL(z_max, max_v);
+    if (EG(exception)) RETURN_THROWS();
 
     dtype_t dtype = parse_dtype_param(dtype_str);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+    CUDA_THROW_INVALID("Invalid dtype for rand");
+    RETURN_THROWS();
+    }
 
-    tensor_t *tensor = cuda_tensor_create_rand(shape, ndims, min_v, max_v, dtype, seed);
+    unsigned long long seed;
+    int has_seed;
+    if (!parse_optional_seed(seed_value, &seed, &has_seed)) RETURN_THROWS();
+
+    tensor_t *tensor = cuda_tensor_create_rand(shape, ndims, min_v, max_v,
+                                           dtype, seed, has_seed);
 
     if (!tensor)
     {
-        CUDA_THROW_RUNTIME("Failed to create random tensor");
-        RETURN_NULL();
+    if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to create random tensor");
+    RETURN_THROWS();
     }
 
+    create_result_object(return_value, tensor);
+}
+
+static void randn_tensor_creator(INTERNAL_FUNCTION_PARAMETERS)
+{
+    zval *shape_array, *seed_value = NULL;
+    zend_string *dtype_str = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 3)
+    Z_PARAM_ARRAY(shape_array)
+    Z_PARAM_OPTIONAL
+    Z_PARAM_STR_OR_NULL(dtype_str)
+    Z_PARAM_ZVAL_OR_NULL(seed_value)
+    ZEND_PARSE_PARAMETERS_END();
+
+    int shape[MAX_DIMS];
+    size_t elements;
+    int ndims = tensor_import_shape(shape_array, shape, &elements);
+    if (!ndims) RETURN_THROWS();
+
+    dtype_t dtype = parse_dtype_param(dtype_str);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+    CUDA_THROW_INVALID("Invalid dtype for randn");
+    RETURN_THROWS();
+    }
+    unsigned long long seed;
+    int has_seed;
+    if (!parse_optional_seed(seed_value, &seed, &has_seed)) RETURN_THROWS();
+
+    tensor_t *tensor = cuda_tensor_create_randn(shape, ndims, dtype, seed, has_seed);
+    if (!tensor)
+    {
+    if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to create normal random tensor");
+    RETURN_THROWS();
+    }
     create_result_object(return_value, tensor);
 }
 
@@ -3072,37 +4039,42 @@ static void static_tensor_creator(INTERNAL_FUNCTION_PARAMETERS, const char *meth
     Z_PARAM_STR(dtype_str)
     ZEND_PARSE_PARAMETERS_END();
 
-    int shape[10] = {0};
-    int ndims = 0;
-
-    zval *dim;
-    int i = 0;
-    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(shape_array), dim)
-    {
-        if (i < 10 && Z_TYPE_P(dim) == IS_LONG)
-        {
-            shape[i++] = Z_LVAL_P(dim);
-        }
-    }
-    ZEND_HASH_FOREACH_END();
-    ndims = i;
-
-    if (ndims == 0)
-    {
-        CUDA_THROW_INVALID("Invalid shape: must provide dimensions");
-        RETURN_NULL();
-    }
+    int shape[MAX_DIMS];
+    size_t elements;
+    int ndims = tensor_import_shape(shape_array, shape, &elements);
+    if (!ndims) RETURN_THROWS();
     
     dtype_t dtype = parse_dtype_param(dtype_str);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Invalid dtype for %s", method_name);
+        RETURN_THROWS();
+    }
     tensor_t *tensor = cuda_tensor_create_with_value(shape, ndims, scalar_value, dtype);
-
     if (!tensor)
     {
-        CUDA_THROW_RUNTIME("Failed to create %s tensor", method_name);
-        RETURN_NULL();
+        if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to create %s tensor", method_name);
+        RETURN_THROWS();
     }
 
     create_result_object(return_value, tensor);
+}
+
+static tensor_t *cuda_array_like_create(tensor_t *prototype, zend_string *dtype_str,
+                                        scalar_value_t value)
+{
+    if (!prototype)
+    {
+        CUDA_THROW_INVALID("Like constructor requires an initialized prototype tensor");
+        return NULL;
+    }
+    dtype_t dtype = dtype_str ? parse_dtype_param(dtype_str) : prototype->dtype;
+    if (dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Invalid dtype for like constructor");
+        return NULL;
+    }
+    return cuda_tensor_create_with_value(prototype->shape, prototype->ndims, value, dtype);
 }
 
 static tensor_t *cuda_tensor_concat(zval *tensors_array, int axis)
