@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 
 function check(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);
@@ -28,7 +28,7 @@ check($graph->getStats()['cudaGraphCompatible'] === false, 'concat CUDA Graph co
 try {
     $graph->runAsync($left, $right, $tail);
     throw new RuntimeException('concat unexpectedly accepted asynchronous execution');
-} catch (Cuda\RuntimeException $error) {
+} catch (PhpTensors\RuntimeException $error) {
 }
 
 $transposed = CudaArray::fromFlatArray([1, 2, 3, 4, 5, 6], [2, 3])->transpose();

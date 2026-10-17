@@ -6,8 +6,8 @@ if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) die('skip CU
 ?>
 --FILE--
 <?php
-use Cuda\NN;
-use Cuda\CudaArray as A;
+use PhpTensors\NN;
+use PhpTensors\CudaArray as A;
 function check_nn(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);
 }
@@ -45,19 +45,19 @@ $softmax = NN::softmax(A::fromFlatArray([1000, 999], [1, 2, 1, 1]))->toArray();
 check_nn(abs($softmax[0][0][0][0] - 0.7310585786) < 0.000001 &&
     abs($softmax[0][1][0][0] - 0.2689414214) < 0.000001,
     'channel softmax must be numerically stable');
-rejected(fn() => NN::softmax(A::ones([1, 2, 4, 4])->requiresGrad()), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::conv2d(A::ones([1, 2, 4, 4])->requiresGrad(), $w), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::softmax(A::ones([1, 2, 4, 4], 'float64')), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::softmax(A::ones([2, 4])), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::softmax($x->slice(':, :, ::2, :')), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::conv2d($x, $w, stride: [0, 1]), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::conv2d($x, $w, stride: ['h' => 1, 'w' => 1]), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::conv2d($x, $w, bias: A::ones([1])), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::conv2d($x, $w, groups: 2), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::pool2d($x, [2, 2], mode: 'sum'), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::pool2d($x, [2, 2], padding: [2, 0]), Cuda\InvalidArgumentException::class);
-rejected(fn() => NN::pool2d($x, [PHP_INT_MAX, 2]), Cuda\InvalidArgumentException::class);
-rejected(fn() => Cuda\Fusion::run(fn() => NN::softmax($x)), Cuda\RuntimeException::class);
+rejected(fn() => NN::softmax(A::ones([1, 2, 4, 4])->requiresGrad()), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::conv2d(A::ones([1, 2, 4, 4])->requiresGrad(), $w), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::softmax(A::ones([1, 2, 4, 4], 'float64')), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::softmax(A::ones([2, 4])), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::softmax($x->slice(':, :, ::2, :')), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::conv2d($x, $w, stride: [0, 1]), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::conv2d($x, $w, stride: ['h' => 1, 'w' => 1]), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::conv2d($x, $w, bias: A::ones([1])), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::conv2d($x, $w, groups: 2), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::pool2d($x, [2, 2], mode: 'sum'), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::pool2d($x, [2, 2], padding: [2, 0]), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => NN::pool2d($x, [PHP_INT_MAX, 2]), PhpTensors\InvalidArgumentException::class);
+rejected(fn() => PhpTensors\Fusion::run(fn() => NN::softmax($x)), PhpTensors\RuntimeException::class);
 echo "validation passed\n";
 ?>
 --EXPECT--

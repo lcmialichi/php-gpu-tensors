@@ -6,11 +6,11 @@ if (!extension_loaded('phptensors')) die('skip');
 ?>
 --FILE--
 <?php
-$ca = new Cuda\CudaArray([[1, 2, 3], [4, 5, 6]], 'float32');
+$ca = new PhpTensors\CudaArray([[1, 2, 3], [4, 5, 6]], 'float32');
 var_dump($ca->mean()->toArray());
 var_dump($ca->mean(0)->toArray());
 var_dump($ca->mean(1)->toArray());
-$integers = new Cuda\CudaArray([1, 2, 4], 'int32');
+$integers = new PhpTensors\CudaArray([1, 2, 4], 'int32');
 var_dump($integers->mean()->dtype());
 var_dump(abs($integers->mean()->toArray()[0] - (7 / 3)) < 1e-12);
 ?>

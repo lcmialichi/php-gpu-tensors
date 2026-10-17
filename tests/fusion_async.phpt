@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 function check(bool $ok): void { if (!$ok) throw new RuntimeException('check failed'); }
 $a = new CudaArray([1, 2, 3]);
 $b = new CudaArray([4, 5, 6]);
@@ -18,9 +18,9 @@ $second = $graph->runAsync($b, $b);
 check($graph->getStats()['pending'] === 2);
 check(is_bool($first->isFinished()));
 try { $a[0] = 9; echo "MISSED\n"; }
-catch (Cuda\RuntimeException $error) { echo "mutation blocked\n"; }
+catch (PhpTensors\RuntimeException $error) { echo "mutation blocked\n"; }
 try { cuda_device_reset(); echo "MISSED\n"; }
-catch (Cuda\RuntimeException $error) { echo "reset blocked\n"; }
+catch (PhpTensors\RuntimeException $error) { echo "reset blocked\n"; }
 $expectedFirst = ($a * $b + 1)->sqrt()->toArray();
 $expectedSecond = ($b * $b + 1)->sqrt()->toArray();
 unset($a, $b);

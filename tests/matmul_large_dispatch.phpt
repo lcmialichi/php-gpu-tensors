@@ -8,7 +8,7 @@ if (!$backend['cublas'] || !$backend['cublasLt']) die('skip cuBLAS and cuBLASLt 
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
+use PhpTensors\CudaArray as A;
 
 $left = A::ones([4096, 4096]);
 $right = A::ones([4096, 4096]);

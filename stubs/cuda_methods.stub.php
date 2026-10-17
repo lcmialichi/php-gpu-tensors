@@ -16,7 +16,7 @@ function cuda_set_matmul_precision(string $precision): void {}
  * @throws \PhpTensors\InvalidArgumentException|\PhpTensors\RuntimeException
  * @return array{backend:string,precision:string,selectedCandidate:int,candidateCount:int,candidates:list<array{algorithmId:int,workspaceBytes:int,medianMs:float,selected:bool}>}
  */
-function cuda_tune_matmul(PhpTensors\Cuda\CudaArray $left, PhpTensors\Cuda\CudaArray $right): array {}
+function cuda_tune_matmul(PhpTensors\CudaArray $left, PhpTensors\CudaArray $right): array {}
 
 /** Return the number of CUDA devices visible to this process. @throws \PhpTensors\RuntimeException */
 function cuda_get_device_count(): int

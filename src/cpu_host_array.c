@@ -1,9 +1,20 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include "php.h"
 #include "zend_exceptions.h"
-#include "backend_contract.h"
 #include "cuda_exceptions.h"
+#include "backend_contract.h"
 #include "cpu_host_array.h"
+#include "host_array_unsupported.h"
+#ifdef HAVE_CUDA
+#include "cuda_array_ce.h"
+#include "ca_struct.h"
+#include "tensor_factory.h"
+#endif
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -244,11 +255,6 @@ static int cpu_host_array_fill(zval *return_value, zval *values, zval *shape_val
     object_init_ex(return_value, php_tensors_host_array_ce);
     cpu_host_array_object *array = cpu_host_array_from_obj(Z_OBJ_P(return_value));
     cpu_host_array_assign(array, values, shape, ndims, size, float32);
-    if (php_tensors_backend_attach_registered(return_value, "cpu") != SUCCESS) {
-        zval_ptr_dtor(return_value);
-        ZVAL_UNDEF(return_value);
-        return FAILURE;
-    }
     return SUCCESS;
 }
 
@@ -304,7 +310,22 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cpu_host_array_binary, 0, 1, PhpTensors\\HostArray, 0)
     ZEND_ARG_TYPE_MASK(0, other, MAY_BE_OBJECT | MAY_BE_DOUBLE | MAY_BE_LONG | MAY_BE_BOOL, NULL)
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cpu_host_array_to_gpu, 0, 0, PhpTensors\\Cuda\\CudaArray, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cpu_host_array_to_gpu, 0, 0, PhpTensors\\CudaArray, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_cpu_host_array_strides, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cpu_host_array_to_host, 0, 0, PhpTensors\\HostArray, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_cpu_host_array_debug_info, 0, 0, IS_ARRAY, 0)
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cpu_host_array_like, 0, 1, PhpTensors\\HostArray, 0)
+    ZEND_ARG_OBJ_INFO(0, prototype, PhpTensors\\HostArray, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "null")
+ZEND_END_ARG_INFO()
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_cpu_host_array_full, 0, 2, PhpTensors\\HostArray, 0)
+    ZEND_ARG_TYPE_INFO(0, shape, IS_ARRAY, 0)
+    ZEND_ARG_TYPE_MASK(0, value, MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_BOOL, NULL)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "\"float32\"")
 ZEND_END_ARG_INFO()
 
 ZEND_METHOD(PhpTensorsHostArray, __construct)
@@ -320,7 +341,7 @@ ZEND_METHOD(PhpTensorsHostArray, __construct)
     ZEND_PARSE_PARAMETERS_END();
     if (pinned) {
         zend_throw_exception(cuda_runtime_exception_ce,
-                             "Pinned host memory is unavailable in the CPU-only build", 0);
+                             "Pinned memory is unavailable for CPU HostArray", 0);
         RETURN_THROWS();
     }
 
@@ -355,9 +376,6 @@ ZEND_METHOD(PhpTensorsHostArray, __construct)
     cpu_host_array_object *array = cpu_host_array_from_obj(Z_OBJ_P(ZEND_THIS));
     cpu_host_array_assign(array, &flat, shape, ndims, size, float32);
     zval_ptr_dtor(&flat);
-    if (php_tensors_backend_attach_registered(ZEND_THIS, "cpu") != SUCCESS) {
-        RETURN_THROWS();
-    }
 }
 
 ZEND_METHOD(PhpTensorsHostArray, fromFlatArray)
@@ -389,7 +407,7 @@ ZEND_METHOD(PhpTensorsHostArray, fromBuffer)
     ZEND_PARSE_PARAMETERS_END();
     if (pinned) {
         zend_throw_exception(cuda_runtime_exception_ce,
-                             "Pinned host memory is unavailable in the CPU-only build", 0);
+                             "Pinned memory is unavailable for CPU HostArray", 0);
         RETURN_THROWS();
     }
 
@@ -403,8 +421,7 @@ ZEND_METHOD(PhpTensorsHostArray, fromBuffer)
     }
     object_init_ex(return_value, php_tensors_host_array_ce);
     cpu_host_array_object *array = cpu_host_array_from_obj(Z_OBJ_P(return_value));
-    if (cpu_host_array_assign_buffer(array, bytes, shape, ndims, size, float32) != SUCCESS ||
-        php_tensors_backend_attach_registered(return_value, "cpu") != SUCCESS) {
+    if (cpu_host_array_assign_buffer(array, bytes, shape, ndims, size, float32) != SUCCESS) {
         zval_ptr_dtor(return_value);
         ZVAL_UNDEF(return_value);
         RETURN_THROWS();
@@ -439,11 +456,6 @@ static zend_result cpu_host_array_filled(zval *return_value, zval *shape_value, 
     for (size_t i = 0; i < size; i++) {
         array->values[i] = value;
     }
-    if (php_tensors_backend_attach_registered(return_value, "cpu") != SUCCESS) {
-        zval_ptr_dtor(return_value);
-        ZVAL_UNDEF(return_value);
-        return FAILURE;
-    }
     return SUCCESS;
 }
 
@@ -473,6 +485,115 @@ ZEND_METHOD(PhpTensorsHostArray, ones)
     if (cpu_host_array_filled(return_value, shape, 1.0, dtype) != SUCCESS) {
         RETURN_THROWS();
     }
+}
+
+ZEND_METHOD(PhpTensorsHostArray, full)
+{
+    zval *shape, *value;
+    zend_string *dtype = NULL;
+    ZEND_PARSE_PARAMETERS_START(2, 3)
+        Z_PARAM_ARRAY(shape)
+        Z_PARAM_ZVAL(value)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_STR_OR_NULL(dtype)
+    ZEND_PARSE_PARAMETERS_END();
+    if (Z_TYPE_P(value) != IS_LONG && Z_TYPE_P(value) != IS_DOUBLE &&
+        Z_TYPE_P(value) != IS_TRUE && Z_TYPE_P(value) != IS_FALSE) {
+        zend_throw_exception(cuda_invalid_argument_exception_ce,
+                             "HostArray fill value must be numeric", 0);
+        RETURN_THROWS();
+    }
+    if (cpu_host_array_filled(return_value, shape, zval_get_double(value), dtype) != SUCCESS) {
+        RETURN_THROWS();
+    }
+}
+
+static zend_result cpu_host_array_like(zval *return_value, zval *prototype,
+                                       double fill, zend_string *dtype)
+{
+    cpu_host_array_object *source =
+        cpu_host_array_from_obj(Z_OBJ_P(prototype));
+    zend_bool float32 = source->float32;
+    if (dtype && cpu_host_array_parse_dtype(dtype, &float32) != SUCCESS) {
+        return FAILURE;
+    }
+    object_init_ex(return_value, php_tensors_host_array_ce);
+    cpu_host_array_object *result =
+        cpu_host_array_from_obj(Z_OBJ_P(return_value));
+    result->values = source->size ? safe_emalloc(source->size, sizeof(double), 0) : NULL;
+    result->size = source->size;
+    result->ndims = source->ndims;
+    result->float32 = float32;
+    memcpy(result->shape, source->shape, source->ndims * sizeof(zend_long));
+    double value = float32 ? (double)(float)fill : fill;
+    for (size_t i = 0; i < source->size; i++) {
+        result->values[i] = value;
+    }
+    return SUCCESS;
+}
+
+ZEND_METHOD(PhpTensorsHostArray, zerosLike)
+{
+    zval *prototype;
+    zend_string *dtype = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 2)
+        Z_PARAM_OBJECT_OF_CLASS(prototype, php_tensors_host_array_ce)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_STR_OR_NULL(dtype)
+    ZEND_PARSE_PARAMETERS_END();
+    if (cpu_host_array_like(return_value, prototype, 0.0, dtype) != SUCCESS) {
+        RETURN_THROWS();
+    }
+}
+
+ZEND_METHOD(PhpTensorsHostArray, onesLike)
+{
+    zval *prototype;
+    zend_string *dtype = NULL;
+    ZEND_PARSE_PARAMETERS_START(1, 2)
+        Z_PARAM_OBJECT_OF_CLASS(prototype, php_tensors_host_array_ce)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_STR_OR_NULL(dtype)
+    ZEND_PARSE_PARAMETERS_END();
+    if (cpu_host_array_like(return_value, prototype, 1.0, dtype) != SUCCESS) {
+        RETURN_THROWS();
+    }
+}
+
+ZEND_METHOD(PhpTensorsHostArray, getStrides)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    cpu_host_array_object *array = cpu_host_array_from_obj(Z_OBJ_P(ZEND_THIS));
+    array_init_size(return_value, array->ndims);
+    zend_long strides[CPU_ARRAY_MAX_DIMS];
+    zend_long stride = 1;
+    for (uint32_t i = array->ndims; i > 0; i--) {
+        strides[i - 1] = stride;
+        stride *= array->shape[i - 1];
+    }
+    for (uint32_t i = 0; i < array->ndims; i++) {
+        add_next_index_long(return_value, strides[i]);
+    }
+}
+
+ZEND_METHOD(PhpTensorsHostArray, toHost)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    RETURN_OBJ_COPY(Z_OBJ_P(ZEND_THIS));
+}
+
+ZEND_METHOD(PhpTensorsHostArray, __debugInfo)
+{
+    cpu_host_array_object *array = cpu_host_array_from_obj(Z_OBJ_P(ZEND_THIS));
+    array_init(return_value);
+    zval shape;
+    array_init_size(&shape, array->ndims);
+    for (uint32_t i = 0; i < array->ndims; i++) {
+        add_next_index_long(&shape, array->shape[i]);
+    }
+    add_assoc_zval(return_value, "shape", &shape);
+    add_assoc_string(return_value, "dtype", array->float32 ? "float32" : "float64");
+    add_assoc_long(return_value, "elements", (zend_long)array->size);
 }
 
 ZEND_METHOD(PhpTensorsHostArray, getShape)
@@ -704,10 +825,65 @@ ZEND_METHOD(PhpTensorsHostArray, __unserialize)
         array->values = NULL;
     }
     if (cpu_host_array_assign_buffer(array, Z_STR_P(buffer_value), shape, ndims,
-                                     size, float32) != SUCCESS ||
-        php_tensors_backend_attach_registered(ZEND_THIS, "cpu") != SUCCESS) {
+                                     size, float32) != SUCCESS) {
         RETURN_THROWS();
     }
+}
+
+static zend_result cpu_host_array_binary_apply(zval *return_value, zval *self,
+                                               zval *other, char operation,
+                                               zend_bool reverse)
+{
+    cpu_host_array_object *array = cpu_host_array_from_obj(Z_OBJ_P(self));
+    cpu_host_array_object *right = NULL;
+    double scalar = 0.0;
+    if (Z_TYPE_P(other) == IS_OBJECT &&
+        instanceof_function(Z_OBJCE_P(other), php_tensors_host_array_ce)) {
+        right = cpu_host_array_from_obj(Z_OBJ_P(other));
+        if (array->ndims != right->ndims ||
+            memcmp(array->shape, right->shape, array->ndims * sizeof(zend_long)) != 0) {
+            zend_throw_exception(cuda_invalid_argument_exception_ce,
+                                 "CPU HostArray arithmetic requires identical shapes", 0);
+            return FAILURE;
+        }
+    } else if (Z_TYPE_P(other) == IS_LONG || Z_TYPE_P(other) == IS_DOUBLE ||
+               Z_TYPE_P(other) == IS_TRUE || Z_TYPE_P(other) == IS_FALSE) {
+        scalar = zval_get_double(other);
+    } else {
+        zend_throw_exception(cuda_invalid_argument_exception_ce,
+                             "CPU HostArray arithmetic expects a scalar or HostArray", 0);
+        return FAILURE;
+    }
+    if (operation == '/' && right == NULL && scalar == 0.0) {
+        zend_throw_exception(cuda_invalid_argument_exception_ce,
+                             "Division by zero is not supported by CPU HostArray", 0);
+        return FAILURE;
+    }
+
+    object_init_ex(return_value, php_tensors_host_array_ce);
+    cpu_host_array_object *result = cpu_host_array_from_obj(Z_OBJ_P(return_value));
+    result->values = array->size ? safe_emalloc(array->size, sizeof(double), 0) : NULL;
+    result->size = array->size;
+    result->ndims = array->ndims;
+    result->float32 = reverse && right ? right->float32 : array->float32;
+    memcpy(result->shape, array->shape, array->ndims * sizeof(zend_long));
+    for (size_t i = 0; i < array->size; i++) {
+        double lhs = reverse ? (right ? right->values[i] : scalar) : array->values[i];
+        double rhs = reverse ? array->values[i] : (right ? right->values[i] : scalar);
+        if (operation == '/' && rhs == 0.0) {
+            zval_ptr_dtor(return_value);
+            ZVAL_UNDEF(return_value);
+            zend_throw_exception(cuda_invalid_argument_exception_ce,
+                                 "Division by zero is not supported by CPU HostArray", 0);
+            return FAILURE;
+        }
+        double value = operation == '+' ? lhs + rhs :
+                       operation == '-' ? lhs - rhs :
+                       operation == '*' ? lhs * rhs :
+                                          lhs / rhs;
+        result->values[i] = result->float32 ? (double)(float)value : value;
+    }
+    return SUCCESS;
 }
 
 static void cpu_host_array_binary(INTERNAL_FUNCTION_PARAMETERS, char operation)
@@ -716,58 +892,7 @@ static void cpu_host_array_binary(INTERNAL_FUNCTION_PARAMETERS, char operation)
     ZEND_PARSE_PARAMETERS_START(1, 1)
         Z_PARAM_ZVAL(other)
     ZEND_PARSE_PARAMETERS_END();
-
-    cpu_host_array_object *left = cpu_host_array_from_obj(Z_OBJ_P(ZEND_THIS));
-    cpu_host_array_object *right = NULL;
-    double scalar = 0.0;
-    if (Z_TYPE_P(other) == IS_OBJECT &&
-        instanceof_function(Z_OBJCE_P(other), php_tensors_host_array_ce)) {
-        right = cpu_host_array_from_obj(Z_OBJ_P(other));
-        if (left->ndims != right->ndims ||
-            memcmp(left->shape, right->shape, left->ndims * sizeof(zend_long)) != 0) {
-            zend_throw_exception(cuda_invalid_argument_exception_ce,
-                                 "CPU HostArray arithmetic requires identical shapes", 0);
-            RETURN_THROWS();
-        }
-    } else if (Z_TYPE_P(other) == IS_LONG || Z_TYPE_P(other) == IS_DOUBLE ||
-               Z_TYPE_P(other) == IS_TRUE || Z_TYPE_P(other) == IS_FALSE) {
-        scalar = zval_get_double(other);
-    } else {
-        zend_throw_exception(cuda_invalid_argument_exception_ce,
-                             "CPU HostArray arithmetic expects a scalar or HostArray", 0);
-        RETURN_THROWS();
-    }
-    if (operation == '/' && (right == NULL ? scalar == 0.0 : 0)) {
-        zend_throw_exception(cuda_invalid_argument_exception_ce,
-                             "Division by zero is not supported by CPU HostArray", 0);
-        RETURN_THROWS();
-    }
-
-    object_init_ex(return_value, php_tensors_host_array_ce);
-    cpu_host_array_object *result = cpu_host_array_from_obj(Z_OBJ_P(return_value));
-    result->values = left->size ? safe_emalloc(left->size, sizeof(double), 0) : NULL;
-    result->size = left->size;
-    result->ndims = left->ndims;
-    result->float32 = left->float32;
-    memcpy(result->shape, left->shape, left->ndims * sizeof(zend_long));
-    for (size_t i = 0; i < left->size; i++) {
-        double rhs = right ? right->values[i] : scalar;
-        if (operation == '/' && rhs == 0.0) {
-            zval_ptr_dtor(return_value);
-            ZVAL_UNDEF(return_value);
-            zend_throw_exception(cuda_invalid_argument_exception_ce,
-                                 "Division by zero is not supported by CPU HostArray", 0);
-            RETURN_THROWS();
-        }
-        double value = operation == '+' ? left->values[i] + rhs :
-                       operation == '-' ? left->values[i] - rhs :
-                       operation == '*' ? left->values[i] * rhs :
-                                          left->values[i] / rhs;
-        result->values[i] = result->float32 ? (double)(float)value : value;
-    }
-    if (php_tensors_backend_attach_registered(return_value, "cpu") != SUCCESS) {
-        zval_ptr_dtor(return_value);
-        ZVAL_UNDEF(return_value);
+    if (cpu_host_array_binary_apply(return_value, ZEND_THIS, other, operation, 0) != SUCCESS) {
         RETURN_THROWS();
     }
 }
@@ -777,12 +902,65 @@ ZEND_METHOD(PhpTensorsHostArray, subtract) { cpu_host_array_binary(INTERNAL_FUNC
 ZEND_METHOD(PhpTensorsHostArray, multiply) { cpu_host_array_binary(INTERNAL_FUNCTION_PARAM_PASSTHRU, '*'); }
 ZEND_METHOD(PhpTensorsHostArray, divide) { cpu_host_array_binary(INTERNAL_FUNCTION_PARAM_PASSTHRU, '/'); }
 
+static zend_result cpu_host_array_do_operation(zend_uchar opcode, zval *result,
+                                               zval *op1, zval *op2)
+{
+    char operation;
+    switch (opcode) {
+        case ZEND_ADD: operation = '+'; break;
+        case ZEND_SUB: operation = '-'; break;
+        case ZEND_MUL: operation = '*'; break;
+        case ZEND_DIV: operation = '/'; break;
+        default: return FAILURE;
+    }
+
+    if (Z_TYPE_P(op1) == IS_OBJECT &&
+        instanceof_function(Z_OBJCE_P(op1), php_tensors_host_array_ce)) {
+        return cpu_host_array_binary_apply(result, op1, op2, operation, 0);
+    }
+    if (Z_TYPE_P(op2) == IS_OBJECT &&
+        instanceof_function(Z_OBJCE_P(op2), php_tensors_host_array_ce)) {
+        return cpu_host_array_binary_apply(result, op2, op1, operation, 1);
+    }
+    return FAILURE;
+}
+
 ZEND_METHOD(PhpTensorsHostArray, toGpu)
 {
     ZEND_PARSE_PARAMETERS_NONE();
+#ifdef HAVE_CUDA
+    cpu_host_array_object *array = cpu_host_array_from_obj(Z_OBJ_P(ZEND_THIS));
+    int shape[CPU_ARRAY_MAX_DIMS];
+    for (uint32_t i = 0; i < array->ndims; i++) {
+        if (array->shape[i] > INT_MAX) {
+            zend_throw_exception(cuda_invalid_argument_exception_ce,
+                                 "HostArray dimension exceeds the CUDA shape limit", 0);
+            RETURN_THROWS();
+        }
+        shape[i] = (int)array->shape[i];
+    }
+    dtype_t dtype = array->float32 ? DTYPE_FLOAT32 : DTYPE_FLOAT64;
+    zend_string *bytes = cpu_host_array_make_buffer(array);
+    if (!bytes) RETURN_THROWS();
+    tensor_t *tensor = cuda_tensor_create_from_host_buffer(
+        shape, (int)array->ndims, dtype, ZSTR_VAL(bytes), ZSTR_LEN(bytes));
+    zend_string_release(bytes);
+    if (!tensor) RETURN_THROWS();
+
+    object_init_ex(return_value, cuda_array_ce);
+    cuda_array_obj *gpu_array = Z_CUDA_ARRAY_P(return_value);
+    gpu_array->tensor_handle = tensor;
+    gpu_array->shape = zend_new_array(array->ndims);
+    for (uint32_t i = 0; i < array->ndims; i++) {
+        zval dimension;
+        ZVAL_LONG(&dimension, array->shape[i]);
+        zend_hash_index_update(gpu_array->shape, i, &dimension);
+    }
+#else
     zend_throw_exception(cuda_runtime_exception_ce,
                          "CUDA backend is unavailable in the CPU-only build", 0);
     RETURN_THROWS();
+#endif
 }
 
 static const zend_function_entry cpu_host_array_methods[] = {
@@ -791,11 +969,15 @@ static const zend_function_entry cpu_host_array_methods[] = {
     ZEND_ME(PhpTensorsHostArray, fromBuffer, arginfo_cpu_host_array_from_buffer, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(PhpTensorsHostArray, zeros, arginfo_cpu_host_array_fill, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(PhpTensorsHostArray, ones, arginfo_cpu_host_array_fill, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(PhpTensorsHostArray, full, arginfo_cpu_host_array_full, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(PhpTensorsHostArray, zerosLike, arginfo_cpu_host_array_like, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(PhpTensorsHostArray, onesLike, arginfo_cpu_host_array_like, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(PhpTensorsHostArray, isPinned, arginfo_cpu_host_array_is_pinned, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, get, arginfo_cpu_host_array_get, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, at, arginfo_cpu_host_array_at, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, getBackend, arginfo_cpu_host_array_backend, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, getShape, arginfo_cpu_host_array_shape, ZEND_ACC_PUBLIC)
+    ZEND_ME(PhpTensorsHostArray, getStrides, arginfo_cpu_host_array_strides, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, getNdims, arginfo_cpu_host_array_ndims, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, getSize, arginfo_cpu_host_array_size, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, dtype, arginfo_cpu_host_array_dtype, ZEND_ACC_PUBLIC)
@@ -804,6 +986,8 @@ static const zend_function_entry cpu_host_array_methods[] = {
     ZEND_ME(PhpTensorsHostArray, count, arginfo_cpu_host_array_size, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, toArray, arginfo_cpu_host_array_to_array, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, toBuffer, arginfo_cpu_host_array_to_buffer, ZEND_ACC_PUBLIC)
+    ZEND_ME(PhpTensorsHostArray, toHost, arginfo_cpu_host_array_to_host, ZEND_ACC_PUBLIC)
+    ZEND_ME(PhpTensorsHostArray, __debugInfo, arginfo_cpu_host_array_debug_info, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, add, arginfo_cpu_host_array_binary, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, subtract, arginfo_cpu_host_array_binary, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, multiply, arginfo_cpu_host_array_binary, ZEND_ACC_PUBLIC)
@@ -811,6 +995,7 @@ static const zend_function_entry cpu_host_array_methods[] = {
     ZEND_ME(PhpTensorsHostArray, toGpu, arginfo_cpu_host_array_to_gpu, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, __serialize, arginfo_cpu_host_array_serialize, ZEND_ACC_PUBLIC)
     ZEND_ME(PhpTensorsHostArray, __unserialize, arginfo_cpu_host_array_unserialize, ZEND_ACC_PUBLIC)
+    HOST_ARRAY_UNSUPPORTED_METHODS
     ZEND_FE_END
 };
 
@@ -824,12 +1009,11 @@ int cpu_host_array_init(void)
     }
     php_tensors_host_array_ce->ce_flags |= ZEND_ACC_FINAL;
     php_tensors_host_array_ce->create_object = cpu_host_array_create_object;
-    zend_class_implements(php_tensors_host_array_ce, 1, php_tensors_tensor_ce);
-    zend_register_class_alias("Cuda\\HostArray", php_tensors_host_array_ce);
-    zend_register_class_alias("Cuda\\ContiguousArray", php_tensors_host_array_ce);
-
+    zend_class_implements(php_tensors_host_array_ce, 2,
+                          php_tensors_tensor_ce, php_tensors_numbers_ce);
     memcpy(&cpu_host_array_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     cpu_host_array_handlers.offset = XtOffsetOf(cpu_host_array_object, std);
     cpu_host_array_handlers.free_obj = cpu_host_array_free_object;
+    cpu_host_array_handlers.do_operation = cpu_host_array_do_operation;
     return SUCCESS;
 }

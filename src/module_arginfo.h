@@ -3,7 +3,7 @@
 
 #include "php.h"
 
-#define MODULE_CLASS_NAME "PhpTensors\\Cuda\\CompiledModule"
+#define MODULE_CLASS_NAME "PhpTensors\\CompiledModule"
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_module_initialize, 0, 0, 0)
 ZEND_END_ARG_INFO()

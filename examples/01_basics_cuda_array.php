@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use PhpTensors\Cuda\CudaArray;
+use PhpTensors\CudaArray;
 
 /**
  * Basic Tensor Lifecycle

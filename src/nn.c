@@ -8,24 +8,24 @@
 #include <limits.h>
 #include <stdint.h>
 
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_conv_args, 0, 2, PhpTensors\\Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, weights, PhpTensors\\Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, bias, PhpTensors\\Cuda\\CudaArray, 1, "null")
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_conv_args, 0, 2, PhpTensors\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO(0, weights, PhpTensors\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, bias, PhpTensors\\CudaArray, 1, "null")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, stride, IS_ARRAY, 0, "[1, 1]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, padding, IS_ARRAY, 0, "[0, 0]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dilation, IS_ARRAY, 0, "[1, 1]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, groups, IS_LONG, 0, "1")
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_pool_args, 0, 2, PhpTensors\\Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\Cuda\\CudaArray, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_pool_args, 0, 2, PhpTensors\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\CudaArray, 0)
 ZEND_ARG_TYPE_INFO(0, window, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, stride, IS_ARRAY, 0, "[2, 2]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, padding, IS_ARRAY, 0, "[0, 0]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, mode, IS_STRING, 0, "\"max\"")
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_softmax_args, 0, 1, PhpTensors\\Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\Cuda\\CudaArray, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_softmax_args, 0, 1, PhpTensors\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\CudaArray, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(nn_private_args, 0, 0, 0)
 ZEND_END_ARG_INFO()
@@ -33,7 +33,7 @@ ZEND_END_ARG_INFO()
 static tensor_t *nn_input(zval *value, int ndims)
 {
     if (fusion_active()) {
-        CUDA_THROW_RUNTIME("Cuda\\NN inference is not supported inside Fusion capture");
+        CUDA_THROW_RUNTIME("PhpTensors\\NN inference is not supported inside Fusion capture");
         return NULL;
     }
     cuda_array_obj *object = php_cuda_array_fetch_valid_object(Z_OBJ_P(value));
@@ -41,20 +41,20 @@ static tensor_t *nn_input(zval *value, int ndims)
     tensor_t *tensor = object->tensor_handle;
     if (tensor->requires_grad)
     {
-        CUDA_THROW_INVALID("Cuda\\NN inference does not support gradient-tracked tensors");
+        CUDA_THROW_INVALID("PhpTensors\\NN inference does not support gradient-tracked tensors");
         return NULL;
     }
     if (tensor->dtype != DTYPE_FLOAT32 || tensor->ndims != ndims || !is_contiguous(tensor)) {
-        CUDA_THROW_INVALID("Cuda\\NN expects contiguous float32 tensors with %d dimensions", ndims);
+        CUDA_THROW_INVALID("PhpTensors\\NN expects contiguous float32 tensors with %d dimensions", ndims);
         return NULL;
     }
     for (int d = 0; d < ndims; d++)
         if (!tensor->shape[d]) {
-            CUDA_THROW_INVALID("Cuda\\NN does not accept empty axes");
+            CUDA_THROW_INVALID("PhpTensors\\NN does not accept empty axes");
             return NULL;
         }
     if (tensor->total_size > INT_MAX) {
-        CUDA_THROW_INVALID("Cuda\\NN tensor exceeds INT_MAX elements");
+        CUDA_THROW_INVALID("PhpTensors\\NN tensor exceeds INT_MAX elements");
         return NULL;
     }
     return tensor;
@@ -90,7 +90,7 @@ static int nn_shape(tensor_t *input, int channels, const int kernel[2], const in
             ((int64_t)dilation[d] * (kernel[d] - 1) + 1);
         int64_t dimension = numerator < 0 ? 0 : numerator / stride[d] + 1;
         if (dimension <= 0 || dimension > INT_MAX || elements > INT_MAX / (size_t)dimension) {
-            CUDA_THROW_INVALID("Cuda\\NN output shape is empty or exceeds supported limits");
+            CUDA_THROW_INVALID("PhpTensors\\NN output shape is empty or exceeds supported limits");
             return 0;
         }
         shape[d+2] = (int)dimension;
@@ -104,7 +104,7 @@ static void nn_result(INTERNAL_FUNCTION_PARAMETERS, tensor_t *result, int ok)
     if (!ok) {
         cudaStreamSynchronize(NULL);
         cuda_tensor_destroy(result);
-        CUDA_THROW_RUNTIME("Cuda\\NN operation failed: %s", cuda_nn_error());
+        CUDA_THROW_RUNTIME("PhpTensors\\NN operation failed: %s", cuda_nn_error());
         return;
     }
     create_result_object(return_value, result);
@@ -205,9 +205,8 @@ static const zend_function_entry nn_methods[] = {
 int cuda_nn_init(void)
 {
     zend_class_entry entry;
-    INIT_NS_CLASS_ENTRY(entry, "PhpTensors\\Cuda", "NN", nn_methods);
+    INIT_NS_CLASS_ENTRY(entry, "PhpTensors", "NN", nn_methods);
     zend_class_entry *ce = zend_register_internal_class(&entry);
-    zend_register_class_alias("Cuda\\NN", ce);
     ce->ce_flags |= ZEND_ACC_FINAL;
     return SUCCESS;
 }

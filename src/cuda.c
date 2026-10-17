@@ -74,7 +74,6 @@ static PHP_GINIT_FUNCTION(cuda)
     cuda_globals->fusion_scope = NULL;
     cuda_globals->fusion_cache = NULL;
     cuda_globals->fusion_pending = 0;
-    cuda_globals->custom_backends_initialized = 0;
 }
 
 PHP_MINIT_FUNCTION(cuda)
@@ -503,23 +502,11 @@ PHP_MSHUTDOWN_FUNCTION(cuda)
 
 PHP_RSHUTDOWN_FUNCTION(cuda)
 {
-    if (CUDA_G(custom_backends_initialized))
-    {
-        zend_hash_destroy(&CUDA_G(custom_backends));
-        CUDA_G(custom_backends_initialized) = 0;
-    }
     fusion_request_shutdown();
     cuda_blas_shutdown();
     cuda_blas_set_precision(CUDA_MATMUL_PRECISION_FP32_STRICT);
     cuda_reduction_shutdown();
     cuda_nn_shutdown();
-    return SUCCESS;
-}
-
-PHP_RINIT_FUNCTION(cuda)
-{
-    zend_hash_init(&CUDA_G(custom_backends), 4, NULL, ZVAL_PTR_DTOR, 0);
-    CUDA_G(custom_backends_initialized) = 1;
     return SUCCESS;
 }
 
@@ -529,7 +516,7 @@ zend_module_entry phptensors_module_entry = {
     cuda_functions,
     PHP_MINIT(cuda),
     PHP_MSHUTDOWN(cuda),
-    PHP_RINIT(cuda),
+    NULL,
     PHP_RSHUTDOWN(cuda),
     NULL,
     PHP_PHPTENSORS_VERSION,

@@ -23,8 +23,6 @@ char *legacy_memory_size;
 struct fusion_scope *fusion_scope;
 struct fusion_cache *fusion_cache;
 size_t fusion_pending;
-HashTable custom_backends;
-zend_bool custom_backends_initialized;
 ZEND_END_MODULE_GLOBALS(cuda)
 
 ZEND_EXTERN_MODULE_GLOBALS(cuda);

@@ -22,7 +22,7 @@ fi
 cd "$BUILD_DIR"
 "$PHP_BIN" -n tests/check_api_surface.php
 if [ "$CPU_ONLY" -eq 1 ]; then
-   make test TESTS="tests/cpu_backend.phpt" TEST_PHP_ARGS="-q"
+   make test TESTS="tests/backend_contract.phpt tests/cpu_backend.phpt tests/namespaces.phpt" TEST_PHP_ARGS="-q"
    exit 0
 fi
 if [ "${1:-}" = "--require-gpu" ]; then

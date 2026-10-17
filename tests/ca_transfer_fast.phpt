@@ -9,8 +9,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 function check(bool $ok, string $label): void {
     if (!$ok) throw new RuntimeException($label);
 }
@@ -70,18 +70,18 @@ foreach ($bad as $input) {
     try {
         new CudaArray($input);
         throw new RuntimeException('invalid input accepted');
-    } catch (Cuda\InvalidArgumentException $error) {}
+    } catch (PhpTensors\InvalidArgumentException $error) {}
 }
 foreach ([[[1, 2], [3]], [[1, 2], []], [[[1, 2]], [2]], [[1], [-1]], [[1], [PHP_INT_MAX, 3]]] as [$input, $shape]) {
     try {
         CudaArray::fromFlatArray($input, $shape);
         throw new RuntimeException('invalid flat input accepted');
-    } catch (Cuda\InvalidArgumentException $error) {}
+    } catch (PhpTensors\InvalidArgumentException $error) {}
 }
 try {
     $tensor->__construct([[1], [2, 3]], 'int32');
     throw new RuntimeException('invalid reinitialization accepted');
-} catch (Cuda\InvalidArgumentException $error) {}
+} catch (PhpTensors\InvalidArgumentException $error) {}
 check($tensor->toArray() === [5, 6], 'failed constructor preserves tensor');
 echo "types, validation, references and empty arrays checked\n";
 
@@ -114,7 +114,7 @@ check($fused->toBuffer() === (new CudaArray(range(1, 65536), 'int64'))->toBuffer
 try {
     Fusion::compile(fn($x) => $x->toBuffer(), [$large]);
     throw new RuntimeException('capture read accepted');
-} catch (Cuda\RuntimeException $error) {}
+} catch (PhpTensors\RuntimeException $error) {}
 echo "strided packing, binary precision and Fusion checked\n";
 $elements = 2 * 2049 * 2049;
 $pattern = pack('V*', ...range(0, 1023));
@@ -142,7 +142,7 @@ $input[1][1048579] = null;
 try {
     new CudaArray($input, 'float64');
     throw new RuntimeException('invalid streamed import accepted');
-} catch (Cuda\InvalidArgumentException $error) {}
+} catch (PhpTensors\InvalidArgumentException $error) {}
 unset($input, $row, $streamed);
 echo "bounded staging windows checked\n";
 ?>

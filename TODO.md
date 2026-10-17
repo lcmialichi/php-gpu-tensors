@@ -86,9 +86,9 @@ consistent public API across the PHP extension.
 
 ## 7. Keep the public API consistent
 
-- [x] Add automatic native CUDA fallback for `Cuda\NN` when cuDNN is absent or
+- [x] Add automatic native CUDA fallback for `PhpTensors\NN` when cuDNN is absent or
   reports a recoverable unsupported operation; never fall back to CPU.
-- [x] Remove backend preflight from the `Cuda\NN` inference API.
+- [x] Remove backend preflight from the `PhpTensors\NN` inference API.
 - [ ] Keep README, PHP stubs, runtime arginfo and tests aligned for
   `CudaArray`, `ContiguousArray`/`HostArray`, `Compiler`, `CompiledModule`,
   Fusion, optimizers, NN and global `cuda_*` functions.

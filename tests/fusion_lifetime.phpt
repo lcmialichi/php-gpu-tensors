@@ -9,8 +9,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 function check(bool $ok): void { if (!$ok) throw new RuntimeException('check failed'); }
 $a = CudaArray::ones([4096]);
 $expression = function ($x) {
@@ -47,7 +47,7 @@ check($matrix[1]->reshape([1, 2])->toArray() === [[3.0, 4.0]]);
 check($matrix->toArray() === [[1.0, 2.0], [3.0, 4.0]]);
 echo "native view reduction released\n";
 try { $graph->run(CudaArray::ones([8])); }
-catch (Cuda\InvalidArgumentException $error) { echo "bad replay rejected\n"; }
+catch (PhpTensors\InvalidArgumentException $error) { echo "bad replay rejected\n"; }
 check($graph->run($a)[0] === 131.0);
 echo "replay recovered\n";
 $large = CudaArray::ones([262144]);
@@ -57,7 +57,7 @@ $many = Fusion::compile(function ($x) {
     return $outputs;
 }, [$large], cudaGraph: true);
 try { $many->runAsync($large); echo "MISSED\n"; }
-catch (Cuda\OutOfMemoryException $error) { echo "allocation failure preserved\n"; }
+catch (PhpTensors\OutOfMemoryException $error) { echo "allocation failure preserved\n"; }
 check($many->getStats()['pending'] === 0);
 $large[0] = 2;
 check($graph->run($a)[0] === 131.0);

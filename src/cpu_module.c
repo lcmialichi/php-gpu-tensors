@@ -4,7 +4,6 @@
 
 #include "php.h"
 #include "backend_contract.h"
-#include "cpu_backend.h"
 #include "cpu_host_array.h"
 #include "cuda.h"
 #include "cuda_exceptions.h"
@@ -75,14 +74,13 @@ static const zend_function_entry unavailable_cuda_array_methods[] = {
 static int register_unavailable_cuda_array(void)
 {
     zend_class_entry ce;
-    INIT_NS_CLASS_ENTRY(ce, "PhpTensors\\Cuda", "CudaArray", unavailable_cuda_array_methods);
+    INIT_NS_CLASS_ENTRY(ce, "PhpTensors", "CudaArray", unavailable_cuda_array_methods);
     unavailable_cuda_array_ce = zend_register_internal_class(&ce);
     if (!unavailable_cuda_array_ce) {
         return FAILURE;
     }
     unavailable_cuda_array_ce->ce_flags |= ZEND_ACC_FINAL;
-    zend_register_class_alias("Cuda\\CudaArray", unavailable_cuda_array_ce);
-    zend_register_class_alias("PhpTensors\\Cuda\\Tensor", unavailable_cuda_array_ce);
+    zend_class_implements(unavailable_cuda_array_ce, 1, php_tensors_numbers_ce);
     return SUCCESS;
 }
 
@@ -93,7 +91,6 @@ static PHP_GINIT_FUNCTION(cuda)
     cuda_globals->fusion_scope = NULL;
     cuda_globals->fusion_cache = NULL;
     cuda_globals->fusion_pending = 0;
-    cuda_globals->custom_backends_initialized = 0;
 }
 
 PHP_MINIT_FUNCTION(cuda)
@@ -104,30 +101,8 @@ PHP_MINIT_FUNCTION(cuda)
     cuda_register_exceptions();
     register_number_class();
     if (cpu_host_array_init() != SUCCESS ||
-        cpu_backend_init() != SUCCESS ||
         register_unavailable_cuda_array() != SUCCESS) {
         return FAILURE;
-    }
-    return SUCCESS;
-}
-
-PHP_RINIT_FUNCTION(cuda)
-{
-    zend_hash_init(&CUDA_G(custom_backends), 4, NULL, ZVAL_PTR_DTOR, 0);
-    CUDA_G(custom_backends_initialized) = 1;
-    if (cpu_backend_register_request() != SUCCESS) {
-        zend_hash_destroy(&CUDA_G(custom_backends));
-        CUDA_G(custom_backends_initialized) = 0;
-        return FAILURE;
-    }
-    return SUCCESS;
-}
-
-PHP_RSHUTDOWN_FUNCTION(cuda)
-{
-    if (CUDA_G(custom_backends_initialized)) {
-        zend_hash_destroy(&CUDA_G(custom_backends));
-        CUDA_G(custom_backends_initialized) = 0;
     }
     return SUCCESS;
 }
@@ -147,8 +122,8 @@ zend_module_entry phptensors_module_entry = {
     NULL,
     PHP_MINIT(cuda),
     NULL,
-    PHP_RINIT(cuda),
-    PHP_RSHUTDOWN(cuda),
+    NULL,
+    NULL,
     PHP_MINFO(phptensors),
     PHP_PHPTENSORS_VERSION,
     PHP_MODULE_GLOBALS(cuda),

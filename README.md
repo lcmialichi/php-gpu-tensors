@@ -15,8 +15,8 @@
     <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/lcmialichi/php-gpu-tensors"></a>
 </p>
 
-PHP Tensors is a native PHP extension with a pluggable tensor/backend
-contract, a CPU-only backend and an optional CUDA implementation. It provides GPU-resident arrays, tensor
+PHP Tensors is a native PHP extension with an explicit CPU tensor and an
+optional CUDA implementation. It provides GPU-resident arrays, tensor
 operations, custom CUDA kernels, optional expression fusion, reverse-mode
 automatic differentiation and experimental machine-learning building blocks.
 
@@ -47,7 +47,7 @@ Tensor operations run on the GPU by default. Fusion is opt-in; use it when a
 compatible expression is repeated and worth compiling.
 
 ```php
-use PhpTensors\Cuda\CudaArray;
+use PhpTensors\CudaArray;
 use PhpTensors\Fusion;
 
 $a = CudaArray::ones([4]);
@@ -96,7 +96,7 @@ See [benchmarks](#benchmarks) for repeatable measurements.
 | Optional GPU runtime | NVIDIA driver providing `libcuda.so.1` and a CUDA-capable GPU |
 
 `compile.sh` builds CUDA when it detects a Toolkit; otherwise it builds the
-CPU-only backend. CUDA runtime use additionally requires a visible GPU. Both
+CPU-only extension. CUDA runtime use additionally requires a visible GPU. Both
 build modes support PHP NTS and ZTS.
 
 ### Build from source
@@ -132,7 +132,7 @@ Build options:
 
 - `CUDA_HOME` selects the Toolkit prefix; `CUDA_ARCH` selects a target such as
   `sm_86`.
-- `./compile.sh --cpu-only` skips CUDA detection and builds the CPU backend.
+- `./compile.sh --cpu-only` skips CUDA detection and builds the CPU-only extension.
   `./configure --without-cuda` also selects a CPU-only build.
 - `CUDA_USE_CUBLAS=no` disables cuBLAS; `CUDA_USE_CUBLASLT=no` disables cuBLASLt.
   Both default to enabled when available.
@@ -184,7 +184,7 @@ also support `float16` and `bfloat16`; low-precision elementwise operations
 compute in `float32` and round to the promoted output dtype.
 
 ```php
-use PhpTensors\Cuda\CudaArray;
+use PhpTensors\CudaArray;
 
 $input = new CudaArray([[1, 2], [3, 4]], 'float32');
 $weights = CudaArray::ones([2, 2]);
@@ -209,9 +209,8 @@ echo $output->dtype();       // float32
 - **Random:** `rand()` generates uniform values and `randn()` standard-normal
   values. Calls without a seed are fresh; an integer seed is reproducible.
 - **Export:** `toArray()` creates nested PHP arrays; `toBuffer()` returns
-  packed bytes; `toHost()` returns a CPU `PhpTensors\HostArray`
-  (`Cuda\HostArray` and `Cuda\ContiguousArray` remain aliases). Host arrays support packed buffers and
-  optional pinned memory. `item()` transfers a single-element tensor's value.
+  packed bytes; `toHost()` returns a `PhpTensors\HostArray`.
+  `item()` transfers a single-element tensor's value.
 
 `float16` and `bfloat16` values can be created from PHP numeric arrays, packed
 buffers, fill/like factories, `eye()` and `randn()`. They can be exported with
@@ -356,11 +355,11 @@ velocity; AdamW state contains first/second moments and beta powers.
 
 ## Custom CUDA kernels
 
-`PhpTensors\Cuda\Compiler` compiles CUDA C++ to PTX with NVRTC. Register the kernel and
+`PhpTensors\Compiler` compiles CUDA C++ to PTX with NVRTC. Register the kernel and
 argument metadata, compile and initialize the module, then launch it:
 
 ```php
-use PhpTensors\Cuda\Compiler;
+use PhpTensors\Compiler;
 
 $source = <<<'CUDA'
 extern "C" __global__ void scale(float *data, int factor, int count)
@@ -537,14 +536,14 @@ exercise the explicit matmul options.
 
 ## CNN inference with optional cuDNN
 
-`PhpTensors\Cuda\NN` provides static inference methods for initialized, contiguous
+`PhpTensors\NN` provides static inference methods for initialized, contiguous
 `float32` tensors (NCHW inputs, OIHW filters). It prefers cuDNN when available
 and uses native CUDA kernels otherwise; there is no CPU fallback or backend
 preflight. Inputs are not silently cast or packed. NN does not support
 autograd or Fusion capture.
 
 ```php
-use PhpTensors\Cuda\NN;
+use PhpTensors\NN;
 
 $features = NN::conv2d($input, $weights, $bias, padding: [1, 1]);
 $pooled = NN::pool2d($features, window: [2, 2], stride: [2, 2]);
@@ -588,14 +587,14 @@ stats; `--predict-index=N` predicts one sample; `--no-save` disables saving;
 | --- | --- |
 | `PhpTensors\Tensor` | Minimal backend-independent tensor metadata and transfer contract |
 | `PhpTensors\Numbers` / `PhpTensors\Number` | Operator-overload capability marker and base class for PHP-defined numeric objects |
-| `PhpTensors\BackendInterface` / `PhpTensors\BackendManager` | Register, inspect, create and unregister PHP backends |
-| `PhpTensors\Cuda\CudaArray` | GPU storage, arithmetic, reductions, views, indexing, data transfer and opt-in autograd |
-| `PhpTensors\HostArray` | Host storage and packed buffers; `toGpu()` on CUDA builds |
+| `PhpTensors\BackendInterface` | Optional contract for user-created backend implementations |
+| `PhpTensors\CudaArray` | GPU storage, arithmetic, reductions, views, indexing, data transfer and opt-in autograd |
+| `PhpTensors\HostArray` | Host storage, CPU arithmetic and explicit transfer to/from `CudaArray` |
 | `PhpTensors\Optimizer` | Functional SGD and AdamW updates with explicit state |
 | `PhpTensors\Fusion` / `PhpTensors\FusionGraph` | Capture, compiled replay, PTX cache and plan diagnostics |
 | `PhpTensors\FusionExecution` | Pending asynchronous Fusion execution and result collection |
-| `PhpTensors\Cuda\Compiler` / `PhpTensors\Cuda\CompiledModule` | NVRTC compilation, kernel launch, async operations and PTX |
-| `PhpTensors\Cuda\NN` | CUDA CNN inference with optional cuDNN acceleration |
+| `PhpTensors\Compiler` / `PhpTensors\CompiledModule` | NVRTC compilation, kernel launch, async operations and PTX |
+| `PhpTensors\NN` | CUDA CNN inference with optional cuDNN acceleration |
 | `cuda_*()` functions | Device management, memory, synchronization, backend diagnostics and matmul settings |
 | `PhpTensors\Exception` and subclasses | Runtime, argument, allocation and compilation errors |
 
@@ -605,40 +604,45 @@ listed in the [examples guide](examples/README.md).
 
 ### Backend contracts and custom backends
 
-`Tensor` describes the common metadata and transfer surface. `BackendInterface`
-lets a userland class advertise capabilities and create tensors; tensor methods
-remain the natural place to expose operations. `BackendManager` is the
-request-scoped registry/factory, not a global operation dispatcher:
+`Tensor` describes the common metadata and transfer surface. Users choose the
+implementation by constructing its concrete class:
 
 ```php
-use PhpTensors\BackendInterface;
-use PhpTensors\BackendManager;
-use PhpTensors\Tensor;
+use PhpTensors\HostArray;
+use PhpTensors\CudaArray;
 
-BackendManager::register($backend);
-$tensor = BackendManager::create('custom-cpu', $values, $shape);
-$backend = BackendManager::forTensor($tensor);
-BackendManager::unregister('custom-cpu');
+$cpu = new HostArray([1, 2, 3]);
+$gpu = new CudaArray([1, 2, 3]);
 ```
 
-Unregistering prevents new lookups and factory calls; tensors created by the
-factory keep a reference to their backend. Backend-specific operations should
-be called on the tensor itself. Cross-backend inputs require an explicit
-transfer. The CUDA class remains explicitly constructible as
-`PhpTensors\Cuda\CudaArray`; the former `Cuda\...` class names are compatibility
-aliases.
+`PhpTensors\CudaArray` and `PhpTensors\HostArray` are the public tensor classes.
+All public classes use the `PhpTensors` namespace.
+Mixed-backend arithmetic does not transfer data implicitly: use
+`HostArray::toGpu()` or `CudaArray::toHost()` to request a transfer explicitly.
+Host arithmetic currently supports same-shape `float32`/`float64` tensors and
+scalars. CUDA builds also preserve other dtypes when transferring through
+`HostArray`.
+
+`BackendInterface` is an optional userland contract, not a registry or an
+automatic dispatcher. An application can instantiate its backend directly and
+call its `createTensor()` / `execute()` methods. Tensor operations and custom
+operator behavior remain the responsibility of the tensor implementation.
 
 `Numbers` is a marker for objects that support arithmetic overloading.
 `Number` is an abstract base class that installs PHP's operator handler for
 user-defined numeric classes; an interface alone cannot install that Zend
-handler. `CudaArray` implements `Numbers` and keeps its native operator handler.
+handler. A custom tensor can implement `Tensor` and extend `Number` to define
+its own PHP arithmetic operators. `CudaArray` implements `Numbers` and keeps
+its native operator handler.
 
-CPU-only builds register a built-in `cpu` backend and provide `HostArray`
-with float32/float64 storage, nested-array and packed-buffer import/export,
-same-shape binary arithmetic, and scalar arithmetic. Broadcasting, pinned
-memory, CUDA transfers and CUDA-specific classes are unavailable in that mode;
-attempts to instantiate or call `CudaArray` fail explicitly. The CPU backend
-currently performs arithmetic synchronously on the host.
+CPU-only builds provide `HostArray` without requiring CUDA libraries or a GPU.
+It supports float32/float64 storage, nested-array and packed-buffer
+import/export, same-shape binary arithmetic, and scalar arithmetic. In CUDA
+builds the same `HostArray` class is used for host-resident tensor storage and
+`CudaArray::toHost()` results; it can also use pinned storage for transfers.
+Methods that do not yet have a CPU implementation are present on `HostArray`
+and throw `PhpTensors\RuntimeException` explicitly. Attempts to instantiate
+or call `CudaArray` in a CPU-only build fail explicitly.
 
 The CUDA backend requires Linux/NVIDIA hardware for execution. Autograd supports
 documented operation/dtype subsets; `cumsum()` and `cumprod()` gradients are

@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 
 $input = new CudaArray([[1.0, 0.0], [3.0, 4.0]]);
 echo json_encode($input->maximum(0)->toArray()), "\n";
@@ -80,7 +80,7 @@ fails(fn() => $input->var(1, 2));
 try {
     $gatherGraph->run($source, $badFusionIndices);
     throw new RuntimeException('Fusion gather accepted an invalid index');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
     if (!str_contains($error->getMessage(), 'gather indices must be within [0, 3)'))
         throw $error;
 }
@@ -89,7 +89,7 @@ if ($gatherGraph->run($source, $indices)->toArray() !== [[30.0, 10.0], [50.0, 50
 try {
     $scatterGraph->run($base, $badFusionIndices, $updates);
     throw new RuntimeException('Fusion scatterAdd accepted an invalid index');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
     if (!str_contains($error->getMessage(), 'scatterAdd indices must be within [0, 3)'))
         throw $error;
 }
@@ -99,7 +99,7 @@ fails(fn() => $gatherGraph->runAsync($source, $indices));
 try {
     $scatterGraph->runAsync($base, $indices, $updates);
     throw new RuntimeException('scatterAdd Fusion unexpectedly supports async execution');
-} catch (Cuda\RuntimeException $error) {
+} catch (PhpTensors\RuntimeException $error) {
 }
 
 $tracked = (new CudaArray([-1.0, 0.5, 3.0]))->requiresGrad();

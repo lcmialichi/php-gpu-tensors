@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use PhpTensors\Cuda\Compiler;
-use PhpTensors\Cuda\CudaArray;
+use PhpTensors\Compiler;
+use PhpTensors\CudaArray;
 
 /**
  * Custom CUDA Kernels (JIT)

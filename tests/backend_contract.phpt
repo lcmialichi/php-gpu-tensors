@@ -1,5 +1,5 @@
 --TEST--
-PhpTensors backend interfaces can be implemented by userland classes
+Tensor and backend contracts support direct user-defined implementations
 --SKIPIF--
 <?php
 if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
@@ -7,12 +7,8 @@ if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable'
 --FILE--
 <?php
 use PhpTensors\BackendInterface;
-use PhpTensors\BackendManager;
+use PhpTensors\Number;
 use PhpTensors\Tensor;
-use PhpTensors\Numbers;
-use PhpTensors\InvalidArgumentException;
-use PhpTensors\RuntimeException;
-use PhpTensors\Cuda\CudaArray;
 
 final class CustomTensor implements Tensor
 {
@@ -25,9 +21,8 @@ final class CustomTensor implements Tensor
 
 final class CustomBackend implements BackendInterface
 {
-    public bool $available = true;
     public function getName(): string { return 'custom'; }
-    public function isAvailable(): bool { return $this->available; }
+    public function isAvailable(): bool { return true; }
     public function supports(string $operation, array $context = []): bool
     {
         return $operation === 'identity';
@@ -42,56 +37,63 @@ final class CustomBackend implements BackendInterface
     }
 }
 
+final class CustomNumberTensor extends Number implements Tensor
+{
+    public function __construct(public float $value) {}
+    public function getBackend(): string { return 'custom-number'; }
+    public function getShape(): array { return []; }
+    public function getSize(): int { return 1; }
+    public function dtype(): string { return 'float64'; }
+    public function toArray(): array { return [$this->value]; }
+    public function __add($left, $right): static
+    {
+        return new static(self::numberValue($left) + self::numberValue($right));
+    }
+    public function __sub($left, $right): static
+    {
+        return new static(self::numberValue($left) - self::numberValue($right));
+    }
+    public function __mul($left, $right): static
+    {
+        return new static(self::numberValue($left) * self::numberValue($right));
+    }
+    public function __div($left, $right): static
+    {
+        return new static(self::numberValue($left) / self::numberValue($right));
+    }
+    public function __pow($left, $right): static
+    {
+        return new static(self::numberValue($left) ** self::numberValue($right));
+    }
+    public function __mod($left, $right): static
+    {
+        return new static(fmod(self::numberValue($left), self::numberValue($right)));
+    }
+    public function __inc(): static { return new static($this->value + 1); }
+    public function __dec(): static { return new static($this->value - 1); }
+    private static function numberValue(mixed $value): float
+    {
+        return $value instanceof self ? $value->value : (float)$value;
+    }
+}
+
 $backend = new CustomBackend();
-$managerRejected = false;
-try {
-    BackendManager::register(new stdClass());
-} catch (InvalidArgumentException) {
-    $managerRejected = true;
-}
-BackendManager::register($backend);
-$custom = $backend->createTensor([3.0, 4.0], [2]);
-var_dump($custom instanceof Tensor);
+$tensor = $backend->createTensor([3.0, 4.0], [2]);
+var_dump($tensor instanceof Tensor);
+var_dump($tensor->getBackend());
 var_dump($backend->supports('identity'));
-var_dump($custom->getBackend());
-var_dump($managerRejected);
-var_dump(BackendManager::available() === ['custom']);
-var_dump(BackendManager::get('custom') === $backend);
-$factoryTensor = BackendManager::create('custom', [3.0, 4.0], [2]);
-var_dump($factoryTensor instanceof Tensor);
-var_dump(BackendManager::forTensor($factoryTensor) === $backend);
-var_dump(BackendManager::unregister('custom'));
-var_dump(BackendManager::available() === []);
-$unregisteredRejected = false;
-try {
-    BackendManager::get('custom');
-} catch (InvalidArgumentException) {
-    $unregisteredRejected = true;
-}
-var_dump($unregisteredRejected);
-var_dump(BackendManager::forTensor($factoryTensor) === $backend);
-var_dump(BackendManager::unregister('custom'));
-$backend->available = false;
-var_dump(CudaArray::ones([1]) instanceof Tensor);
-var_dump(CudaArray::ones([1]) instanceof Numbers);
-var_dump(\Cuda\CudaArray::ones([1]) instanceof Tensor);
-var_dump(\PhpTensors\Cuda\Tensor::ones([1]) instanceof Tensor);
+var_dump($backend->execute('identity', [$tensor]) instanceof Tensor);
+var_dump(class_exists('PhpTensors\\BackendManager'));
+$number = new CustomNumberTensor(4.0) + 3.0;
+var_dump($number->toArray());
 ?>
 --EXPECT--
-bool(true)
 bool(true)
 string(6) "custom"
 bool(true)
 bool(true)
-bool(true)
-bool(true)
-bool(true)
-bool(true)
-bool(true)
-bool(true)
-bool(true)
 bool(false)
-bool(true)
-bool(true)
-bool(true)
-bool(true)
+array(1) {
+  [0]=>
+  float(7)
+}

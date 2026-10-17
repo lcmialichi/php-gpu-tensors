@@ -39,7 +39,7 @@ function publicApiSurface(array $stubFunctions): array
 {
     $classes = [];
     foreach (get_declared_classes() as $className) {
-        if (!str_starts_with($className, 'Cuda\\') &&
+        if (!str_starts_with($className, 'PhpTensors\\') &&
             !str_starts_with($className, 'PhpTensors\\')) {
             continue;
         }
@@ -105,13 +105,9 @@ function publicApiSurface(array $stubFunctions): array
 
     $aliases = [];
     foreach (get_declared_classes() as $className) {
-        if (str_starts_with($className, 'Cuda\\')) {
+        if (str_starts_with($className, 'PhpTensors\\')) {
             $aliases[$className] = (new ReflectionClass($className))->getName();
         }
-    }
-    if (class_exists('PhpTensors\\Cuda\\Tensor', false)) {
-        $aliases['PhpTensors\\Cuda\\Tensor'] =
-            (new ReflectionClass('PhpTensors\\Cuda\\Tensor'))->getName();
     }
     ksort($aliases);
 

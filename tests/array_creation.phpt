@@ -7,7 +7,7 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
+use PhpTensors\CudaArray as A;
 
 function check(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);
@@ -92,38 +92,38 @@ check($unseededNormalA->toBuffer() !== $unseededNormalB->toBuffer(),
 try {
     A::randn([4], 'int32');
     throw new RuntimeException('randn accepted an integer dtype');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 try {
     A::rand([4], 0, 1, 'float32', -1);
     throw new RuntimeException('rand accepted a negative seed');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 try {
     A::eye(-1);
     throw new RuntimeException('eye accepted a negative dimension');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 try {
     A::arange(0, 5, 0);
     throw new RuntimeException('arange accepted a zero step');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 try {
     A::arange(0, 1, 1, 'uint8');
     A::arange(-1, 1, 1, 'uint8');
     throw new RuntimeException('arange accepted values outside dtype range');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 try {
     A::linspace(0, 1, -1);
     throw new RuntimeException('linspace accepted a negative count');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 try {
     A::zeros([2, 'invalid']);
     throw new RuntimeException('zeros accepted an invalid shape');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 
 echo "CudaArray creation APIs checked\n";

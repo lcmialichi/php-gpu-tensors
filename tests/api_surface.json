@@ -1,182 +1,12 @@
 {
     "classes": {
-        "PhpTensors\\BackendManager": {
-            "parent": null,
-            "abstract": false,
-            "final": true,
-            "methods": {
-                "available": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "array"
-                },
-                "create": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "backend",
-                            "type": "string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "values",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "shape",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "dtype",
-                            "type": "?string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": "float32"
-                        }
-                    ],
-                    "returnType": "PhpTensors\\Tensor"
-                },
-                "createTensor": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "backend",
-                            "type": "string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "values",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "shape",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "dtype",
-                            "type": "?string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": "float32"
-                        }
-                    ],
-                    "returnType": "PhpTensors\\Tensor"
-                },
-                "forTensor": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "tensor",
-                            "type": "PhpTensors\\Tensor",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "PhpTensors\\BackendInterface"
-                },
-                "get": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "name",
-                            "type": "string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "PhpTensors\\BackendInterface"
-                },
-                "register": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "backend",
-                            "type": "mixed",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "void"
-                },
-                "unregister": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "name",
-                            "type": "string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "bool"
-                }
-            }
-        },
         "PhpTensors\\CompilationException": {
             "parent": "PhpTensors\\RuntimeException",
             "abstract": false,
             "final": false,
             "methods": []
         },
-        "PhpTensors\\Cuda\\CompiledModule": {
+        "PhpTensors\\CompiledModule": {
             "parent": null,
             "abstract": false,
             "final": false,
@@ -221,7 +51,7 @@
                         },
                         {
                             "name": "elements",
-                            "type": "PhpTensors\\Cuda\\CudaArray|int",
+                            "type": "PhpTensors\\CudaArray|int",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -490,7 +320,7 @@
                 }
             }
         },
-        "PhpTensors\\Cuda\\Compiler": {
+        "PhpTensors\\Compiler": {
             "parent": null,
             "abstract": false,
             "final": false,
@@ -579,7 +409,7 @@
                             "default": false
                         }
                     ],
-                    "returnType": "PhpTensors\\Cuda\\CompiledModule"
+                    "returnType": "PhpTensors\\CompiledModule"
                 },
                 "getCacheStats": {
                     "static": false,
@@ -649,7 +479,7 @@
                 }
             }
         },
-        "PhpTensors\\Cuda\\CudaArray": {
+        "PhpTensors\\CudaArray": {
             "parent": null,
             "abstract": false,
             "final": false,
@@ -749,7 +579,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -909,7 +739,7 @@
                     "parameters": [
                         {
                             "name": "gradient",
-                            "type": "?PhpTensors\\Cuda\\CudaArray",
+                            "type": "?PhpTensors\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -1108,7 +938,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1132,7 +962,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1463,7 +1293,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1513,7 +1343,7 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "?PhpTensors\\Cuda\\CudaArray"
+                    "returnType": "?PhpTensors\\CudaArray"
                 },
                 "gt": {
                     "static": false,
@@ -1522,7 +1352,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1590,7 +1420,7 @@
                         },
                         {
                             "name": "scale",
-                            "type": "?PhpTensors\\Cuda\\CudaArray",
+                            "type": "?PhpTensors\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -1599,7 +1429,7 @@
                         },
                         {
                             "name": "bias",
-                            "type": "?PhpTensors\\Cuda\\CudaArray",
+                            "type": "?PhpTensors\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -1616,7 +1446,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1714,7 +1544,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1765,7 +1595,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1816,7 +1646,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1859,7 +1689,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1876,7 +1706,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1952,7 +1782,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|int|float",
+                            "type": "PhpTensors\\CudaArray|int|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2300,7 +2130,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2561,175 +2391,6 @@
                 }
             }
         },
-        "PhpTensors\\Cuda\\Kernel": {
-            "parent": null,
-            "abstract": false,
-            "final": true,
-            "methods": []
-        },
-        "PhpTensors\\Cuda\\NN": {
-            "parent": null,
-            "abstract": false,
-            "final": true,
-            "methods": {
-                "conv2d": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "input",
-                            "type": "PhpTensors\\Cuda\\CudaArray",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "weights",
-                            "type": "PhpTensors\\Cuda\\CudaArray",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "bias",
-                            "type": "?PhpTensors\\Cuda\\CudaArray",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": null
-                        },
-                        {
-                            "name": "stride",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": [
-                                1,
-                                1
-                            ]
-                        },
-                        {
-                            "name": "padding",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": [
-                                0,
-                                0
-                            ]
-                        },
-                        {
-                            "name": "dilation",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": [
-                                1,
-                                1
-                            ]
-                        },
-                        {
-                            "name": "groups",
-                            "type": "int",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": 1
-                        }
-                    ],
-                    "returnType": "PhpTensors\\Cuda\\CudaArray"
-                },
-                "pool2d": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "input",
-                            "type": "PhpTensors\\Cuda\\CudaArray",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "window",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "stride",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": [
-                                2,
-                                2
-                            ]
-                        },
-                        {
-                            "name": "padding",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": [
-                                0,
-                                0
-                            ]
-                        },
-                        {
-                            "name": "mode",
-                            "type": "string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": "max"
-                        }
-                    ],
-                    "returnType": "PhpTensors\\Cuda\\CudaArray"
-                },
-                "softmax": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "input",
-                            "type": "PhpTensors\\Cuda\\CudaArray",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "PhpTensors\\Cuda\\CudaArray"
-                }
-            }
-        },
         "PhpTensors\\Exception": {
             "parent": "Exception",
             "abstract": false,
@@ -2872,7 +2533,7 @@
                     "parameters": [
                         {
                             "name": "inputs",
-                            "type": "PhpTensors\\Cuda\\CudaArray",
+                            "type": "PhpTensors\\CudaArray",
                             "byReference": false,
                             "variadic": true,
                             "optional": true,
@@ -2889,7 +2550,7 @@
                     "parameters": [
                         {
                             "name": "inputs",
-                            "type": "PhpTensors\\Cuda\\CudaArray",
+                            "type": "PhpTensors\\CudaArray",
                             "byReference": false,
                             "variadic": true,
                             "optional": true,
@@ -2958,6 +2619,30 @@
                     ],
                     "returnType": null
                 },
+                "__debugInfo": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "__invoke": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "slices",
+                            "type": "array|int|null",
+                            "byReference": false,
+                            "variadic": true,
+                            "optional": true,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "__serialize": {
                     "static": false,
                     "abstract": false,
@@ -2982,6 +2667,20 @@
                     ],
                     "returnType": "void"
                 },
+                "abs": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "acos": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
                 "add": {
                     "static": false,
                     "abstract": false,
@@ -2990,6 +2689,142 @@
                         {
                             "name": "other",
                             "type": "PhpTensors\\HostArray|int|float|bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "all": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "any": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "arange": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "start",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "stop",
+                            "type": "int|float|null",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "step",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "argMax": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "argMin": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "asin": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "astype": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "dtype",
+                            "type": "string",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3016,12 +2851,218 @@
                     ],
                     "returnType": "mixed"
                 },
+                "atan": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "backward": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "gradient",
+                            "type": "?self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "retainGraph",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": false
+                        }
+                    ],
+                    "returnType": "void"
+                },
+                "broadcastTo": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "ceil": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "clamp": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "min",
+                            "type": "int|float|null",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "max",
+                            "type": "int|float|null",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "concat": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "tensors",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "copy": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "cos": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "cosh": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
                 "count": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
                     "returnType": "int"
+                },
+                "cumprod": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "cumsum": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "detach": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "diagonal": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "offset",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        },
+                        {
+                            "name": "axis1",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        },
+                        {
+                            "name": "axis2",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1
+                        }
+                    ],
+                    "returnType": "self"
                 },
                 "divide": {
                     "static": false,
@@ -3046,6 +3087,119 @@
                     "returnsReference": false,
                     "parameters": [],
                     "returnType": "string"
+                },
+                "eq": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "exp": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "exp2": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "expm1": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "eye": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "rows",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "columns",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "k",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "flatten": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "flip": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "array|int|null",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "floor": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
                 },
                 "fromBuffer": {
                     "static": true,
@@ -3091,6 +3245,41 @@
                     ],
                     "returnType": "self"
                 },
+                "fromFile": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "path",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "fromFlatArray": {
                     "static": true,
                     "abstract": false,
@@ -3122,6 +3311,136 @@
                             "optional": true,
                             "hasDefault": true,
                             "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "fromNpy": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "path",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "full": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "value",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "fullLike": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "prototype",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "value",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "gather": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "indices",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "ge": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
                         }
                     ],
                     "returnType": "self"
@@ -3185,12 +3504,363 @@
                     "parameters": [],
                     "returnType": "int"
                 },
+                "getStrides": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "grad": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "?self"
+                },
+                "gt": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "identity": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "size",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "isPinned": {
                     "static": false,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
                     "returnType": "bool"
+                },
+                "item": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "int|float|bool"
+                },
+                "layerNorm": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axes",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "epsilon",
+                            "type": "float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1.0e-5
+                        },
+                        {
+                            "name": "scale",
+                            "type": "?self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "bias",
+                            "type": "?self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "le": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "linspace": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "start",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "stop",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "num",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 50
+                        },
+                        {
+                            "name": "endpoint",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": true
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float64"
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "log": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "log10": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "log1p": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "log2": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "lt": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "matmul": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "max": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "maximum": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|int|float|bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "mean": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "min": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "minimum": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|int|float|bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "moveaxis": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "source",
+                            "type": "array|int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "destination",
+                            "type": "array|int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
                 },
                 "multiply": {
                     "static": false,
@@ -3207,6 +3877,30 @@
                             "default": null
                         }
                     ],
+                    "returnType": "self"
+                },
+                "ne": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "neg": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
                     "returnType": "self"
                 },
                 "ones": {
@@ -3235,6 +3929,380 @@
                     ],
                     "returnType": "self"
                 },
+                "onesLike": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "prototype",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "power": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "self|int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "prod": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "rand": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "min",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        },
+                        {
+                            "name": "max",
+                            "type": "int|float",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        },
+                        {
+                            "name": "seed",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "randn": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        },
+                        {
+                            "name": "seed",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "repeat": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "repeats",
+                            "type": "array|int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "requiresGrad": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "requiresGrad",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": true
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "reshape": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "roll": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shift",
+                            "type": "array|int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis",
+                            "type": "array|int|null",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "round": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "scatterAdd": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "indices",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "updates",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "sin": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "sinh": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "slice": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "selectors",
+                            "type": "array|string|int|null",
+                            "byReference": false,
+                            "variadic": true,
+                            "optional": true,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "softmax": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": -1
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "sqrt": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "squeeze": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "std": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "correction",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "subtract": {
                     "static": false,
                     "abstract": false,
@@ -3243,6 +4311,80 @@
                         {
                             "name": "other",
                             "type": "PhpTensors\\HostArray|int|float|bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "sum": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "swapaxes": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis1",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "axis2",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "tan": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "tanh": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "tile": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "reps",
+                            "type": "array|int",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3271,7 +4413,116 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "PhpTensors\\Cuda\\CudaArray"
+                    "returnType": "PhpTensors\\CudaArray"
+                },
+                "toHost": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "self"
+                },
+                "transpose": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "unsqueeze": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "var": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "correction",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 0
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "where": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "condition",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "x",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "y",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "zeroGrad": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "void"
                 },
                 "zeros": {
                     "static": true,
@@ -3298,6 +4549,32 @@
                         }
                     ],
                     "returnType": "self"
+                },
+                "zerosLike": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "prototype",
+                            "type": "self",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
                 }
             }
         },
@@ -3306,6 +4583,175 @@
             "abstract": false,
             "final": false,
             "methods": []
+        },
+        "PhpTensors\\Kernel": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": []
+        },
+        "PhpTensors\\NN": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "conv2d": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "input",
+                            "type": "PhpTensors\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "weights",
+                            "type": "PhpTensors\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "bias",
+                            "type": "?PhpTensors\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        },
+                        {
+                            "name": "stride",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                1,
+                                1
+                            ]
+                        },
+                        {
+                            "name": "padding",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                0,
+                                0
+                            ]
+                        },
+                        {
+                            "name": "dilation",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                1,
+                                1
+                            ]
+                        },
+                        {
+                            "name": "groups",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": 1
+                        }
+                    ],
+                    "returnType": "PhpTensors\\CudaArray"
+                },
+                "pool2d": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "input",
+                            "type": "PhpTensors\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "window",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "stride",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                2,
+                                2
+                            ]
+                        },
+                        {
+                            "name": "padding",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": [
+                                0,
+                                0
+                            ]
+                        },
+                        {
+                            "name": "mode",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "max"
+                        }
+                    ],
+                    "returnType": "PhpTensors\\CudaArray"
+                },
+                "softmax": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "input",
+                            "type": "PhpTensors\\CudaArray",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "PhpTensors\\CudaArray"
+                }
+            }
         },
         "PhpTensors\\Number": {
             "parent": null,
@@ -3628,7 +5074,7 @@
                         },
                         {
                             "name": "learningRate",
-                            "type": "?PhpTensors\\Cuda\\CudaArray",
+                            "type": "?PhpTensors\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -3844,7 +5290,23 @@
         }
     },
     "aliases": {
-        "PhpTensors\\Cuda\\Tensor": "PhpTensors\\Cuda\\CudaArray"
+        "PhpTensors\\CompilationException": "PhpTensors\\CompilationException",
+        "PhpTensors\\CompiledModule": "PhpTensors\\CompiledModule",
+        "PhpTensors\\Compiler": "PhpTensors\\Compiler",
+        "PhpTensors\\CudaArray": "PhpTensors\\CudaArray",
+        "PhpTensors\\Exception": "PhpTensors\\Exception",
+        "PhpTensors\\Fusion": "PhpTensors\\Fusion",
+        "PhpTensors\\FusionExecution": "PhpTensors\\FusionExecution",
+        "PhpTensors\\FusionGraph": "PhpTensors\\FusionGraph",
+        "PhpTensors\\HostArray": "PhpTensors\\HostArray",
+        "PhpTensors\\InvalidArgumentException": "PhpTensors\\InvalidArgumentException",
+        "PhpTensors\\Kernel": "PhpTensors\\Kernel",
+        "PhpTensors\\NN": "PhpTensors\\NN",
+        "PhpTensors\\Number": "PhpTensors\\Number",
+        "PhpTensors\\Optimizer": "PhpTensors\\Optimizer",
+        "PhpTensors\\OutOfMemoryException": "PhpTensors\\OutOfMemoryException",
+        "PhpTensors\\RuntimeException": "PhpTensors\\RuntimeException",
+        "PhpTensors\\UnexpectedValueException": "PhpTensors\\UnexpectedValueException"
     },
     "functions": {
         "cuda_clear_error": {
@@ -3956,7 +5418,7 @@
             "parameters": [
                 {
                     "name": "left",
-                    "type": "PhpTensors\\Cuda\\CudaArray",
+                    "type": "PhpTensors\\CudaArray",
                     "byReference": false,
                     "variadic": false,
                     "optional": false,
@@ -3965,7 +5427,7 @@
                 },
                 {
                     "name": "right",
-                    "type": "PhpTensors\\Cuda\\CudaArray",
+                    "type": "PhpTensors\\CudaArray",
                     "byReference": false,
                     "variadic": false,
                     "optional": false,

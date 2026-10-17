@@ -6,8 +6,8 @@ if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) die('skip CU
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
-use Cuda\Fusion;
+use PhpTensors\CudaArray as A;
+use PhpTensors\Fusion;
 
 function check(bool $condition, string $message): void
 {

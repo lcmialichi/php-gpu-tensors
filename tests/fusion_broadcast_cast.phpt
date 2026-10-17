@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 $a = new CudaArray([[1], [2]], 'int32');
 $b = new CudaArray([[3, 4, 5]], 'float32');
 $c = new CudaArray([2, 3, 4], 'float64');

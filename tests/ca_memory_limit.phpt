@@ -10,7 +10,7 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 --FILE--
 <?php
 try {
-    Cuda\CudaArray::ones([300000]);
+    PhpTensors\CudaArray::ones([300000]);
     echo "unexpected success\n";
 } catch (Throwable $error) {
     echo "allocation rejected\n";

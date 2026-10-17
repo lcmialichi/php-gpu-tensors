@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 
 $values = CudaArray::fromFlatArray([1.0, 2.0, 3.0, 4.0], [4], 'float64');
 printf("%.6f %.6f\n", $values->var()->item(), $values->std()->item());

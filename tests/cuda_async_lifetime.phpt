@@ -7,17 +7,17 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-$compiler = new Cuda\Compiler(source: 'extern "C" __global__ void touch(float *data) { data[0] += 1.0f; }');
+$compiler = new PhpTensors\Compiler(source: 'extern "C" __global__ void touch(float *data) { data[0] += 1.0f; }');
 $compiler->kernel('touch', [['name' => 'data', 'type' => 'array', 'dtype' => 'float32']]);
 $module = $compiler->compile();
-$tensor = new Cuda\CudaArray([1.0]);
+$tensor = new PhpTensors\CudaArray([1.0]);
 $weak = WeakReference::create($tensor);
 $operation = $module->launchAsync('touch', config: ['grid' => [1, 1, 1], 'block' => [1, 1, 1]], args: [$tensor]);
 unset($tensor);
-var_dump($weak->get() instanceof Cuda\CudaArray);
+var_dump($weak->get() instanceof PhpTensors\CudaArray);
 $module->sync();
 var_dump($weak->get() === null);
-$next = new Cuda\CudaArray([1.0]);
+$next = new PhpTensors\CudaArray([1.0]);
 $operation = $module->launchAsync('touch', config: ['grid' => [1, 1, 1], 'block' => [1, 1, 1]], args: [$next]);
 usleep(60000);
 var_dump($module->sync($operation));

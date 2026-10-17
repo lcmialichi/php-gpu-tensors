@@ -29,28 +29,7 @@ interface BackendInterface
     public function execute(string $operation, array $inputs, array $arguments = []): Tensor;
 }
 
-final class BackendManager
-{
-    private function __construct() {}
-    /** Register a userland backend for this PHP request. */
-    public static function register(mixed $backend): void {}
-    /** Unregister a backend for new factory lookups; existing tensors retain its handle. */
-    public static function unregister(string $name): bool {}
-    /** Get one registered backend. */
-    public static function get(string $name): BackendInterface {}
-    /** List registered backends that are currently available. @return list<string> */
-    public static function available(): array {}
-    /** Create a tensor using a registered backend. */
-    public static function create(string $backend, array $values, array $shape,
-        ?string $dtype = 'float32'): Tensor {}
-    /** @deprecated Use create(). */
-    public static function createTensor(string $backend, array $values, array $shape,
-        ?string $dtype = 'float32'): Tensor {}
-    /** Retrieve the backend handle retained by a tensor created by this factory. */
-    public static function forTensor(Tensor $tensor): BackendInterface {}
-}
-
-namespace PhpTensors\Cuda;
+namespace PhpTensors;
 
 /**
  * Synchronous CUDA inference for contiguous FP32 tensors. Uses cuDNN when
@@ -70,8 +49,6 @@ final class NN
 }
 
 namespace PhpTensors;
-
-use PhpTensors\Cuda\CudaArray;
 
 /** Optional scoped elementwise fusion; eager operators remain the default. */
 final class Fusion
@@ -115,10 +92,7 @@ final class FusionExecution
     public function isFinished(): bool {}
 }
 
-namespace PhpTensors\Cuda;
-
-use PhpTensors\CompilationException;
-use PhpTensors\RuntimeException;
+namespace PhpTensors;
 
 /** Compile CUDA C++ source into PTX with NVRTC. */
 class Compiler
@@ -191,21 +165,27 @@ final class Kernel {}
 namespace PhpTensors;
 
 /**
- * Host-resident tensor; CPU-only builds currently support float32/float64 arithmetic.
+ * Host-resident tensor; unsupported operations throw RuntimeException.
  */
-final class HostArray implements Tensor
+final class HostArray implements Tensor, Numbers
 {
     /** Copy a rectangular numeric PHP array into CPU storage. */
     public function __construct(array $values, ?string $dtype = 'float32', bool $pinned = false) {}
-    /** CPU-only factory: create from row-major flat values and an explicit shape. */
+    /** Create from row-major flat values and an explicit shape. */
     public static function fromFlatArray(array $values, array $shape, ?string $dtype = 'float32'): self {}
-    /** CPU-only factory: create a zero-filled host tensor. */
+    /** Create a zero-filled host tensor. */
     public static function zeros(array $shape, ?string $dtype = 'float32'): self {}
-    /** CPU-only factory: create a one-filled host tensor. */
+    /** Create a one-filled host tensor. */
     public static function ones(array $shape, ?string $dtype = 'float32'): self {}
+    /** Create a constant-filled host tensor. */
+    public static function full(array $shape, float|int $value, ?string $dtype = 'float32'): self {}
+    /** Create a zero-filled tensor matching a prototype's shape and dtype. */
+    public static function zerosLike(self $prototype, ?string $dtype = null): self {}
+    /** Create a one-filled tensor matching a prototype's shape and dtype. */
+    public static function onesLike(self $prototype, ?string $dtype = null): self {}
     /** Import row-major packed bytes. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32', bool $pinned = false): self {}
-    /** Whether storage is page-locked; always false in CPU-only builds. */
+    /** Whether storage is page-locked; always false for CPU tensors. */
     public function isPinned(): bool {}
     /** Backend identifier for this tensor. */
     public function getBackend(): string {}
@@ -220,6 +200,8 @@ final class HostArray implements Tensor
     public function at(int ...$indices): mixed {}
     /** Shape in row-major dimension order. @return list<int> */
     public function getShape(): array {}
+    /** Element strides in row-major order. @return list<int> */
+    public function getStrides(): array {}
     /** Materialize nested PHP arrays. */
     public function toArray(): array {}
     /** Number of dimensions. */
@@ -232,16 +214,188 @@ final class HostArray implements Tensor
     public function getElementSize(): int {}
     /** Length of the first dimension. */
     public function count(): int {}
-    /** CPU-only: add another same-shaped tensor or scalar. */
+    /** Add another same-shaped CPU tensor or scalar. */
     public function add(HostArray|int|float|bool $other): self {}
-    /** CPU-only: subtract another same-shaped tensor or scalar. */
+    /** Subtract another same-shaped CPU tensor or scalar. */
     public function subtract(HostArray|int|float|bool $other): self {}
-    /** CPU-only: multiply by another same-shaped tensor or scalar. */
+    /** Multiply by another same-shaped CPU tensor or scalar. */
     public function multiply(HostArray|int|float|bool $other): self {}
-    /** CPU-only: divide by another same-shaped tensor or non-zero scalar. */
+    /** Divide by another same-shaped CPU tensor or non-zero scalar. */
     public function divide(HostArray|int|float|bool $other): self {}
-    /** Copy CPU storage into a GPU tensor. */
-    public function toGpu(): \PhpTensors\Cuda\CudaArray {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function fromFile(string $path, array $shape, ?string $dtype = 'float32'): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function fromNpy(string $path): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function where(self $condition, self $x, self $y): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function __invoke(int|array|null ...$slices): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function slice(int|string|array|null ...$selectors): self {}
+    /** Shape, dtype, and element count for debugging. */
+    public function __debugInfo(): array {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function concat(array $tensors, ?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function maximum(self|int|float|bool $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function minimum(self|int|float|bool $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function clamp(float|int|null $min = null, float|int|null $max = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function matmul(self $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function transpose(?array $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function copy(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function swapaxes(int $axis1, int $axis2): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function moveaxis(int|array $source, int|array $destination): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function diagonal(int $offset = 0, int $axis1 = 0, int $axis2 = 1): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function repeat(int|array $repeats, ?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function tile(int|array $reps): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function flip(int|array|null $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function roll(int|array $shift, int|array|null $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function power(self|float|int $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function sqrt(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function exp(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function expm1(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function exp2(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function log(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function log1p(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function log2(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function log10(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function sin(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function cos(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function tan(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function asin(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function acos(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function atan(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function sinh(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function cosh(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function tanh(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function abs(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function neg(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function floor(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function ceil(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function round(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function gt(float|self $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function lt(float|self $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function eq(float|self $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function ne(float|self $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function ge(float|self $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function le(float|self $other): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function sum(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function mean(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function max(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function min(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function prod(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function cumsum(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function cumprod(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function argMax(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function argMin(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function all(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function any(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function var(?int $axis = null, int $correction = 0): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function std(?int $axis = null, int $correction = 0): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function softmax(int $axis = -1): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function layerNorm(array $axes, float $epsilon = 0.00001, ?self $scale = null, ?self $bias = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function gather(self $indices, int $axis = 0): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function scatterAdd(self $indices, self $updates, int $axis = 0): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function reshape(array $shape): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function squeeze(?int $axis = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function unsqueeze(int $axis): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function broadcastTo(array $shape): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function flatten(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function fullLike(self $prototype, float|int $value, ?string $dtype = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function eye(int $rows, ?int $columns = null, int $k = 0, ?string $dtype = 'float32'): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function identity(int $size, ?string $dtype = 'float32'): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function arange(float|int $start, float|int|null $stop = null, float|int $step = 1, ?string $dtype = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function linspace(float|int $start, float|int $stop, int $num = 50, bool $endpoint = true, ?string $dtype = 'float64'): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function rand(array $shape, float|int $min = 0, float|int $max = 1, ?string $dtype = 'float32', ?int $seed = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public static function randn(array $shape, ?string $dtype = 'float32', ?int $seed = null): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function astype(string $dtype): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function requiresGrad(bool $requiresGrad = true): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function backward(?self $gradient = null, bool $retainGraph = false): void {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function grad(): ?self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function zeroGrad(): void {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function detach(): self {}
+    /** Unsupported on the CPU backend until implemented. */
+    public function item(): int|float|bool {}
+    /** Copy CPU storage into a GPU tensor; requires a CUDA-enabled build. */
+    public function toGpu(): CudaArray {}
+    /** Return this already host-resident tensor. */
+    public function toHost(): self {}
     /** Export contiguous row-major bytes without PHP scalar expansion. */
     public function toBuffer(): string {}
     /** Serialize shape, dtype, and raw CPU storage. */
@@ -250,12 +404,9 @@ final class HostArray implements Tensor
     public function __unserialize(array $data): void {}
 }
 
-/** Legacy name retained for compatibility. */
-class_alias(HostArray::class, 'Cuda\\ContiguousArray');
-class_alias(HostArray::class, 'Cuda\\HostArray');
+namespace PhpTensors;
 
-namespace PhpTensors\Cuda;
-
+/** Contiguous host-memory buffer for explicit copies to CUDA. */
 /** GPU-resident n-dimensional tensor; [] uses native dimension handlers. */
 class CudaArray implements \PhpTensors\Tensor, \PhpTensors\Numbers
 {
@@ -546,8 +697,6 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\Numbers
  */
 namespace PhpTensors;
 
-use PhpTensors\Cuda\CudaArray;
-
 final class Optimizer
 {
     private function __construct() {}
@@ -591,20 +740,3 @@ abstract class Number implements Numbers
     /** Return the decremented value. */
     abstract public function __dec(): mixed;
 }
-
-class_alias(\PhpTensors\Cuda\CudaArray::class, 'Cuda\\CudaArray');
-class_alias(\PhpTensors\Cuda\CudaArray::class, 'PhpTensors\\Cuda\\Tensor');
-class_alias(Fusion::class, 'Cuda\\Fusion');
-class_alias(FusionGraph::class, 'Cuda\\FusionGraph');
-class_alias(FusionExecution::class, 'Cuda\\FusionExecution');
-class_alias(\PhpTensors\Cuda\NN::class, 'Cuda\\NN');
-class_alias(\PhpTensors\Cuda\Compiler::class, 'Cuda\\Compiler');
-class_alias(\PhpTensors\Cuda\CompiledModule::class, 'Cuda\\CompiledModule');
-class_alias(\PhpTensors\Cuda\Kernel::class, 'Cuda\\Kernel');
-class_alias(Optimizer::class, 'Cuda\\Optimizer');
-class_alias(Number::class, 'Cuda\\Number');
-class_alias(Exception::class, 'Cuda\\Exception');
-class_alias(RuntimeException::class, 'Cuda\\RuntimeException');
-class_alias(InvalidArgumentException::class, 'Cuda\\InvalidArgumentException');
-class_alias(OutOfMemoryException::class, 'Cuda\\OutOfMemoryException');
-class_alias(CompilationException::class, 'Cuda\\CompilationException');

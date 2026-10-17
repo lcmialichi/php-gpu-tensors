@@ -8,7 +8,7 @@ if (!$backend['cublas'] || !$backend['cublasLt']) die('skip cuBLASLt required');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
+use PhpTensors\CudaArray as A;
 
 function check(bool $condition, string $message): void
 {
@@ -46,7 +46,7 @@ check(cuda_get_backend_info()['lastMatmul'] === 'cublasLt',
 try {
     cuda_tune_matmul(A::ones([32, 32]), A::ones([32, 32]));
     throw new RuntimeException('small matmul should not be eligible for autotuning');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 echo "explicit cuBLASLt autotuning checks passed\n";
 ?>

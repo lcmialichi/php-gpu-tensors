@@ -90,7 +90,7 @@ transfers were timed.
    coverage gaps in the pull request. Explain why the chosen behavior is safe
    for PHP reference counting and asynchronous CUDA execution.
 
-Reviews look for predictable error handling (`Cuda\Exception` subclasses),
+Reviews look for predictable error handling (`PhpTensors\Exception` subclasses),
 correct ownership of device/host memory, reproducible tests, and compatibility
 with supported PHP builds. Please be patient with iteration: CUDA hardware
 and toolchain combinations are varied, and this is not yet a stable release.

@@ -6,7 +6,7 @@ if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) die('skip CU
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
+use PhpTensors\CudaArray as A;
 
 function check(bool $condition, string $message): void
 {
@@ -17,7 +17,7 @@ check(cuda_get_backend_info()['precision'] === 'fp32-strict', 'strict FP32 must 
 try {
     cuda_set_matmul_precision('unknown');
     throw new RuntimeException('invalid precision accepted');
-} catch (Cuda\InvalidArgumentException $error) {
+} catch (PhpTensors\InvalidArgumentException $error) {
 }
 check(cuda_get_backend_info()['precision'] === 'fp32-strict', 'invalid precision changed the mode');
 
@@ -55,7 +55,7 @@ if ($backend['cublas'] && $device['compute_capability_major'] >= 8) {
     try {
         cuda_set_matmul_precision('tf32');
         throw new RuntimeException('TF32 accepted on an unsupported backend/device');
-    } catch (Cuda\RuntimeException $error) {
+    } catch (PhpTensors\RuntimeException $error) {
     }
 }
 echo "strict default and optional TF32 precision checks passed\n";

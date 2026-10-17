@@ -3373,8 +3373,6 @@ int cuda_array_init(size_t mb)
 
     zend_class_entry *ce = register_cuda_array_class();
     zend_class_implements(ce, 2, php_tensors_tensor_ce, php_tensors_numbers_ce);
-    zend_register_class_alias("Cuda\\CudaArray", ce);
-    zend_register_class_alias("PhpTensors\\Cuda\\Tensor", ce);
     ce->create_object = cuda_array_create_object;
 
     return 1;

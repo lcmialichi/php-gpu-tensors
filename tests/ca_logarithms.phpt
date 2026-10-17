@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
-use Cuda\Fusion;
+use PhpTensors\CudaArray as A;
+use PhpTensors\Fusion;
 
 function check_close(array $actual, array $expected, float $tolerance, string $message): void {
     if (count($actual) !== count($expected)) {

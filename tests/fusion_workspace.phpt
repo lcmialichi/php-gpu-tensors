@@ -9,8 +9,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 function check(bool $ok): void { if (!$ok) throw new RuntimeException('workspace check failed'); }
 $a = new CudaArray([[1, 2], [3, 4]]);
 $unused = new CudaArray([9]);
@@ -41,7 +41,7 @@ $graph->setProfiling(false);
 check($graph->getStats()['profiledExecutions'] === 0);
 check($graph->getStats()['bindTimeNs'] === 0);
 try { $graph->run(new CudaArray([1]), $unused); echo "MISSED\n"; }
-catch (Cuda\InvalidArgumentException $error) { echo "binding failure rejected\n"; }
+catch (PhpTensors\InvalidArgumentException $error) { echo "binding failure rejected\n"; }
 check($graph->run($a, $unused)->toArray() === [92.0, 120.0]);
 $sliced = (new CudaArray([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]))[1];
 $layout = Fusion::compile(fn($x) => $x->transpose()->matmul($x), [$sliced]);
@@ -66,7 +66,7 @@ echo "reduction dtype and arg output checked\n";
 $async = Fusion::compile(fn($x) => $x + 1, [$a]);
 $execution = $async->runAsync($a);
 try { $async->setProfiling(true); echo "MISSED\n"; }
-catch (Cuda\RuntimeException $error) { echo "pending profiling change rejected\n"; }
+catch (PhpTensors\RuntimeException $error) { echo "pending profiling change rejected\n"; }
 $execution->wait();
 $large = CudaArray::ones([64, 128]);
 $twice = CudaArray::full([64, 128], 2);
@@ -82,7 +82,7 @@ check($parallel->getStats()['pending'] === 0);
 echo "concurrent native streams and eager cuBLAS checked\n";
 $invalid = Fusion::compile(fn($x) => [($x + 1)->sum(0), $x->sum()], [$a->transpose()]);
 try { $invalid->runAsync($a->transpose()); echo "MISSED\n"; }
-catch (Cuda\RuntimeException $error) {
+catch (PhpTensors\RuntimeException $error) {
     check(str_contains($error->getMessage(), 'contiguous'));
     echo "partial native submission cleaned up\n";
 }

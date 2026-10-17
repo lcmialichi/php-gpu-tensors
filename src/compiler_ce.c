@@ -1085,8 +1085,8 @@ ZEND_METHOD(Compiler, compile)
             RETURN_NULL();
         }
 
-        zend_string *module_class_name = zend_string_init("PhpTensors\\Cuda\\CompiledModule",
-                                                          strlen("PhpTensors\\Cuda\\CompiledModule"), 0);
+        zend_string *module_class_name = zend_string_init("PhpTensors\\CompiledModule",
+                                                          strlen("PhpTensors\\CompiledModule"), 0);
         zend_class_entry *module_ce = zend_lookup_class(module_class_name);
         zend_string_release(module_class_name);
 
@@ -1168,8 +1168,8 @@ ZEND_METHOD(Compiler, compile)
         RETURN_NULL();
     }
 
-    zend_string *module_class_name = zend_string_init("PhpTensors\\Cuda\\CompiledModule",
-                                                      strlen("PhpTensors\\Cuda\\CompiledModule"), 0);
+    zend_string *module_class_name = zend_string_init("PhpTensors\\CompiledModule",
+                                                      strlen("PhpTensors\\CompiledModule"), 0);
     zend_class_entry *module_ce = zend_lookup_class(module_class_name);
     zend_string_release(module_class_name);
 
@@ -1417,7 +1417,6 @@ int compiler_init()
 
     INIT_CLASS_ENTRY(ce, COMPILER_CLASS_NAME, compiler_methods);
     cuda_compiler_ce = zend_register_internal_class(&ce);
-    zend_register_class_alias("Cuda\\Compiler", cuda_compiler_ce);
     cuda_compiler_ce->create_object = compiler_create_object;
     cuda_compiler_ce->ce_flags |= ZEND_ACC_FINAL;
 

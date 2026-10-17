@@ -37,7 +37,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(optimizer_step_args, 0, 3, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO(0, parameters, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO(0, gradients, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO(0, state, IS_ARRAY, 0)
-ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, learningRate, PhpTensors\\Cuda\\CudaArray, 1, "null")
+ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, learningRate, PhpTensors\\CudaArray, 1, "null")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, weightDecayMask, IS_ARRAY, 1, "null")
 ZEND_END_ARG_INFO()
 
@@ -69,7 +69,7 @@ static zend_result optimizer_array_unary(zval *array, const char *method, zval *
 {
     if (Z_TYPE_P(array) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(array), cuda_array_ce))
     {
-        CUDA_THROW_INVALID("Optimizer state and values must be PhpTensors\\Cuda\\CudaArray instances");
+        CUDA_THROW_INVALID("Optimizer state and values must be PhpTensors\\CudaArray instances");
         return FAILURE;
     }
     return optimizer_invoke(array, method, NULL, 0, result);
@@ -80,7 +80,7 @@ static zend_result optimizer_array_binary(zval *array, const char *method,
 {
     if (Z_TYPE_P(array) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(array), cuda_array_ce))
     {
-        CUDA_THROW_INVALID("Optimizer state and values must be PhpTensors\\Cuda\\CudaArray instances");
+        CUDA_THROW_INVALID("Optimizer state and values must be PhpTensors\\CudaArray instances");
         return FAILURE;
     }
     zval argument;
@@ -121,7 +121,7 @@ static int optimizer_validate_parameters(zval *parameters, const char *name)
         ZVAL_DEREF(value);
         if (Z_TYPE_P(value) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(value), cuda_array_ce))
         {
-            CUDA_THROW_INVALID("Every entry in %s must be a PhpTensors\\Cuda\\CudaArray", name);
+            CUDA_THROW_INVALID("Every entry in %s must be a PhpTensors\\CudaArray", name);
             return 0;
         }
         zval dtype;
@@ -400,7 +400,7 @@ static zend_result optimizer_get_state_list(zval *state, const char *key, zval *
         tensor = zend_hash_index_find(Z_ARRVAL_P(value), index);
         if (!tensor || Z_TYPE_P(tensor) != IS_OBJECT || !instanceof_function(Z_OBJCE_P(tensor), cuda_array_ce))
         {
-            CUDA_THROW_INVALID("Optimizer state '%s' entries must be PhpTensors\\Cuda\\CudaArray tensors", key);
+            CUDA_THROW_INVALID("Optimizer state '%s' entries must be PhpTensors\\CudaArray tensors", key);
             return FAILURE;
         }
         int same_shape = optimizer_same_shape(parameter, tensor);
@@ -850,7 +850,6 @@ int cuda_optimizer_init(void)
     zend_class_entry entry;
     INIT_NS_CLASS_ENTRY(entry, "PhpTensors", "Optimizer", optimizer_methods);
     optimizer_ce = zend_register_internal_class(&entry);
-    zend_register_class_alias("Cuda\\Optimizer", optimizer_ce);
     optimizer_ce->ce_flags |= ZEND_ACC_FINAL;
     zend_declare_property_string(optimizer_ce, "algorithm", sizeof("algorithm") - 1, "", ZEND_ACC_PRIVATE);
     zend_declare_property_double(optimizer_ce, "learningRate", sizeof("learningRate") - 1, 0.0, ZEND_ACC_PRIVATE);

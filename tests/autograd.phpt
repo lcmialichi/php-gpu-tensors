@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 
 function check(bool $ok): void
 {
@@ -44,7 +44,7 @@ $nonScalar = $seeded * $seeded;
 try {
     $nonScalar->backward();
     throw new RuntimeException('non-scalar backward accepted no seed');
-} catch (Cuda\InvalidArgumentException) {
+} catch (PhpTensors\InvalidArgumentException) {
 }
 $seeded->zeroGrad();
 $nonScalar->backward(CudaArray::fromFlatArray([1, 1], [2]), true);
@@ -155,7 +155,7 @@ $mutated[0] = 10;
 try {
     $mutatedLoss->backward();
     throw new RuntimeException('backward accepted modified saved tensor');
-} catch (Cuda\InvalidArgumentException) {
+} catch (PhpTensors\InvalidArgumentException) {
 }
 $mutatedThroughView = CudaArray::fromFlatArray([2.0, 3.0], [2])->requiresGrad();
 $viewMutationLoss = ($mutatedThroughView * $mutatedThroughView)->sum();
@@ -164,7 +164,7 @@ $mutationView[0] = 11;
 try {
     $viewMutationLoss->backward();
     throw new RuntimeException('backward accepted a mutation through a view');
-} catch (Cuda\InvalidArgumentException) {
+} catch (PhpTensors\InvalidArgumentException) {
 }
 echo "saved tensor version checks\n";
 
@@ -178,7 +178,7 @@ check($retained->grad()->toArray() === [12.0]);
 try {
     $retainedLoss->backward();
     throw new RuntimeException('backward accepted consumed graph');
-} catch (Cuda\InvalidArgumentException) {
+} catch (PhpTensors\InvalidArgumentException) {
 }
 echo "retainGraph and graph release\n";
 
@@ -189,7 +189,7 @@ $castInput = CudaArray::fromFlatArray([1.5], [1])->requiresGrad();
 try {
     $castInput->astype('int32');
     throw new RuntimeException('gradient-tracked cast to integer was accepted');
-} catch (Cuda\InvalidArgumentException) {
+} catch (PhpTensors\InvalidArgumentException) {
 }
 echo "rounding derivatives and cast validation\n";
 

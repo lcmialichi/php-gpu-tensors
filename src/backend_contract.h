@@ -3,8 +3,6 @@
 
 #include "php.h"
 
-zend_result php_tensors_backend_attach_registered(zval *tensor, const char *name);
-
 extern zend_class_entry *php_tensors_tensor_ce;
 extern zend_class_entry *php_tensors_backend_ce;
 extern zend_class_entry *php_tensors_numbers_ce;

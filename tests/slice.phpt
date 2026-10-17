@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 function check(bool $ok, string $label): void {
     if (!$ok) throw new RuntimeException($label);
 }
@@ -149,21 +149,21 @@ echo "Fusion scoped, compiled, async and CUDA Graph checked\n";
 foreach (['', '1:2:3:4', '1,,2', 'foo', '1.5:2', '::0', '::-1', '1:2, :, :',
           "1:\0", '9999999999999999999999999999', '3', '-4'] as $expression) {
     try { $a->slice($expression); throw new RuntimeException("accepted $expression"); }
-    catch (Cuda\InvalidArgumentException $error) {}
+    catch (PhpTensors\InvalidArgumentException $error) {}
 }
 foreach ([[1], [1, 2, 3, 4], ['start' => 1, 'stop' => 2], [1.0, 2]] as $range) {
     try { $a->slice($range); throw new RuntimeException('accepted invalid range'); }
-    catch (Cuda\InvalidArgumentException $error) {}
+    catch (PhpTensors\InvalidArgumentException $error) {}
 }
 try { $empty->slice(0); throw new RuntimeException('indexed empty axis'); }
-catch (Cuda\InvalidArgumentException $error) {}
+catch (PhpTensors\InvalidArgumentException $error) {}
 try { $inner[0] = 1; throw new RuntimeException('wrote empty storage'); }
-catch (Cuda\InvalidArgumentException $error) {}
+catch (PhpTensors\InvalidArgumentException $error) {}
 foreach (['min', 'max', 'argmin', 'argmax'] as $method) {
     try { $inner->$method(1); throw new RuntimeException('accepted empty extrema'); }
-    catch (Cuda\InvalidArgumentException $error) {}
+    catch (PhpTensors\InvalidArgumentException $error) {}
     try { Fusion::compile(fn($x) => $x->slice(':, 4:4')->$method(1), [$a]); throw new RuntimeException('captured empty extrema'); }
-    catch (Cuda\InvalidArgumentException $error) {}
+    catch (PhpTensors\InvalidArgumentException $error) {}
 }
 $retained = $a->slice('1:, ::2');
 unset($a);

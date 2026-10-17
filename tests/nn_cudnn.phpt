@@ -7,8 +7,8 @@ if (!cuda_get_backend_info()['cudnn']) die('skip cuDNN optional backend unavaila
 ?>
 --FILE--
 <?php
-use Cuda\NN;
-use Cuda\CudaArray as A;
+use PhpTensors\NN;
+use PhpTensors\CudaArray as A;
 function close(array $actual, array $expected): void {
     if (count($actual) !== count($expected)) throw new Exception('shape mismatch');
     foreach ($expected as $i => $value) {

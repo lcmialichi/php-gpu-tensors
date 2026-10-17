@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-use PhpTensors\Cuda\CudaArray;
+use PhpTensors\CudaArray;
 use PhpTensors\Fusion;
 
 if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) {

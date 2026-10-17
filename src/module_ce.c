@@ -2770,7 +2770,6 @@ int module_init(void)
 
     INIT_CLASS_ENTRY(ce, MODULE_CLASS_NAME, module_methods);
     cuda_module_ce = zend_register_internal_class(&ce);
-    zend_register_class_alias("Cuda\\CompiledModule", cuda_module_ce);
     cuda_module_ce->create_object = module_create_object;
     cuda_module_ce->ce_flags |= ZEND_ACC_FINAL;
 

@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
-use Cuda\Fusion;
+use PhpTensors\CudaArray as A;
+use PhpTensors\Fusion;
 
 function check(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);
@@ -136,7 +136,7 @@ check($transposedScan->getStats()['asyncCompatible'] === false &&
 try {
     $transposedScan->runAsync($transposed);
     throw new RuntimeException('asynchronous strided cumulative scan was accepted');
-} catch (Cuda\RuntimeException $error) {
+} catch (PhpTensors\RuntimeException $error) {
 }
 
 $tracked = A::fromFlatArray([1.0, 2.0, 3.0], [3])->requiresGrad();

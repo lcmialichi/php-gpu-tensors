@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
-use Cuda\Fusion;
+use PhpTensors\CudaArray as A;
+use PhpTensors\Fusion;
 
 foreach (['float16', 'bfloat16'] as $dtype) {
     $input = A::fromFlatArray([1.0, 2.0, 3.0], [3], $dtype);

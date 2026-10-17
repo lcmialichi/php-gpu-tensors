@@ -6,7 +6,7 @@ if (!extension_loaded('phptensors')) die('skip');
 ?>
 --FILE--
 <?php
-$ca = new Cuda\CudaArray([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]);
+$ca = new PhpTensors\CudaArray([[[1, 2], [3, 4]], [[5, 6], [7, 8]]]);
 var_dump($ca->argMax(1)->toArray());
 var_dump($ca->argMax(0)->toArray());
 var_dump($ca->argMax(2)->toArray());

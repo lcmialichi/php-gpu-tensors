@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
 function check(bool $ok): void { if (!$ok) throw new RuntimeException('check failed'); }
 $a = new CudaArray([1, 2, 3]);
 $graph = Fusion::compile(function ($x) {
@@ -27,7 +27,7 @@ check($graph->getStats()['bufferReuses'] > 0);
 echo "graph pointers updated and scratch reused\n";
 $pending = $graph->runAsync($a);
 try { $graph->runAsync($b); echo "MISSED\n"; }
-catch (Cuda\RuntimeException $error) { echo "overlapping graph replay rejected\n"; }
+catch (PhpTensors\RuntimeException $error) { echo "overlapping graph replay rejected\n"; }
 check($pending->wait()->toArray() === $first->toArray());
 for ($i = 0; $i < 25; $i++) {
     check($graph->run($b)->toArray() === [170.0, 180.0, 190.0]);

@@ -9,25 +9,25 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-var_dump(is_subclass_of(Cuda\RuntimeException::class, Cuda\Exception::class));
-var_dump(is_subclass_of(Cuda\OutOfMemoryException::class, Cuda\RuntimeException::class));
-var_dump(is_subclass_of(Cuda\CompilationException::class, Cuda\RuntimeException::class));
+var_dump(is_subclass_of(PhpTensors\RuntimeException::class, PhpTensors\Exception::class));
+var_dump(is_subclass_of(PhpTensors\OutOfMemoryException::class, PhpTensors\RuntimeException::class));
+var_dump(is_subclass_of(PhpTensors\CompilationException::class, PhpTensors\RuntimeException::class));
 
 try {
-    new Cuda\CudaArray([1], 'invalid');
-} catch (Cuda\InvalidArgumentException $error) {
+    new PhpTensors\CudaArray([1], 'invalid');
+} catch (PhpTensors\InvalidArgumentException $error) {
     echo "invalid dtype\n";
 }
 
 try {
-    (new Cuda\CudaArray([1.0]))->astype('int32');
-} catch (Cuda\InvalidArgumentException $error) {
+    (new PhpTensors\CudaArray([1.0]))->astype('int32');
+} catch (PhpTensors\InvalidArgumentException $error) {
     echo "unsafe cast\n";
 }
 
 try {
-    Cuda\CudaArray::ones([300000]);
-} catch (Cuda\OutOfMemoryException $error) {
+    PhpTensors\CudaArray::ones([300000]);
+} catch (PhpTensors\OutOfMemoryException $error) {
     echo "out of memory\n";
 }
 ?>

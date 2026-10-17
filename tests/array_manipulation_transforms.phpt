@@ -7,8 +7,8 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray as A;
-use Cuda\Fusion;
+use PhpTensors\CudaArray as A;
+use PhpTensors\Fusion;
 
 function check(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);
@@ -170,7 +170,7 @@ foreach ([
     try {
         $invalid();
         throw new RuntimeException('invalid transform arguments were accepted');
-    } catch (Cuda\InvalidArgumentException $error) {
+    } catch (PhpTensors\InvalidArgumentException $error) {
     }
 }
 

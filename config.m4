@@ -161,7 +161,16 @@ if test "$PHP_CUDA" != "no"; then
     PHP_SUBST(CUDA_ARCH_FLAG)
 
     dnl CUDA kernels are a static archive: its backend dependencies must follow it.
-    PHPTENSORS_SHARED_LIBADD="-L. -lcudakernels $PHPTENSORS_SHARED_LIBADD"
+    PHPTENSORS_SHARED_LIBADD="-L. -lcudakernels -L$CUDA_LIB_DIR -lcudart -lcurand -lnvrtc -lstdc++ $PHPTENSORS_SHARED_LIBADD"
+    if test -n "$CUDA_CUBLAS_FLAG"; then
+        PHPTENSORS_SHARED_LIBADD="$PHPTENSORS_SHARED_LIBADD -lcublas"
+    fi
+    case "$CUDA_BACKEND_FLAGS" in
+      *-DHAVE_CUBLASLT*) PHPTENSORS_SHARED_LIBADD="$PHPTENSORS_SHARED_LIBADD -lcublasLt";;
+    esac
+    case "$CUDA_BACKEND_FLAGS" in
+      *-DHAVE_CUDNN*) PHPTENSORS_SHARED_LIBADD="$PHPTENSORS_SHARED_LIBADD -L$CUDNN_LIB_DIR -lcudnn";;
+    esac
     
     PHP_SUBST(PHPTENSORS_SHARED_LIBADD)
     SRC_FILES="\
@@ -194,7 +203,8 @@ if test "$PHP_CUDA" != "no"; then
     src/fusion_codegen.c \
     src/fusion_execute.c \
     src/fusion_cache.c \
-    src/module_ce.c"
+    src/module_ce.c \
+    src/host_array_unsupported.c"
 
     PHP_NEW_EXTENSION(phptensors, $SRC_FILES, yes)
     PHP_ADD_MAKEFILE_FRAGMENT(Makefile.frag, $ext_srcdir)
@@ -206,6 +216,6 @@ else
     src/cuda_exceptions.c \
     src/number_ce.c \
     src/cpu_host_array.c \
-    src/cpu_backend.c"
+    src/host_array_unsupported.c"
     PHP_NEW_EXTENSION(phptensors, $SRC_FILES, yes)
 fi

@@ -1,5 +1,5 @@
 --TEST--
-Cuda\Optimizer performs functional SGD and AdamW updates in eager and Fusion
+PhpTensors\Optimizer performs functional SGD and AdamW updates in eager and Fusion
 --SKIPIF--
 <?php
 if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
@@ -7,9 +7,9 @@ if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
 <?php
-use Cuda\CudaArray;
-use Cuda\Fusion;
-use Cuda\Optimizer;
+use PhpTensors\CudaArray;
+use PhpTensors\Fusion;
+use PhpTensors\Optimizer;
 
 function checkClose(float $actual, float $expected): void
 {
@@ -70,7 +70,7 @@ try {
         $sgdState
     );
     throw new RuntimeException('Mismatched gradient shape was accepted');
-} catch (Cuda\InvalidArgumentException) {
+} catch (PhpTensors\InvalidArgumentException) {
 }
 
 $fusionParameter = CudaArray::fromFlatArray([2.0], [1])->requiresGrad();
@@ -94,7 +94,7 @@ echo "Fusion-compatible functional step\n";
 try {
     Optimizer::adamW(0.1, 1.0);
     throw new RuntimeException('Invalid beta1 was accepted');
-} catch (Cuda\InvalidArgumentException) {
+} catch (PhpTensors\InvalidArgumentException) {
 }
 echo "optimizer option validation\n";
 ?>
