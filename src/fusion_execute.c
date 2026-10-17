@@ -244,6 +244,19 @@ static int fusion_native_submit(fusion_plan *plan, fusion_step *step, tensor_t *
         }
         return 1;
     }
+    if (node->kind == FUSION_REPEAT_COUNTS)
+        return cuda_tensor_repeat_counts_into(
+            a, result, node->repeat_prefix_counts, node->repeat_count,
+            axis, (cudaStream_t)stream);
+    if (node->kind == FUSION_REPEAT_COUNTS_BACKWARD)
+        return cuda_tensor_repeat_counts_backward_into(
+            a, result, node->repeat_prefix_counts, node->repeat_count, axis);
+    if (node->kind == FUSION_SCAN)
+        return cuda_tensor_cumulative_into(
+            a, result, axis, node->op, (cudaStream_t)stream);
+    if (node->kind == FUSION_SCAN_BACKWARD)
+        return cuda_tensor_cumulative_product_gradient_into(
+            a, b, result, axis);
     if (axis == -1 && a->total_size > INT_MAX)
     {
         CUDA_THROW_INVALID("Global fusion reduction exceeds INT_MAX elements");

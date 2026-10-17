@@ -1,10 +1,10 @@
 --TEST--
 CUDA exception hierarchy and runtime error types
 --INI--
-cuda.memory_size=1M
+phptensors.cuda.memory_pool_size=1M
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--

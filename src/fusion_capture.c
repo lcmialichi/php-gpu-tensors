@@ -118,6 +118,7 @@ void fusion_release_node(tensor_t *tensor)
     cuda_tensor_destroy(node->a);
     cuda_tensor_destroy(node->b);
     cuda_tensor_destroy(node->c);
+    if (node->repeat_prefix_counts) efree(node->repeat_prefix_counts);
     efree(node);
 }
 
@@ -213,12 +214,6 @@ tensor_t *fusion_cast(tensor_t *a, dtype_t dtype)
 
 tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y)
 {
-    if (x->dtype == DTYPE_FLOAT16 || x->dtype == DTYPE_BFLOAT16 ||
-        y->dtype == DTYPE_FLOAT16 || y->dtype == DTYPE_BFLOAT16)
-    {
-        CUDA_THROW_INVALID("Fusion where outputs do not yet support float16 or bfloat16");
-        return NULL;
-    }
     if (x->dtype != y->dtype)
     {
         CUDA_THROW_INVALID("where requires x and y to have the same dtype");
@@ -264,8 +259,11 @@ tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg)
 {
     if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16)
     {
-        CUDA_THROW_INVALID("Fusion reductions do not yet support float16 or bfloat16");
-        return NULL;
+        tensor_t *promoted = fusion_cast(a, DTYPE_FLOAT32);
+        tensor_t *result = promoted
+            ? fusion_reduce(promoted, axis, op, arg) : NULL;
+        if (promoted) cuda_tensor_destroy(promoted);
+        return result;
     }
     int shape[MAX_DIMS];
     size_t total;
@@ -297,6 +295,72 @@ tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg)
         tensor->fusion->parameter = axis;
         autograd_record_reduce(tensor, a, op, axis);
     }
+    return tensor;
+}
+
+tensor_t *fusion_scan(tensor_t *a, int axis, operation_type_t op)
+{
+    if (!a || (op != OP_CUMSUM && op != OP_CUMPROD) ||
+        axis < -1 || axis >= a->ndims)
+    {
+        CUDA_THROW_INVALID("Invalid Fusion cumulative scan operation or axis");
+        return NULL;
+    }
+    if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16)
+    {
+        tensor_t *promoted = fusion_cast(a, DTYPE_FLOAT32);
+        tensor_t *result = promoted
+            ? fusion_scan(promoted, axis, op) : NULL;
+        if (promoted) cuda_tensor_destroy(promoted);
+        return result;
+    }
+    dtype_t dtype = cuda_cumulative_result_dtype(a->dtype);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Cumulative scans do not support dtype %s",
+                           dtype_to_string(a->dtype));
+        return NULL;
+    }
+
+    int shape[MAX_DIMS];
+    int ndims;
+    if (axis == -1)
+    {
+        if (a->total_size > INT_MAX)
+        {
+            CUDA_THROW_INVALID("Flattened cumulative scan exceeds the supported dimension size");
+            return NULL;
+        }
+        shape[0] = (int)a->total_size;
+        ndims = 1;
+    }
+    else
+    {
+        memcpy(shape, a->shape, a->ndims * sizeof(int));
+        ndims = a->ndims;
+    }
+    tensor_t *tensor = fusion_record(FUSION_SCAN, a, NULL, op, shape, ndims, dtype);
+    if (tensor)
+    {
+        tensor->fusion->parameter = axis;
+        autograd_record_scan(tensor, a, op, axis);
+    }
+    return tensor;
+}
+
+tensor_t *fusion_scan_backward(tensor_t *input, tensor_t *upstream, int axis)
+{
+    if (!input || !upstream || axis < -1 || axis >= input->ndims ||
+        input->dtype != upstream->dtype ||
+        (input->dtype != DTYPE_FLOAT32 && input->dtype != DTYPE_FLOAT64))
+    {
+        CUDA_THROW_INVALID("Fusion cumulative product gradient requires matching float32/float64 inputs and a valid axis");
+        return NULL;
+    }
+    tensor_t *tensor = fusion_record(FUSION_SCAN_BACKWARD, input, upstream,
+                                     OP_CUMPROD, input->shape, input->ndims,
+                                     upstream->dtype);
+    if (tensor) tensor->fusion->parameter = axis;
     return tensor;
 }
 
@@ -341,6 +405,19 @@ tensor_t *fusion_indexed_scatter_add(tensor_t *input, tensor_t *indices,
 {
     if (!cuda_tensor_validate_indexed_shapes(input, indices, updates, axis, "scatterAdd"))
         return NULL;
+    if (input->dtype == DTYPE_FLOAT16 || input->dtype == DTYPE_BFLOAT16)
+    {
+        tensor_t *promoted_input = fusion_cast(input, DTYPE_FLOAT32);
+        tensor_t *promoted_updates = promoted_input
+            ? fusion_cast(updates, DTYPE_FLOAT32) : NULL;
+        tensor_t *result = promoted_updates
+            ? fusion_indexed_scatter_add(
+                  promoted_input, indices, promoted_updates, axis)
+            : NULL;
+        if (promoted_input) cuda_tensor_destroy(promoted_input);
+        if (promoted_updates) cuda_tensor_destroy(promoted_updates);
+        return result;
+    }
     if (input->dtype != DTYPE_FLOAT32 && input->dtype != DTYPE_FLOAT64)
     {
         CUDA_THROW_INVALID("scatterAdd currently supports float32 and float64 tensors");
@@ -484,6 +561,62 @@ tensor_t *fusion_transform_backward(tensor_t *upstream,
                                     spec->op, spec->input_shape,
                                     spec->input_ndims, upstream->dtype);
     if (tensor) tensor->fusion->transform = *spec;
+    return tensor;
+}
+
+tensor_t *fusion_repeat_counts(tensor_t *a, const int *prefix_counts,
+                               size_t count, int axis,
+                               const int *output_shape, int output_ndims)
+{
+    if (!a || (count && !prefix_counts) || !output_shape ||
+        count > (size_t)INT_MAX || count > SIZE_MAX / sizeof(int) ||
+        output_ndims < 1 ||
+        output_ndims > MAX_DIMS || axis < -1 || axis >= a->ndims)
+    {
+        CUDA_THROW_INVALID("Invalid Fusion repeat-count metadata");
+        return NULL;
+    }
+    dtype_t dtype = a->dtype;
+    tensor_t *tensor = fusion_record(FUSION_REPEAT_COUNTS, a, NULL, OP_REPEAT,
+                                     (int *)output_shape, output_ndims, dtype);
+    if (!tensor) return NULL;
+    fusion_node *node = tensor->fusion;
+    node->parameter = axis;
+    node->repeat_count = count;
+    if (count)
+    {
+        node->repeat_prefix_counts = emalloc(count * sizeof(int));
+        memcpy(node->repeat_prefix_counts, prefix_counts, count * sizeof(int));
+    }
+    autograd_record_repeat_counts(tensor, a, prefix_counts, count, axis);
+    return tensor;
+}
+
+tensor_t *fusion_repeat_counts_backward(tensor_t *upstream,
+                                        const int *prefix_counts, size_t count,
+                                        int axis, const int *input_shape,
+                                        int input_ndims)
+{
+    if (!upstream || (count && !prefix_counts) || !input_shape ||
+        input_ndims < 1 || input_ndims > MAX_DIMS ||
+        axis < -1 || axis >= input_ndims ||
+        count > (size_t)INT_MAX || count > SIZE_MAX / sizeof(int))
+    {
+        CUDA_THROW_INVALID("Invalid Fusion repeat-count gradient metadata");
+        return NULL;
+    }
+    tensor_t *tensor = fusion_record(FUSION_REPEAT_COUNTS_BACKWARD, upstream,
+                                     NULL, OP_REPEAT, (int *)input_shape,
+                                     input_ndims, upstream->dtype);
+    if (!tensor) return NULL;
+    fusion_node *node = tensor->fusion;
+    node->parameter = axis;
+    node->repeat_count = count;
+    if (count)
+    {
+        node->repeat_prefix_counts = emalloc(count * sizeof(int));
+        memcpy(node->repeat_prefix_counts, prefix_counts, count * sizeof(int));
+    }
     return tensor;
 }
 

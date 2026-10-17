@@ -24,10 +24,12 @@ typedef enum
 typedef enum
 {
     FUSION_INPUT, FUSION_BINARY, FUSION_SCALAR, FUSION_UNARY,
-    FUSION_REDUCE, FUSION_ARG_REDUCE, FUSION_MATMUL, FUSION_VIEW,
+    FUSION_REDUCE, FUSION_ARG_REDUCE, FUSION_SCAN, FUSION_MATMUL, FUSION_VIEW,
     FUSION_CAST, FUSION_WHERE, FUSION_SLICE_SCATTER,
-    FUSION_GATHER, FUSION_SCATTER_ADD, FUSION_CONCAT, FUSION_TRANSFORM,
-    FUSION_TRANSFORM_BACKWARD
+    FUSION_GATHER, FUSION_SCATTER_ADD, FUSION_CONCAT, FUSION_REPEAT_COUNTS,
+    FUSION_TRANSFORM,
+    FUSION_TRANSFORM_BACKWARD, FUSION_REPEAT_COUNTS_BACKWARD,
+    FUSION_SCAN_BACKWARD
 } fusion_kind;
 
 typedef struct fusion_node
@@ -44,6 +46,8 @@ typedef struct fusion_node
     size_t slice_strides[MAX_DIMS];
     int slice_starts[MAX_DIMS];
     int slice_steps[MAX_DIMS];
+    int *repeat_prefix_counts;
+    size_t repeat_count;
     tensor_transform_spec_t transform;
 } fusion_node;
 

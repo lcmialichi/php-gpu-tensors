@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-use Cuda\CudaArray;
+use PhpTensors\Cuda\CudaArray;
 
 /**
  * -------------------------------------------------------------------------

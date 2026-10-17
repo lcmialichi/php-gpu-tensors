@@ -90,6 +90,8 @@ extern "C" cudaError_t launch_where_kernel(const tensor_t *condition, const tens
                      (type *)output->data, params); break
     CUDA_WHERE_CASE(DTYPE_FLOAT32, float);
     CUDA_WHERE_CASE(DTYPE_FLOAT64, double);
+    CUDA_WHERE_CASE(DTYPE_FLOAT16, __half);
+    CUDA_WHERE_CASE(DTYPE_BFLOAT16, __nv_bfloat16);
     CUDA_WHERE_CASE(DTYPE_INT8, int8_t);
     CUDA_WHERE_CASE(DTYPE_INT16, int16_t);
     CUDA_WHERE_CASE(DTYPE_INT32, int32_t);

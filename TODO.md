@@ -24,6 +24,10 @@ consistent public API across the PHP extension.
   tolerances.
 - [x] Add eager and Fusion elementwise arithmetic, unary math and comparison
   support for FP16/BF16 with FP32 computation and per-operation output rounding.
+- [x] Add eager and Fusion `where()` support for low-precision conditions and
+  values, including FP32 gradient accumulation.
+- [x] Add eager and Fusion FP16/BF16 reductions using FP32 accumulation and
+  outputs, with FP32 gradient propagation.
 
 ## 3. Complete autograd and Fusion coverage
 
@@ -33,25 +37,25 @@ consistent public API across the PHP extension.
   backward rules.
 - [x] Audit tensor operations against Fusion capture, code generation and
   execution support.
-- [ ] Implement missing autograd and Fusion support for useful operations,
-  preserving explicit errors where semantics are undefined.
+- [x] Add FP16/BF16 cumulative scans with FP32 accumulation/output and
+  FP32 gradient propagation.
 - [x] Add autograd for FP16/BF16 matmul with documented gradient dtype and
   broadcasted-batch behavior.
-- [ ] Test eager/Fusion result parity and gradients across supported dtypes,
-  shapes and layouts.
+- [x] Test eager/Fusion parity and gradients for audited dtype, shape and
+  layout combinations; continue extending coverage with new support.
 
 ## 4. Reduce eager dispatch and temporary tensors
 
-- [ ] Extend Fusion capture to common elementwise expressions that currently
-  require separate native calls.
+- [x] Capture common elementwise expressions such as `clamp()` in one Fusion
+  kernel instead of separate eager calls.
 - [x] Fuse floating-output power operations with eager-compatible integer-
   exponent behavior; retain a native boundary for integer-output scalar power.
 - [x] Capture implicit broadcasting and explicit `broadcastTo()` views,
   including transposed sources and backward reduction through broadcast axes.
-- [ ] Review composite operations for avoidable intermediates while preserving
-  eager evaluation semantics.
-- [ ] Keep eager and fused results consistent across supported dtypes, shapes
-  and layouts.
+- [ ] Evaluate single-kernel reduction-based composites such as `softmax()` and
+  `layerNorm()` to reduce intermediates while preserving eager semantics.
+- [x] Keep eager and fused results consistent across supported dtypes, shapes
+  and layouts with targeted parity and gradient tests.
 
 ## 5. Improve data movement and execution
 
@@ -72,8 +76,13 @@ consistent public API across the PHP extension.
 - [x] Reduce synchronization in Fusion `gather()` and `scatterAdd()` validation
   by recording invalid indices in their execution kernels and reporting them at
   the single final synchronization; eager calls retain immediate validation.
-- [ ] Add Fusion support for useful indexed expressions where semantics allow.
-- [ ] Expand gradients through non-contiguous views and indexed expressions.
+- [x] Add Fusion support for indexed expressions including chained `gather()`,
+  `scatterAdd()` and slice/view mappings where semantics allow.
+- [x] Expand gradients through non-contiguous views and indexed expressions,
+  including gather through transposed inputs in eager and Fusion execution.
+- [x] Support FP16/BF16 `gather()` in eager and Fusion, with FP32 gradients.
+- [x] Support FP16/BF16 `scatterAdd()` by promoting accumulation and output to
+  FP32 in eager and Fusion, with FP32 gradient propagation.
 
 ## 7. Keep the public API consistent
 
@@ -94,16 +103,26 @@ consistent public API across the PHP extension.
   device-side transformations and autograd gradient mappings.
 - [x] Capture `diagonal()`, `repeat()`, `tile()`, `flip()` and `roll()` as
   index mappings in generated Fusion kernels, including chained expressions.
-- [ ] Support per-element repeat counts in `repeat()`.
+- [x] Support per-element repeat counts in `repeat()` with eager execution and
+  a synchronous native Fusion boundary.
+- [x] Add float32/float64 autograd support for per-element `repeat()` counts
+  in eager execution and synchronous Fusion.
 - [x] Add eager, Fusion and autograd support for `expm1()`, `exp2()`, `log1p()`,
   `log2()`, `log10()`, `asin()`, `acos()`, `atan()`, `sinh()`, `cosh()` and
   `tanh()`.
+- [x] Add CUB-based `cumsum()` and `cumprod()` with axis/flattened semantics,
+  dtype promotion, strided-input support and synchronous Fusion boundaries.
+- [x] Add autograd support for `cumsum()` in eager and Fusion execution.
+- [x] Add zero-safe autograd support for `cumprod()` in eager and synchronous
+  Fusion execution.
+- [x] Support asynchronous replay and CUDA Graph capture for cumulative scans
+  over contiguous flattened or last-axis inputs; retain synchronous execution
+  for layouts that require temporary packing.
 - [ ] Document method limits, serialization restrictions, asynchronous
   lifetime rules and typed error behavior.
 - [ ] Retain CPU/API and PHP NTS/ZTS compatibility checks.
 
 ## Next implementation
 
-Continue auditing common CuPy mathematical and cumulative methods, starting
-with cumulative sum/product support; preserve eager/Fusion parity and keep
-README, PHP stubs, runtime arginfo and tests aligned.
+Keep README, PHP stubs, runtime arginfo and tests aligned as capabilities are
+added.

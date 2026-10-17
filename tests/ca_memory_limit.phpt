@@ -4,7 +4,7 @@ CudaArray reports GPU memory budget exhaustion
 cuda.memory_size=1M
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
@@ -16,5 +16,6 @@ try {
     echo "allocation rejected\n";
 }
 ?>
---EXPECT--
+--EXPECTF--
+Deprecated: PHP Startup: cuda.memory_size is deprecated; use phptensors.cuda.memory_pool_size instead. in Unknown on line 0
 allocation rejected

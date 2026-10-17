@@ -1,7 +1,7 @@
 #ifndef CONCAT_KERNELS_H
 #define CONCAT_KERNELS_H
 
-#include "../tensor.h"
+#include "../../tensor.h"
 
 #ifdef __cplusplus
 extern "C" {

@@ -1,6 +1,6 @@
 #include "matmul_kernels.h"
 #include "launch_config.cuh"
-#include "../tensor.h"
+#include "../../tensor.h"
 #include <cuda_runtime.h>
 #include <string.h>
 #include <stdint.h>

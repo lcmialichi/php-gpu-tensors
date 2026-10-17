@@ -2,7 +2,7 @@
 Fusion validates capture, replay contracts and restores eager execution after failures
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
@@ -39,16 +39,16 @@ fails(fn() => $fiber->start());
 var_dump(($a + 1)->toArray(), Fusion::run(fn() => $a * 2)->toArray());
 ?>
 --EXPECT--
-Cuda\RuntimeException
-Cuda\RuntimeException
-Cuda\RuntimeException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
+PhpTensors\RuntimeException
+PhpTensors\RuntimeException
+PhpTensors\RuntimeException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
 LogicException
-Cuda\RuntimeException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
+PhpTensors\RuntimeException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
 FiberError
 array(2) {
   [0]=>

@@ -3,7 +3,7 @@
 
 #include <stddef.h>
 #include <cuda_runtime_api.h>
-#include "../data_types.h"
+#include "../../data_types.h"
 
 enum {
     CUDA_MATMUL_PRECISION_FP32_STRICT = 0,

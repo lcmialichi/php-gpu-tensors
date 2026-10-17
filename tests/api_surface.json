@@ -1,12 +1,182 @@
 {
     "classes": {
-        "Cuda\\CompilationException": {
-            "parent": "Cuda\\RuntimeException",
+        "PhpTensors\\BackendManager": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "available": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "create": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "backend",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "values",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "PhpTensors\\Tensor"
+                },
+                "createTensor": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "backend",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "values",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "PhpTensors\\Tensor"
+                },
+                "forTensor": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "tensor",
+                            "type": "PhpTensors\\Tensor",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "PhpTensors\\BackendInterface"
+                },
+                "get": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "name",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "PhpTensors\\BackendInterface"
+                },
+                "register": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "backend",
+                            "type": "mixed",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "void"
+                },
+                "unregister": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "name",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "bool"
+                }
+            }
+        },
+        "PhpTensors\\CompilationException": {
+            "parent": "PhpTensors\\RuntimeException",
             "abstract": false,
             "final": false,
             "methods": []
         },
-        "Cuda\\CompiledModule": {
+        "PhpTensors\\Cuda\\CompiledModule": {
             "parent": null,
             "abstract": false,
             "final": false,
@@ -51,7 +221,7 @@
                         },
                         {
                             "name": "elements",
-                            "type": "Cuda\\CudaArray|int",
+                            "type": "PhpTensors\\Cuda\\CudaArray|int",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -320,7 +490,7 @@
                 }
             }
         },
-        "Cuda\\Compiler": {
+        "PhpTensors\\Cuda\\Compiler": {
             "parent": null,
             "abstract": false,
             "final": false,
@@ -409,7 +579,7 @@
                             "default": false
                         }
                     ],
-                    "returnType": "Cuda\\CompiledModule"
+                    "returnType": "PhpTensors\\Cuda\\CompiledModule"
                 },
                 "getCacheStats": {
                     "static": false,
@@ -479,221 +649,7 @@
                 }
             }
         },
-        "Cuda\\ContiguousArray": {
-            "parent": null,
-            "abstract": false,
-            "final": false,
-            "methods": {
-                "__construct": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "values",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "dtype",
-                            "type": "?string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": "float32"
-                        },
-                        {
-                            "name": "pinned",
-                            "type": "bool",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": false
-                        }
-                    ],
-                    "returnType": null
-                },
-                "__serialize": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "array"
-                },
-                "__unserialize": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "data",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "void"
-                },
-                "at": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "indices",
-                            "type": "int",
-                            "byReference": false,
-                            "variadic": true,
-                            "optional": true,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "mixed"
-                },
-                "count": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "int"
-                },
-                "fromBuffer": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "bytes",
-                            "type": "string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "shape",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "dtype",
-                            "type": "?string",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": "float32"
-                        },
-                        {
-                            "name": "pinned",
-                            "type": "bool",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": false
-                        }
-                    ],
-                    "returnType": "self"
-                },
-                "get": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "indices",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "mixed"
-                },
-                "getDtype": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "string"
-                },
-                "getElementSize": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "int"
-                },
-                "getNdims": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "int"
-                },
-                "getShape": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "array"
-                },
-                "getSize": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "int"
-                },
-                "isPinned": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "bool"
-                },
-                "toArray": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "array"
-                },
-                "toBuffer": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "string"
-                },
-                "toGpu": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "Cuda\\CudaArray"
-                }
-            }
-        },
-        "Cuda\\CudaArray": {
+        "PhpTensors\\Cuda\\CudaArray": {
             "parent": null,
             "abstract": false,
             "final": false,
@@ -793,7 +749,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -953,7 +909,7 @@
                     "parameters": [
                         {
                             "name": "gradient",
-                            "type": "?Cuda\\CudaArray",
+                            "type": "?PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -1069,6 +1025,40 @@
                     "parameters": [],
                     "returnType": "self"
                 },
+                "cumprod": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "cumsum": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "axis",
+                            "type": "?int",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
                 "detach": {
                     "static": false,
                     "abstract": false,
@@ -1118,7 +1108,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1142,7 +1132,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\Cuda\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1473,7 +1463,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\Cuda\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1482,6 +1472,13 @@
                         }
                     ],
                     "returnType": "self"
+                },
+                "getBackend": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
                 },
                 "getNdims": {
                     "static": false,
@@ -1516,7 +1513,7 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "?Cuda\\CudaArray"
+                    "returnType": "?PhpTensors\\Cuda\\CudaArray"
                 },
                 "gt": {
                     "static": false,
@@ -1525,7 +1522,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\Cuda\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1593,7 +1590,7 @@
                         },
                         {
                             "name": "scale",
-                            "type": "?Cuda\\CudaArray",
+                            "type": "?PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -1602,7 +1599,7 @@
                         },
                         {
                             "name": "bias",
-                            "type": "?Cuda\\CudaArray",
+                            "type": "?PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -1619,7 +1616,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\Cuda\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1717,7 +1714,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\Cuda\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1768,7 +1765,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1819,7 +1816,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1862,7 +1859,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1879,7 +1876,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|float",
+                            "type": "PhpTensors\\Cuda\\CudaArray|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1955,7 +1952,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|int|float",
+                            "type": "PhpTensors\\Cuda\\CudaArray|int|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2077,7 +2074,7 @@
                     "parameters": [
                         {
                             "name": "repeats",
-                            "type": "int",
+                            "type": "array|int",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2303,7 +2300,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "Cuda\\CudaArray|int|float|bool",
+                            "type": "PhpTensors\\Cuda\\CudaArray|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2406,7 +2403,7 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "Cuda\\ContiguousArray"
+                    "returnType": "PhpTensors\\HostArray"
                 },
                 "transpose": {
                     "static": false,
@@ -2564,201 +2561,13 @@
                 }
             }
         },
-        "Cuda\\Exception": {
-            "parent": "Exception",
+        "PhpTensors\\Cuda\\Kernel": {
+            "parent": null,
             "abstract": false,
-            "final": false,
+            "final": true,
             "methods": []
         },
-        "Cuda\\Fusion": {
-            "parent": null,
-            "abstract": false,
-            "final": true,
-            "methods": {
-                "clearCache": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "void"
-                },
-                "compile": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "callback",
-                            "type": "callable",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "inputs",
-                            "type": "array",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "cudaGraph",
-                            "type": "bool",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": false
-                        }
-                    ],
-                    "returnType": "Cuda\\FusionGraph"
-                },
-                "getCacheStats": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "array"
-                },
-                "run": {
-                    "static": true,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "callback",
-                            "type": "callable",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        },
-                        {
-                            "name": "enabled",
-                            "type": "bool",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": true,
-                            "hasDefault": true,
-                            "default": true
-                        }
-                    ],
-                    "returnType": "mixed"
-                }
-            }
-        },
-        "Cuda\\FusionExecution": {
-            "parent": null,
-            "abstract": false,
-            "final": true,
-            "methods": {
-                "isFinished": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "bool"
-                },
-                "wait": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "mixed"
-                }
-            }
-        },
-        "Cuda\\FusionGraph": {
-            "parent": null,
-            "abstract": false,
-            "final": true,
-            "methods": {
-                "getPlan": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "array"
-                },
-                "getSource": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "string"
-                },
-                "getStats": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "array"
-                },
-                "run": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "inputs",
-                            "type": "Cuda\\CudaArray",
-                            "byReference": false,
-                            "variadic": true,
-                            "optional": true,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "mixed"
-                },
-                "runAsync": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "inputs",
-                            "type": "Cuda\\CudaArray",
-                            "byReference": false,
-                            "variadic": true,
-                            "optional": true,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "Cuda\\FusionExecution"
-                },
-                "setProfiling": {
-                    "static": false,
-                    "abstract": false,
-                    "returnsReference": false,
-                    "parameters": [
-                        {
-                            "name": "enabled",
-                            "type": "bool",
-                            "byReference": false,
-                            "variadic": false,
-                            "optional": false,
-                            "hasDefault": false,
-                            "default": null
-                        }
-                    ],
-                    "returnType": "void"
-                }
-            }
-        },
-        "Cuda\\InvalidArgumentException": {
-            "parent": "Cuda\\Exception",
-            "abstract": false,
-            "final": false,
-            "methods": []
-        },
-        "Cuda\\NN": {
+        "PhpTensors\\Cuda\\NN": {
             "parent": null,
             "abstract": false,
             "final": true,
@@ -2770,7 +2579,7 @@
                     "parameters": [
                         {
                             "name": "input",
-                            "type": "Cuda\\CudaArray",
+                            "type": "PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2779,7 +2588,7 @@
                         },
                         {
                             "name": "weights",
-                            "type": "Cuda\\CudaArray",
+                            "type": "PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2788,7 +2597,7 @@
                         },
                         {
                             "name": "bias",
-                            "type": "?Cuda\\CudaArray",
+                            "type": "?PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -2841,7 +2650,7 @@
                             "default": 1
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "PhpTensors\\Cuda\\CudaArray"
                 },
                 "pool2d": {
                     "static": true,
@@ -2850,7 +2659,7 @@
                     "parameters": [
                         {
                             "name": "input",
-                            "type": "Cuda\\CudaArray",
+                            "type": "PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2900,7 +2709,7 @@
                             "default": "max"
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "PhpTensors\\Cuda\\CudaArray"
                 },
                 "softmax": {
                     "static": true,
@@ -2909,7 +2718,7 @@
                     "parameters": [
                         {
                             "name": "input",
-                            "type": "Cuda\\CudaArray",
+                            "type": "PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2917,11 +2726,588 @@
                             "default": null
                         }
                     ],
-                    "returnType": "Cuda\\CudaArray"
+                    "returnType": "PhpTensors\\Cuda\\CudaArray"
                 }
             }
         },
-        "Cuda\\Number": {
+        "PhpTensors\\Exception": {
+            "parent": "Exception",
+            "abstract": false,
+            "final": false,
+            "methods": []
+        },
+        "PhpTensors\\Fusion": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "clearCache": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "void"
+                },
+                "compile": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "callback",
+                            "type": "callable",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "inputs",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "cudaGraph",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": false
+                        }
+                    ],
+                    "returnType": "PhpTensors\\FusionGraph"
+                },
+                "getCacheStats": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "run": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "callback",
+                            "type": "callable",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "enabled",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": true
+                        }
+                    ],
+                    "returnType": "mixed"
+                }
+            }
+        },
+        "PhpTensors\\FusionExecution": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "isFinished": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "bool"
+                },
+                "wait": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "mixed"
+                }
+            }
+        },
+        "PhpTensors\\FusionGraph": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "getPlan": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "getSource": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "getStats": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "run": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "inputs",
+                            "type": "PhpTensors\\Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": true,
+                            "optional": true,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "mixed"
+                },
+                "runAsync": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "inputs",
+                            "type": "PhpTensors\\Cuda\\CudaArray",
+                            "byReference": false,
+                            "variadic": true,
+                            "optional": true,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "PhpTensors\\FusionExecution"
+                },
+                "setProfiling": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "enabled",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "void"
+                }
+            }
+        },
+        "PhpTensors\\HostArray": {
+            "parent": null,
+            "abstract": false,
+            "final": true,
+            "methods": {
+                "__construct": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "values",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        },
+                        {
+                            "name": "pinned",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": false
+                        }
+                    ],
+                    "returnType": null
+                },
+                "__serialize": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "__unserialize": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "data",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "void"
+                },
+                "add": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "PhpTensors\\HostArray|int|float|bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "at": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "indices",
+                            "type": "int",
+                            "byReference": false,
+                            "variadic": true,
+                            "optional": true,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "mixed"
+                },
+                "count": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "int"
+                },
+                "divide": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "PhpTensors\\HostArray|int|float|bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "dtype": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "fromBuffer": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "bytes",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        },
+                        {
+                            "name": "pinned",
+                            "type": "bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": false
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "fromFlatArray": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "values",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "get": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "indices",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "mixed"
+                },
+                "getBackend": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "getDtype": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "getElementSize": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "int"
+                },
+                "getNdims": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "int"
+                },
+                "getShape": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "getSize": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "int"
+                },
+                "isPinned": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "bool"
+                },
+                "multiply": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "PhpTensors\\HostArray|int|float|bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "ones": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "subtract": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "other",
+                            "type": "PhpTensors\\HostArray|int|float|bool",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        }
+                    ],
+                    "returnType": "self"
+                },
+                "toArray": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "toBuffer": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "toGpu": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "PhpTensors\\Cuda\\CudaArray"
+                },
+                "zeros": {
+                    "static": true,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "self"
+                }
+            }
+        },
+        "PhpTensors\\InvalidArgumentException": {
+            "parent": "PhpTensors\\Exception",
+            "abstract": false,
+            "final": false,
+            "methods": []
+        },
+        "PhpTensors\\Number": {
             "parent": null,
             "abstract": true,
             "final": false,
@@ -3098,7 +3484,7 @@
                 }
             }
         },
-        "Cuda\\Optimizer": {
+        "PhpTensors\\Optimizer": {
             "parent": null,
             "abstract": false,
             "final": true,
@@ -3242,7 +3628,7 @@
                         },
                         {
                             "name": "learningRate",
-                            "type": "?Cuda\\CudaArray",
+                            "type": "?PhpTensors\\Cuda\\CudaArray",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -3280,21 +3666,185 @@
                 }
             }
         },
-        "Cuda\\OutOfMemoryException": {
-            "parent": "Cuda\\RuntimeException",
+        "PhpTensors\\OutOfMemoryException": {
+            "parent": "PhpTensors\\RuntimeException",
             "abstract": false,
             "final": false,
             "methods": []
         },
-        "Cuda\\RuntimeException": {
-            "parent": "Cuda\\Exception",
+        "PhpTensors\\RuntimeException": {
+            "parent": "PhpTensors\\Exception",
+            "abstract": false,
+            "final": false,
+            "methods": []
+        },
+        "PhpTensors\\UnexpectedValueException": {
+            "parent": "PhpTensors\\Exception",
             "abstract": false,
             "final": false,
             "methods": []
         }
     },
+    "interfaces": {
+        "PhpTensors\\BackendInterface": {
+            "methods": {
+                "createTensor": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "values",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "shape",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "dtype",
+                            "type": "?string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": "float32"
+                        }
+                    ],
+                    "returnType": "PhpTensors\\Tensor"
+                },
+                "execute": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "operation",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "inputs",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "arguments",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": []
+                        }
+                    ],
+                    "returnType": "PhpTensors\\Tensor"
+                },
+                "getName": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "isAvailable": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "bool"
+                },
+                "supports": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [
+                        {
+                            "name": "operation",
+                            "type": "string",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": false,
+                            "hasDefault": false,
+                            "default": null
+                        },
+                        {
+                            "name": "context",
+                            "type": "array",
+                            "byReference": false,
+                            "variadic": false,
+                            "optional": true,
+                            "hasDefault": true,
+                            "default": []
+                        }
+                    ],
+                    "returnType": "bool"
+                }
+            }
+        },
+        "PhpTensors\\Numbers": {
+            "methods": []
+        },
+        "PhpTensors\\Tensor": {
+            "methods": {
+                "dtype": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "getBackend": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "string"
+                },
+                "getShape": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                },
+                "getSize": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "int"
+                },
+                "toArray": {
+                    "static": false,
+                    "abstract": true,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "array"
+                }
+            }
+        }
+    },
     "aliases": {
-        "Cuda\\HostArray": "Cuda\\ContiguousArray"
+        "PhpTensors\\Cuda\\Tensor": "PhpTensors\\Cuda\\CudaArray"
     },
     "functions": {
         "cuda_clear_error": {
@@ -3406,7 +3956,7 @@
             "parameters": [
                 {
                     "name": "left",
-                    "type": "Cuda\\CudaArray",
+                    "type": "PhpTensors\\Cuda\\CudaArray",
                     "byReference": false,
                     "variadic": false,
                     "optional": false,
@@ -3415,7 +3965,7 @@
                 },
                 {
                     "name": "right",
-                    "type": "Cuda\\CudaArray",
+                    "type": "PhpTensors\\Cuda\\CudaArray",
                     "byReference": false,
                     "variadic": false,
                     "optional": false,

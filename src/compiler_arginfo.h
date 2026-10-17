@@ -3,7 +3,7 @@
 
 #include "php.h"
 
-#define COMPILER_CLASS_NAME "Cuda\\Compiler"
+#define COMPILER_CLASS_NAME "PhpTensors\\Cuda\\Compiler"
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_compiler_construct, 0, 0, 1)
     ZEND_ARG_TYPE_INFO(0, source, IS_STRING, 0)

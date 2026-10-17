@@ -2,7 +2,7 @@
 Matmul precision defaults to strict FP32 and supports opt-in TF32
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
+if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
 ?>
 --FILE--
 <?php

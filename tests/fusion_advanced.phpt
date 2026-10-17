@@ -2,7 +2,7 @@
 Fusion unaries, where, casts, layout transforms, CSE and grouped outputs
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
@@ -19,6 +19,11 @@ foreach (['neg', 'abs', 'exp', 'sqrt', 'log', 'sin', 'cos', 'tan', 'floor', 'cei
     check($graph->run($a)->toArray() === ($a + 0.25)->$method()->add(1)->toArray());
 }
 echo "unaries fused\n";
+$clamped = Fusion::compile(fn($x) => ($x + 0.5)->clamp(2, 4), [$a]);
+check($clamped->getStats()['fusedKernels'] === 1 &&
+    $clamped->getStats()['boundaries'] === 0 &&
+    $clamped->run($a)->toArray() === ($a + 0.5)->clamp(2, 4)->toArray());
+echo "clamp fused\n";
 $mask = new CudaArray([[1], [0]], 'bool');
 $graph = Fusion::compile(fn($mask, $a, $b) => CudaArray::where($mask, $a + 1, ($a * $b)->neg()), [$mask, $a, $b]);
 check($graph->getStats()['fusedKernels'] === 1);
@@ -48,6 +53,7 @@ echo "integer cast\n";
 ?>
 --EXPECT--
 unaries fused
+clamp fused
 where fused
 layouts and casts fused
 grouped outputs

@@ -2,7 +2,7 @@
 CudaArray softmax is stable across axes, layouts, dtypes, autograd and Fusion
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
@@ -42,6 +42,13 @@ printf("%.6f %.6f %.6f\n", $gradient[0], $gradient[1], $gradient[2]);
 
 $fused = Fusion::run(fn() => $logits->softmax());
 var_dump($fused->toArray() === $probabilities->toArray());
+$compiled = Fusion::compile(fn($x) => $x->softmax(), [$logits]);
+var_dump($compiled->run($logits)->toArray() === $probabilities->toArray());
+$asyncGraph = Fusion::compile(fn($x) => $x->softmax(), [$logits], true);
+var_dump(
+    $asyncGraph->getStats()['cudaGraphCompatible'] === true &&
+    $asyncGraph->runAsync($logits)->wait()->toArray() === $probabilities->toArray()
+);
 $emptyRows = CudaArray::zeros([0, 3]);
 echo json_encode($emptyRows->softmax()->getShape()), "\n";
 rejected(fn() => $matrix->softmax(2));
@@ -57,6 +64,8 @@ float64 0.665241
 float64
 -0.141817 -0.140770 0.282587
 bool(true)
+bool(true)
+bool(true)
 [0,3]
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException

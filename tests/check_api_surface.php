@@ -39,7 +39,8 @@ function publicApiSurface(array $stubFunctions): array
 {
     $classes = [];
     foreach (get_declared_classes() as $className) {
-        if (!str_starts_with($className, 'Cuda\\')) {
+        if (!str_starts_with($className, 'Cuda\\') &&
+            !str_starts_with($className, 'PhpTensors\\')) {
             continue;
         }
 
@@ -80,14 +81,43 @@ function publicApiSurface(array $stubFunctions): array
     }
     ksort($functions);
 
+    $interfaces = [];
+    foreach (get_declared_interfaces() as $interfaceName) {
+        if (!str_starts_with($interfaceName, 'PhpTensors\\')) {
+            continue;
+        }
+
+        $interface = new ReflectionClass($interfaceName);
+        $methods = [];
+        foreach ($interface->getMethods() as $method) {
+            $methods[$method->getName()] = [
+                'static' => $method->isStatic(),
+                'abstract' => $method->isAbstract(),
+                'returnsReference' => $method->returnsReference(),
+                'parameters' => apiParameters($method),
+                'returnType' => apiType($method->getReturnType()),
+            ];
+        }
+        ksort($methods);
+        $interfaces[$interfaceName] = ['methods' => $methods];
+    }
+    ksort($interfaces);
+
     $aliases = [];
-    if (class_exists('Cuda\\HostArray', false)) {
-        $aliases['Cuda\\HostArray'] = (new ReflectionClass('Cuda\\HostArray'))->getName();
+    foreach (get_declared_classes() as $className) {
+        if (str_starts_with($className, 'Cuda\\')) {
+            $aliases[$className] = (new ReflectionClass($className))->getName();
+        }
+    }
+    if (class_exists('PhpTensors\\Cuda\\Tensor', false)) {
+        $aliases['PhpTensors\\Cuda\\Tensor'] =
+            (new ReflectionClass('PhpTensors\\Cuda\\Tensor'))->getName();
     }
     ksort($aliases);
 
     return [
         'classes' => $classes,
+        'interfaces' => $interfaces,
         'aliases' => $aliases,
         'functions' => $functions,
     ];
@@ -110,6 +140,22 @@ $normalizeSelfTypes = static function (array $surface): array {
         unset($method);
     }
     unset($class);
+
+    foreach ($surface['interfaces'] as $interfaceName => &$interface) {
+        foreach ($interface['methods'] as &$method) {
+            if ($method['returnType'] === $interfaceName) {
+                $method['returnType'] = 'self';
+            }
+            foreach ($method['parameters'] as &$parameter) {
+                if ($parameter['type'] === $interfaceName) {
+                    $parameter['type'] = 'self';
+                }
+            }
+            unset($parameter);
+        }
+        unset($method);
+    }
+    unset($interface);
 
     return $surface;
 };

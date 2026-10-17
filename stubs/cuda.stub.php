@@ -1,6 +1,56 @@
 <?php
 
-namespace Cuda;
+namespace PhpTensors;
+
+class Exception extends \Exception {}
+class InvalidArgumentException extends Exception {}
+class RuntimeException extends Exception {}
+class UnexpectedValueException extends Exception {}
+class OutOfMemoryException extends RuntimeException {}
+class CompilationException extends RuntimeException {}
+
+interface Numbers {}
+
+interface Tensor
+{
+    public function getBackend(): string;
+    public function getShape(): array;
+    public function getSize(): int;
+    public function dtype(): string;
+    public function toArray(): array;
+}
+
+interface BackendInterface
+{
+    public function getName(): string;
+    public function isAvailable(): bool;
+    public function supports(string $operation, array $context = []): bool;
+    public function createTensor(array $values, array $shape, ?string $dtype = 'float32'): Tensor;
+    public function execute(string $operation, array $inputs, array $arguments = []): Tensor;
+}
+
+final class BackendManager
+{
+    private function __construct() {}
+    /** Register a userland backend for this PHP request. */
+    public static function register(mixed $backend): void {}
+    /** Unregister a backend for new factory lookups; existing tensors retain its handle. */
+    public static function unregister(string $name): bool {}
+    /** Get one registered backend. */
+    public static function get(string $name): BackendInterface {}
+    /** List registered backends that are currently available. @return list<string> */
+    public static function available(): array {}
+    /** Create a tensor using a registered backend. */
+    public static function create(string $backend, array $values, array $shape,
+        ?string $dtype = 'float32'): Tensor {}
+    /** @deprecated Use create(). */
+    public static function createTensor(string $backend, array $values, array $shape,
+        ?string $dtype = 'float32'): Tensor {}
+    /** Retrieve the backend handle retained by a tensor created by this factory. */
+    public static function forTensor(Tensor $tensor): BackendInterface {}
+}
+
+namespace PhpTensors\Cuda;
 
 /**
  * Synchronous CUDA inference for contiguous FP32 tensors. Uses cuDNN when
@@ -19,16 +69,9 @@ final class NN
     public static function softmax(CudaArray $input): CudaArray {}
 }
 
-/** Base error from the CUDA extension. */
-class Exception extends \Exception {}
-/** Device or kernel operation failed. */
-class RuntimeException extends Exception {}
-/** Invalid shape, dtype, axis, or other caller input. */
-class InvalidArgumentException extends Exception {}
-/** Device or host tensor allocation failed. */
-class OutOfMemoryException extends RuntimeException {}
-/** NVRTC compilation failed. */
-class CompilationException extends RuntimeException {}
+namespace PhpTensors;
+
+use PhpTensors\Cuda\CudaArray;
 
 /** Optional scoped elementwise fusion; eager operators remain the default. */
 final class Fusion
@@ -71,6 +114,11 @@ final class FusionExecution
     /** Query the completion event without synchronizing. */
     public function isFinished(): bool {}
 }
+
+namespace PhpTensors\Cuda;
+
+use PhpTensors\CompilationException;
+use PhpTensors\RuntimeException;
 
 /** Compile CUDA C++ source into PTX with NVRTC. */
 class Compiler
@@ -137,15 +185,32 @@ class CompiledModule
     public function cleanup(): int {}
 }
 
-/** Contiguous CPU tensor, also available as Cuda\HostArray; [] uses native handlers. */
-class ContiguousArray
+/** Opaque CUDA kernel metadata registered by a Compiler. */
+final class Kernel {}
+
+namespace PhpTensors;
+
+/**
+ * Host-resident tensor; CPU-only builds currently support float32/float64 arithmetic.
+ */
+final class HostArray implements Tensor
 {
     /** Copy a rectangular numeric PHP array into CPU storage. */
     public function __construct(array $values, ?string $dtype = 'float32', bool $pinned = false) {}
+    /** CPU-only factory: create from row-major flat values and an explicit shape. */
+    public static function fromFlatArray(array $values, array $shape, ?string $dtype = 'float32'): self {}
+    /** CPU-only factory: create a zero-filled host tensor. */
+    public static function zeros(array $shape, ?string $dtype = 'float32'): self {}
+    /** CPU-only factory: create a one-filled host tensor. */
+    public static function ones(array $shape, ?string $dtype = 'float32'): self {}
     /** Import row-major packed bytes. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32', bool $pinned = false): self {}
-    /** Whether storage is page-locked with cudaMallocHost. */
+    /** Whether storage is page-locked; always false in CPU-only builds. */
     public function isPinned(): bool {}
+    /** Backend identifier for this tensor. */
+    public function getBackend(): string {}
+    /** Dtype name. */
+    public function dtype(): string {}
     /**
      * Read one element by multidimensional coordinates.
      * @param list<int> $indices
@@ -167,8 +232,16 @@ class ContiguousArray
     public function getElementSize(): int {}
     /** Length of the first dimension. */
     public function count(): int {}
+    /** CPU-only: add another same-shaped tensor or scalar. */
+    public function add(HostArray|int|float|bool $other): self {}
+    /** CPU-only: subtract another same-shaped tensor or scalar. */
+    public function subtract(HostArray|int|float|bool $other): self {}
+    /** CPU-only: multiply by another same-shaped tensor or scalar. */
+    public function multiply(HostArray|int|float|bool $other): self {}
+    /** CPU-only: divide by another same-shaped tensor or non-zero scalar. */
+    public function divide(HostArray|int|float|bool $other): self {}
     /** Copy CPU storage into a GPU tensor. */
-    public function toGpu(): CudaArray {}
+    public function toGpu(): \PhpTensors\Cuda\CudaArray {}
     /** Export contiguous row-major bytes without PHP scalar expansion. */
     public function toBuffer(): string {}
     /** Serialize shape, dtype, and raw CPU storage. */
@@ -177,11 +250,14 @@ class ContiguousArray
     public function __unserialize(array $data): void {}
 }
 
-/** Public name for ContiguousArray, retained for compatibility. */
-class_alias(ContiguousArray::class, 'Cuda\\HostArray');
+/** Legacy name retained for compatibility. */
+class_alias(HostArray::class, 'Cuda\\ContiguousArray');
+class_alias(HostArray::class, 'Cuda\\HostArray');
+
+namespace PhpTensors\Cuda;
 
 /** GPU-resident n-dimensional tensor; [] uses native dimension handlers. */
-class CudaArray
+class CudaArray implements \PhpTensors\Tensor, \PhpTensors\Numbers
 {
     /** Import row-major little-endian packed bytes matching shape and dtype. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32'): CudaArray {}
@@ -251,10 +327,11 @@ class CudaArray
      */
     public function diagonal(int $offset = 0, int $axis1 = 0, int $axis2 = 1): CudaArray {}
     /**
-     * Repeat each element a fixed number of times; null axis flattens first.
-     * Supported by Fusion kernels.
+     * Repeat each element a fixed or per-element number of times.
+     * Null axis flattens first; per-element counts are synchronous Fusion boundaries.
+     * @param int|list<int> $repeats
      */
-    public function repeat(int $repeats, ?int $axis = null): CudaArray {}
+    public function repeat(int|array $repeats, ?int $axis = null): CudaArray {}
     /**
      * Repeat the tensor by scalar or per-axis repetition counts.
      * Supported by Fusion kernels.
@@ -342,6 +419,10 @@ class CudaArray
     public function min(?int $axis = null): CudaArray {}
     /** Product across an axis; omit axis to reduce all elements. */
     public function prod(?int $axis = null): CudaArray {}
+    /** Cumulative sum; null axis flattens the input. Integer inputs widen to int64. */
+    public function cumsum(?int $axis = null): CudaArray {}
+    /** Cumulative product; null axis flattens the input. Integer inputs widen to int64. */
+    public function cumprod(?int $axis = null): CudaArray {}
     /** Logical AND over nonzero values; returns a bool tensor. */
     public function all(?int $axis = null): CudaArray {}
     /** Logical OR over nonzero values; returns a bool tensor. */
@@ -373,7 +454,7 @@ class CudaArray
     /** Materialize nested PHP arrays on the CPU. */
     public function toArray(): array {}
     /** Copy into contiguous CPU storage without PHP scalar expansion. */
-    public function toHost(): ContiguousArray {}
+    public function toHost(): \PhpTensors\HostArray {}
     /** Download logical row-major bytes directly, without PHP scalar expansion. */
     public function toBuffer(): string {}
     /** Create a view with the same element count. */
@@ -442,6 +523,8 @@ class CudaArray
     public function astype(string $dtype): CudaArray {}
     /** Element dtype name, e.g. float32, float16 or bfloat16. */
     public function dtype(): string {}
+    /** Backend that owns this tensor's storage. */
+    public function getBackend(): string {}
     /** Enable or disable reverse-mode gradient tracking on a leaf tensor. */
     /** FP16/BF16 tracking is currently supported for matmul and shape views only; gradients use float32. */
     public function requiresGrad(bool $requiresGrad = true): CudaArray {}
@@ -461,6 +544,10 @@ class CudaArray
  * Functional SGD and AdamW updates. Optimizer state is explicit so steps can
  * be captured and replayed by Fusion without storing hidden tensor history.
  */
+namespace PhpTensors;
+
+use PhpTensors\Cuda\CudaArray;
+
 final class Optimizer
 {
     private function __construct() {}
@@ -485,7 +572,7 @@ final class Optimizer
 }
 
 /** Abstract base dispatching PHP arithmetic operators to magic methods. */
-abstract class Number
+abstract class Number implements Numbers
 {
     /** Handle addition. */
     abstract public function __add(mixed $left, mixed $right): mixed;
@@ -504,3 +591,20 @@ abstract class Number
     /** Return the decremented value. */
     abstract public function __dec(): mixed;
 }
+
+class_alias(\PhpTensors\Cuda\CudaArray::class, 'Cuda\\CudaArray');
+class_alias(\PhpTensors\Cuda\CudaArray::class, 'PhpTensors\\Cuda\\Tensor');
+class_alias(Fusion::class, 'Cuda\\Fusion');
+class_alias(FusionGraph::class, 'Cuda\\FusionGraph');
+class_alias(FusionExecution::class, 'Cuda\\FusionExecution');
+class_alias(\PhpTensors\Cuda\NN::class, 'Cuda\\NN');
+class_alias(\PhpTensors\Cuda\Compiler::class, 'Cuda\\Compiler');
+class_alias(\PhpTensors\Cuda\CompiledModule::class, 'Cuda\\CompiledModule');
+class_alias(\PhpTensors\Cuda\Kernel::class, 'Cuda\\Kernel');
+class_alias(Optimizer::class, 'Cuda\\Optimizer');
+class_alias(Number::class, 'Cuda\\Number');
+class_alias(Exception::class, 'Cuda\\Exception');
+class_alias(RuntimeException::class, 'Cuda\\RuntimeException');
+class_alias(InvalidArgumentException::class, 'Cuda\\InvalidArgumentException');
+class_alias(OutOfMemoryException::class, 'Cuda\\OutOfMemoryException');
+class_alias(CompilationException::class, 'Cuda\\CompilationException');

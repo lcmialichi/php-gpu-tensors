@@ -278,6 +278,9 @@ extern "C" cudaError_t cuda_launch_gather(const void *input, const int *indices,
     {
         case DTYPE_FLOAT32: return launch_gather_t<float>(input, indices, output, params, total, validation);
         case DTYPE_FLOAT64: return launch_gather_t<double>(input, indices, output, params, total, validation);
+        case DTYPE_FLOAT16:
+        case DTYPE_BFLOAT16:
+            return launch_gather_t<uint16_t>(input, indices, output, params, total, validation);
         case DTYPE_INT8: return launch_gather_t<int8_t>(input, indices, output, params, total, validation);
         case DTYPE_INT16: return launch_gather_t<int16_t>(input, indices, output, params, total, validation);
         case DTYPE_INT32: return launch_gather_t<int32_t>(input, indices, output, params, total, validation);

@@ -45,6 +45,8 @@ typedef enum
     OP_REDUCE_MAX,
     OP_REDUCE_MIN,
     OP_REDUCE_PROD,
+    OP_CUMSUM,
+    OP_CUMPROD,
 
     OP_ARG_MAX,
     OP_ARG_MIN,

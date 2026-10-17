@@ -175,7 +175,8 @@ static int autograd_node_add(tensor_t *result, autograd_kind_t kind,
         (autograd_is_differentiable_type(result->dtype) ||
          ((kind == AUTOGRAD_MATMUL || kind == AUTOGRAD_VIEW ||
            kind == AUTOGRAD_BINARY || kind == AUTOGRAD_SCALAR ||
-           kind == AUTOGRAD_UNARY || kind == AUTOGRAD_INDEX_TRANSFORM) &&
+           kind == AUTOGRAD_UNARY || kind == AUTOGRAD_INDEX_TRANSFORM ||
+           kind == AUTOGRAD_REPEAT_COUNTS || kind == AUTOGRAD_GATHER) &&
           autograd_is_low_precision_type(result->dtype)));
     if (autograd_suppressed || !supported_type)
         return 1;
@@ -215,6 +216,7 @@ void autograd_release_node(tensor_t *tensor)
     if (node->c) cuda_tensor_destroy(node->c);
     for (size_t i = 0; i < node->parent_count; i++)
         if (node->parents[i]) cuda_tensor_destroy(node->parents[i]);
+    if (node->repeat_prefix_counts) efree(node->repeat_prefix_counts);
     efree(node);
 }
 
@@ -299,6 +301,42 @@ int autograd_record_reduce(tensor_t *result, tensor_t *a, operation_type_t op, i
         return 0;
     if (result->grad_fn && result->grad_fn->a == a)
         result->grad_fn->parameter = axis;
+    return 1;
+}
+
+int autograd_record_scan(tensor_t *result, tensor_t *a, operation_type_t op, int axis)
+{
+    autograd_kind_t kind = op == OP_CUMSUM || op == OP_CUMPROD
+        ? AUTOGRAD_SCAN : AUTOGRAD_UNSUPPORTED;
+    if (!autograd_node_add(result, kind, a, NULL, NULL, op))
+        return 0;
+    if (result->grad_fn && result->grad_fn->a == a)
+        result->grad_fn->parameter = axis;
+    return 1;
+}
+
+int autograd_record_repeat_counts(tensor_t *result, tensor_t *a,
+                                  const int *prefix_counts, size_t count,
+                                  int axis)
+{
+    if (!autograd_node_add(result, AUTOGRAD_REPEAT_COUNTS, a, NULL, NULL,
+                           OP_REPEAT))
+        return 0;
+    autograd_node_t *node = result ? result->grad_fn : NULL;
+    if (!node || node->kind != AUTOGRAD_REPEAT_COUNTS || node->a != a)
+        return 1;
+    if ((count && !prefix_counts) || count > SIZE_MAX / sizeof(int))
+    {
+        CUDA_THROW_INVALID("Invalid per-element repeat gradient metadata");
+        return 0;
+    }
+    node->parameter = axis;
+    node->repeat_count = count;
+    if (count)
+    {
+        node->repeat_prefix_counts = emalloc(count * sizeof(int));
+        memcpy(node->repeat_prefix_counts, prefix_counts, count * sizeof(int));
+    }
     return 1;
 }
 
@@ -404,19 +442,14 @@ int autograd_record_cast(tensor_t *result, tensor_t *a)
 {
     if (autograd_suppressed)
         return 1;
-    if (a->requires_grad && autograd_is_low_precision_type(a->dtype) &&
-        autograd_is_differentiable_type(result->dtype))
-    {
-        CUDA_THROW_INVALID("Autograd through low-precision dtype casts is not supported");
-        return 0;
-    }
     if (a->requires_grad && autograd_is_differentiable_type(a->dtype) &&
         !autograd_is_differentiable_type(result->dtype))
     {
         CUDA_THROW_INVALID("Cannot cast a gradient-tracked tensor to a non-floating dtype; detach it first");
         return 0;
     }
-    if (!autograd_is_differentiable_type(a->dtype) ||
+    if ((!autograd_is_differentiable_type(a->dtype) &&
+         !autograd_is_low_precision_type(a->dtype)) ||
         !autograd_is_differentiable_type(result->dtype))
         return 1;
     return autograd_node_add(result, AUTOGRAD_CAST, a, NULL, NULL, OP_ADD);
@@ -424,7 +457,9 @@ int autograd_record_cast(tensor_t *result, tensor_t *a)
 
 int autograd_record_where(tensor_t *result, tensor_t *condition, tensor_t *x, tensor_t *y)
 {
-    if (autograd_suppressed || !result || !autograd_is_differentiable_type(result->dtype) ||
+    if (autograd_suppressed || !result ||
+        (!autograd_is_differentiable_type(result->dtype) &&
+         !autograd_is_low_precision_type(result->dtype)) ||
         (!x->requires_grad && !y->requires_grad))
         return 1;
 
@@ -1335,6 +1370,70 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
             upstream = NULL;
             break;
 
+        case AUTOGRAD_SCAN:
+            {
+                if (node->op == OP_CUMPROD)
+                {
+                    ga = cuda_tensor_cumulative_product_gradient(
+                        node->a, upstream, node->parameter);
+                    upstream = NULL;
+                    break;
+                }
+                tensor_t *scan_gradient = upstream;
+                upstream = NULL;
+                int axis = node->parameter;
+                int flip_axis = axis < 0 ? 0 : axis;
+                if (axis == -1)
+                {
+                    int shape[MAX_DIMS];
+                    memcpy(shape, node->a->shape, node->a->ndims * sizeof(int));
+                    tensor_t *reshaped = cuda_tensor_reshape(
+                        scan_gradient, shape, node->a->ndims);
+                    cuda_tensor_destroy(scan_gradient);
+                    scan_gradient = reshaped;
+                }
+
+                tensor_transform_spec_t reverse_spec = {0};
+                reverse_spec.op = OP_FLIP;
+                reverse_spec.output_ndims = scan_gradient
+                    ? scan_gradient->ndims : 0;
+                if (scan_gradient)
+                {
+                    memcpy(reverse_spec.output_shape, scan_gradient->shape,
+                           scan_gradient->ndims * sizeof(int));
+                    reverse_spec.axes[flip_axis] = 1;
+                }
+
+                tensor_t *reversed = scan_gradient
+                    ? cuda_tensor_index_transform(scan_gradient, &reverse_spec)
+                    : NULL;
+                tensor_t *scanned = reversed
+                    ? cuda_tensor_cumulative(reversed, axis, OP_CUMSUM) : NULL;
+                if (scanned)
+                    ga = cuda_tensor_index_transform(scanned, &reverse_spec);
+
+                if (scanned) cuda_tensor_destroy(scanned);
+                if (reversed) cuda_tensor_destroy(reversed);
+                if (scan_gradient) cuda_tensor_destroy(scan_gradient);
+                if (ga && axis == -1)
+                {
+                    int shape[MAX_DIMS];
+                    memcpy(shape, node->a->shape, node->a->ndims * sizeof(int));
+                    tensor_t *reshaped = cuda_tensor_reshape(
+                        ga, shape, node->a->ndims);
+                    cuda_tensor_destroy(ga);
+                    ga = reshaped;
+                }
+            }
+            break;
+
+        case AUTOGRAD_REPEAT_COUNTS:
+            ga = cuda_tensor_repeat_counts_backward(
+                upstream, node->a, node->repeat_prefix_counts,
+                node->repeat_count, node->parameter);
+            upstream = NULL;
+            break;
+
         case AUTOGRAD_MATMUL:
             if (node->a->ndims < 2 || node->b->ndims < 2)
             {
@@ -1430,11 +1529,12 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
         case AUTOGRAD_GATHER:
             {
                 scalar_value_t zero = {0};
-                zero.dtype = node->a->dtype;
+                zero.dtype = autograd_is_low_precision_type(node->a->dtype)
+                    ? DTYPE_FLOAT32 : node->a->dtype;
                 int shape[MAX_DIMS];
                 memcpy(shape, node->a->shape, node->a->ndims * sizeof(int));
                 tensor_t *empty = cuda_tensor_create_with_value(
-                    shape, node->a->ndims, zero, node->a->dtype);
+                    shape, node->a->ndims, zero, zero.dtype);
                 if (empty)
                 {
                     ga = cuda_tensor_scatter_add(empty, node->b, upstream, node->parameter);
@@ -1450,7 +1550,9 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
             break;
 
         case AUTOGRAD_CAST:
-            ga = gradient_cast(upstream, node->a->dtype);
+            ga = gradient_cast(upstream,
+                autograd_is_low_precision_type(node->a->dtype)
+                    ? DTYPE_FLOAT32 : node->a->dtype);
             break;
 
         case AUTOGRAD_WHERE:

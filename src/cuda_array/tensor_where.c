@@ -20,13 +20,6 @@ static int where_project_strides(const tensor_t *tensor, const int *shape, int n
 
 tensor_t *cuda_tensor_where(tensor_t *condition, tensor_t *on_true, tensor_t *on_false)
 {
-    if (condition && on_true && on_false &&
-        (on_true->dtype == DTYPE_FLOAT16 || on_true->dtype == DTYPE_BFLOAT16 ||
-         on_false->dtype == DTYPE_FLOAT16 || on_false->dtype == DTYPE_BFLOAT16))
-    {
-        CUDA_THROW_INVALID("where outputs do not yet support float16 or bfloat16");
-        return NULL;
-    }
     if (!condition || !on_true || !on_false ||
         (condition->total_size && !condition->data) ||
         (on_true->total_size && !on_true->data) || (on_false->total_size && !on_false->data))

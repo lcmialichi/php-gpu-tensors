@@ -1,5 +1,6 @@
 #include "php.h"
 #include "cuda_array_ce.h"
+#include "backend_contract.h"
 #include "ca_private.h"
 #include "ca_arginfo.h"
 #include "operations.h"
@@ -60,6 +61,11 @@ static tensor_t *cuda_array_make_shape_view(tensor_t *input, const int *shape,
     if (view)
         autograd_record_view(view, input, OP_BROADCAST, NULL);
     return view;
+}
+
+ZEND_METHOD(CudaArray, getBackend)
+{
+    RETURN_STRING("cuda");
 }
 
 static dtype_t parse_dtype_param(zend_string *dtype_str)
@@ -1260,69 +1266,128 @@ ZEND_METHOD(CudaArray, diagonal)
 
 ZEND_METHOD(CudaArray, repeat)
 {
-    zend_long repeats;
+    zval *repeats_value;
     zval *axis_value = NULL;
     ZEND_PARSE_PARAMETERS_START(1, 2)
-        Z_PARAM_LONG(repeats)
+        Z_PARAM_ZVAL(repeats_value)
         Z_PARAM_OPTIONAL
         Z_PARAM_ZVAL(axis_value)
     ZEND_PARSE_PARAMETERS_END();
     cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
     if (!object) RETURN_THROWS();
     tensor_t *input = object->tensor_handle;
+    ZVAL_DEREF(repeats_value);
     if (axis_value) ZVAL_DEREF(axis_value);
-    if (repeats < 0 || repeats > INT_MAX)
+    int axis;
+    if (!input || !cuda_array_parse_axis(input, axis_value, 1, &axis))
+        RETURN_THROWS();
+    if (axis == REDUCE_GLOBAL_FLAG) axis = -1;
+
+    if (Z_TYPE_P(repeats_value) == IS_LONG)
     {
-        CUDA_THROW_INVALID("repeat count must be between 0 and %d", INT_MAX);
+        zend_long repeats = Z_LVAL_P(repeats_value);
+        if (repeats < 0 || repeats > INT_MAX)
+        {
+            CUDA_THROW_INVALID("repeat count must be between 0 and %d", INT_MAX);
+            RETURN_THROWS();
+        }
+
+        tensor_transform_spec_t spec = {0};
+        spec.op = OP_REPEAT;
+        spec.axis = axis;
+        spec.repeats = (int)repeats;
+        if (axis < 0)
+        {
+            if (input->total_size && (size_t)repeats > (size_t)INT_MAX / input->total_size)
+            {
+                CUDA_THROW_INVALID("repeat output exceeds the supported dimension size");
+                RETURN_THROWS();
+            }
+            spec.output_ndims = 1;
+            spec.output_shape[0] = (int)(input->total_size * (size_t)repeats);
+        }
+        else
+        {
+            memcpy(spec.output_shape, input->shape, input->ndims * sizeof(int));
+            if (input->shape[axis] && repeats > INT_MAX / input->shape[axis])
+            {
+                CUDA_THROW_INVALID("repeat output exceeds the supported dimension size");
+                RETURN_THROWS();
+            }
+            spec.output_shape[axis] = input->shape[axis] * (int)repeats;
+            spec.output_ndims = input->ndims;
+        }
+
+        tensor_t *result = cuda_tensor_index_transform(input, &spec);
+        if (!result) RETURN_THROWS();
+        create_result_object(return_value, result);
+        return;
+    }
+
+    if (Z_TYPE_P(repeats_value) != IS_ARRAY)
+    {
+        CUDA_THROW_INVALID("repeat counts must be an integer or an array of integers");
         RETURN_THROWS();
     }
 
-    int axis = -1;
-    if (axis_value && Z_TYPE_P(axis_value) != IS_NULL)
+    HashTable *counts_array = Z_ARRVAL_P(repeats_value);
+    size_t count = zend_hash_num_elements(counts_array);
+    size_t expected_count = axis < 0
+        ? input->total_size : (size_t)input->shape[axis];
+    if (count != expected_count)
     {
-        if (Z_TYPE_P(axis_value) != IS_LONG ||
-            Z_LVAL_P(axis_value) < INT_MIN || Z_LVAL_P(axis_value) > INT_MAX)
-        {
-            CUDA_THROW_INVALID("repeat axis must be an integer or null");
-            RETURN_THROWS();
-        }
-        axis = (int)Z_LVAL_P(axis_value);
-        if (axis < 0) axis += input->ndims;
-        if (axis < 0 || axis >= input->ndims)
-        {
-            CUDA_THROW_INVALID("repeat axis is out of range for tensor rank %d",
-                               input->ndims);
-            RETURN_THROWS();
-        }
+        CUDA_THROW_INVALID("repeat count array must have %zu entries", expected_count);
+        RETURN_THROWS();
+    }
+    if (count > (size_t)INT_MAX || count > SIZE_MAX / sizeof(int))
+    {
+        CUDA_THROW_INVALID("repeat count array exceeds the supported size");
+        RETURN_THROWS();
     }
 
-    tensor_transform_spec_t spec = {0};
-    spec.op = OP_REPEAT;
-    spec.axis = axis;
-    spec.repeats = (int)repeats;
-    if (axis < 0)
+    int *prefix_counts = count ? emalloc(count * sizeof(int)) : NULL;
+    size_t index = 0;
+    int total_repeats = 0;
+    zval *count_value;
+    ZEND_HASH_FOREACH_VAL(counts_array, count_value)
     {
-        if (input->total_size && (size_t)repeats > (size_t)INT_MAX / input->total_size)
+        ZVAL_DEREF(count_value);
+        if (Z_TYPE_P(count_value) != IS_LONG ||
+            Z_LVAL_P(count_value) < 0 || Z_LVAL_P(count_value) > INT_MAX)
         {
+            if (prefix_counts) efree(prefix_counts);
+            CUDA_THROW_INVALID("repeat counts must be non-negative integers no greater than %d",
+                               INT_MAX);
+            RETURN_THROWS();
+        }
+        if (Z_LVAL_P(count_value) > INT_MAX - total_repeats)
+        {
+            if (prefix_counts) efree(prefix_counts);
             CUDA_THROW_INVALID("repeat output exceeds the supported dimension size");
             RETURN_THROWS();
         }
-        spec.output_ndims = 1;
-        spec.output_shape[0] = (int)(input->total_size * (size_t)repeats);
+        total_repeats += (int)Z_LVAL_P(count_value);
+        prefix_counts[index++] = total_repeats;
+    }
+    ZEND_HASH_FOREACH_END();
+
+    int output_shape[MAX_DIMS];
+    int output_ndims;
+    if (axis < 0)
+    {
+        output_shape[0] = total_repeats;
+        output_ndims = 1;
     }
     else
     {
-        memcpy(spec.output_shape, input->shape, input->ndims * sizeof(int));
-        if (input->shape[axis] && repeats > INT_MAX / input->shape[axis])
-        {
-            CUDA_THROW_INVALID("repeat output exceeds the supported dimension size");
-            RETURN_THROWS();
-        }
-        spec.output_shape[axis] = input->shape[axis] * (int)repeats;
-        spec.output_ndims = input->ndims;
+        memcpy(output_shape, input->shape, input->ndims * sizeof(int));
+        output_shape[axis] = total_repeats;
+        output_ndims = input->ndims;
     }
 
-    tensor_t *result = cuda_tensor_index_transform(input, &spec);
+    tensor_t *result = cuda_tensor_repeat_counts(
+        input, prefix_counts, count, axis, output_shape, output_ndims);
+    if (prefix_counts) efree(prefix_counts);
     if (!result) RETURN_THROWS();
     create_result_object(return_value, result);
 }
@@ -1681,6 +1746,42 @@ ZEND_METHOD(CudaArray, min)
 ZEND_METHOD(CudaArray, prod)
 {
     reduction_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, "Product Reduction", OP_REDUCE_PROD, 0);
+}
+
+static void cumulative_operation_handler(INTERNAL_FUNCTION_PARAMETERS,
+                                         operation_type_t operation_type)
+{
+    zval *axis_value = NULL;
+    ZEND_PARSE_PARAMETERS_START(0, 1)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ZVAL(axis_value)
+    ZEND_PARSE_PARAMETERS_END();
+
+    cuda_array_obj *object = php_cuda_array_fetch_deferred_object(Z_OBJ_P(ZEND_THIS));
+    if (!object) RETURN_THROWS();
+    tensor_t *input = object->tensor_handle;
+    int axis;
+    if (!input || !cuda_array_parse_axis(input, axis_value, 1, &axis))
+        RETURN_THROWS();
+    if (axis == REDUCE_GLOBAL_FLAG) axis = -1;
+
+    tensor_t *result = cuda_tensor_cumulative(input, axis, operation_type);
+    if (!result)
+    {
+        if (!EG(exception)) CUDA_THROW_RUNTIME("Cumulative scan failed");
+        RETURN_THROWS();
+    }
+    create_result_object(return_value, result);
+}
+
+ZEND_METHOD(CudaArray, cumsum)
+{
+    cumulative_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, OP_CUMSUM);
+}
+
+ZEND_METHOD(CudaArray, cumprod)
+{
+    cumulative_operation_handler(INTERNAL_FUNCTION_PARAM_PASSTHRU, OP_CUMPROD);
 }
 
 ZEND_METHOD(CudaArray, argMax)
@@ -3271,6 +3372,9 @@ int cuda_array_init(size_t mb)
     cuda_array_handlers.write_dimension = cuda_array_write_dimension;
 
     zend_class_entry *ce = register_cuda_array_class();
+    zend_class_implements(ce, 2, php_tensors_tensor_ce, php_tensors_numbers_ce);
+    zend_register_class_alias("Cuda\\CudaArray", ce);
+    zend_register_class_alias("PhpTensors\\Cuda\\Tensor", ce);
     ce->create_object = cuda_array_create_object;
 
     return 1;

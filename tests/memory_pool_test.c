@@ -68,7 +68,7 @@ static cudaError_t test_cuda_free(void *ptr)
 #define pefree test_free
 #define cudaMalloc test_cuda_malloc
 #define cudaFree test_cuda_free
-#include "../src/cuda/memory_pool.c"
+#include "../src/backends/cuda/memory_pool.c"
 
 int main(void)
 {

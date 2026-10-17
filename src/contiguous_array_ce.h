@@ -51,6 +51,8 @@ ZEND_METHOD(ContiguousArray, getShape);
 ZEND_METHOD(ContiguousArray, getNdims);
 ZEND_METHOD(ContiguousArray, getSize);
 ZEND_METHOD(ContiguousArray, getDtype);
+ZEND_METHOD(ContiguousArray, dtype);
+ZEND_METHOD(ContiguousArray, getBackend);
 ZEND_METHOD(ContiguousArray, toArray);
 ZEND_METHOD(ContiguousArray, toGpu);
 ZEND_METHOD(ContiguousArray, toBuffer);

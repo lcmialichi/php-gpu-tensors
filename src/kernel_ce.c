@@ -49,6 +49,7 @@ int kernel_init(void)
 
     INIT_CLASS_ENTRY(ce, KERNEL_CLASS_NAME, kernel_methods);
     kernel_ce = zend_register_internal_class(&ce);
+    zend_register_class_alias("Cuda\\Kernel", kernel_ce);
     kernel_ce->create_object = kernel_create_object;
     kernel_ce->ce_flags |= ZEND_ACC_FINAL;
 

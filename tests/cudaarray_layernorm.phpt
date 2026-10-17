@@ -2,7 +2,7 @@
 CudaArray layerNorm supports explicit axes, affine parameters, autograd and Fusion
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
@@ -44,6 +44,22 @@ echo $promotedOutput->dtype(), "\n";
 $fused = Fusion::run(fn() => $input->layerNorm([1], 0.00001, $scale, $bias));
 $fusedValues = $fused->toArray();
 var_dump(abs($fusedValues[0][0] - $affine[0][0]) < 0.00001);
+$compiled = Fusion::compile(
+    fn($x, $s, $b) => $x->layerNorm([1], 0.00001, $s, $b),
+    [$input, $scale, $bias]
+);
+$compiledValues = $compiled->run($input, $scale, $bias)->toArray();
+var_dump(abs($compiledValues[0][0] - $affine[0][0]) < 0.00001);
+$asyncGraph = Fusion::compile(
+    fn($x, $s, $b) => $x->layerNorm([1], 0.00001, $s, $b),
+    [$input, $scale, $bias],
+    true
+);
+$asyncValues = $asyncGraph->runAsync($input, $scale, $bias)->wait()->toArray();
+var_dump(
+    $asyncGraph->getStats()['cudaGraphCompatible'] === true &&
+    abs($asyncValues[0][0] - $affine[0][0]) < 0.00001
+);
 
 $tracked = CudaArray::fromFlatArray([1.0, 2.0, 4.0, 2.0, 5.0, 9.0], [2, 3])->requiresGrad();
 $trackedScale = CudaArray::fromFlatArray([1.0, 2.0, 3.0], [3])->requiresGrad();
@@ -74,10 +90,12 @@ bool(true)
 bool(true)
 bool(true)
 bool(true)
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
+bool(true)
+bool(true)
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException

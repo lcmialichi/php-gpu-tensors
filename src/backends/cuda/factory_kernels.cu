@@ -1,11 +1,11 @@
 #include <cuda_runtime.h>
 #include "factory_kernels.cuh"
-#include "../tensor_transform.h"
+#include "../../tensor_transform.h"
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 #include "launch_config.cuh"
 #include "dispatcher.h"
-#include "../data_types.h"
+#include "../../data_types.h"
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
@@ -589,6 +589,240 @@ extern "C" cudaError_t launch_tensor_transform(
         default: return cudaErrorInvalidValue;
     }
     return cudaGetLastError();
+}
+
+struct RepeatCountParams
+{
+    int input_ndims;
+    int output_ndims;
+    int axis;
+    int input_shape[MAX_DIMS];
+    size_t input_strides[MAX_DIMS];
+    int output_shape[MAX_DIMS];
+    size_t count;
+};
+
+template <typename ElementT>
+__global__ static void tensor_repeat_counts_kernel(
+    const ElementT *__restrict__ input, ElementT *__restrict__ output,
+    const int *__restrict__ prefix_counts, RepeatCountParams params,
+    size_t output_elements)
+{
+    for (size_t output_index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+         output_index < output_elements;
+         output_index += (size_t)blockDim.x * gridDim.x)
+    {
+        size_t repeated_coordinate;
+        size_t logical_input_index;
+        size_t source_offset = 0;
+        if (params.axis < 0)
+        {
+            repeated_coordinate = output_index;
+            size_t low = 0;
+            size_t high = params.count;
+            while (low < high)
+            {
+                size_t middle = low + (high - low) / 2;
+                if ((size_t)prefix_counts[middle] <= repeated_coordinate)
+                    low = middle + 1;
+                else
+                    high = middle;
+            }
+            logical_input_index = low;
+            for (int axis = params.input_ndims - 1; axis >= 0; axis--)
+            {
+                size_t coordinate = logical_input_index %
+                    (size_t)params.input_shape[axis];
+                logical_input_index /= (size_t)params.input_shape[axis];
+                source_offset += coordinate * params.input_strides[axis];
+            }
+        }
+        else
+        {
+            size_t remaining = output_index;
+            size_t coordinates[MAX_DIMS] = {};
+            for (int axis = params.output_ndims - 1; axis >= 0; axis--)
+            {
+                size_t extent = (size_t)params.output_shape[axis];
+                coordinates[axis] = remaining % extent;
+                remaining /= extent;
+            }
+            repeated_coordinate = coordinates[params.axis];
+            size_t low = 0;
+            size_t high = params.count;
+            while (low < high)
+            {
+                size_t middle = low + (high - low) / 2;
+                if ((size_t)prefix_counts[middle] <= repeated_coordinate)
+                    low = middle + 1;
+                else
+                    high = middle;
+            }
+            for (int axis = 0; axis < params.input_ndims; axis++)
+            {
+                size_t coordinate = axis == params.axis
+                    ? low : coordinates[axis];
+                source_offset += coordinate * params.input_strides[axis];
+            }
+        }
+        output[output_index] = input[source_offset];
+    }
+}
+
+extern "C" cudaError_t launch_tensor_repeat_counts(
+    const void *input, void *output, size_t element_size,
+    const int *prefix_counts, size_t count, int axis,
+    const int *input_shape, const size_t *input_strides, int input_ndims,
+    const int *output_shape, int output_ndims, size_t output_elements)
+{
+    if (!output_elements) return cudaSuccess;
+    if (!input || !output || !prefix_counts || !count ||
+        !input_shape || !input_strides || !output_shape ||
+        input_ndims < 1 || input_ndims > MAX_DIMS ||
+        output_ndims < 1 || output_ndims > MAX_DIMS ||
+        axis < -1 ||
+        (axis >= 0 && axis >= input_ndims) ||
+        (axis < 0 && output_ndims != 1) ||
+        count > SIZE_MAX / sizeof(int) ||
+        (size_t)prefix_counts[count - 1] !=
+            (size_t)output_shape[axis < 0 ? 0 : axis])
+        return cudaErrorInvalidValue;
+
+    RepeatCountParams params = {};
+    params.input_ndims = input_ndims;
+    params.output_ndims = output_ndims;
+    params.axis = axis;
+    params.count = count;
+    memcpy(params.input_shape, input_shape, input_ndims * sizeof(int));
+    memcpy(params.input_strides, input_strides, input_ndims * sizeof(size_t));
+    memcpy(params.output_shape, output_shape, output_ndims * sizeof(int));
+
+    int *device_prefix = nullptr;
+    cudaError_t error = cudaMalloc(&device_prefix, count * sizeof(int));
+    if (error != cudaSuccess) return error;
+    error = cudaMemcpy(device_prefix, prefix_counts, count * sizeof(int),
+                       cudaMemcpyHostToDevice);
+    if (error != cudaSuccess)
+    {
+        cudaFree(device_prefix);
+        return error;
+    }
+
+    dim3 grid = cuda_grid_1d(output_elements);
+    switch (element_size)
+    {
+        case 1: tensor_repeat_counts_kernel<<<grid, 256>>>(
+            (const uint8_t *)input, (uint8_t *)output, device_prefix,
+            params, output_elements); break;
+        case 2: tensor_repeat_counts_kernel<<<grid, 256>>>(
+            (const uint16_t *)input, (uint16_t *)output, device_prefix,
+            params, output_elements); break;
+        case 4: tensor_repeat_counts_kernel<<<grid, 256>>>(
+            (const uint32_t *)input, (uint32_t *)output, device_prefix,
+            params, output_elements); break;
+        case 8: tensor_repeat_counts_kernel<<<grid, 256>>>(
+            (const uint64_t *)input, (uint64_t *)output, device_prefix,
+            params, output_elements); break;
+        default:
+            cudaFree(device_prefix);
+            return cudaErrorInvalidValue;
+    }
+    error = cudaGetLastError();
+    cudaError_t free_error = cudaFree(device_prefix);
+    return error == cudaSuccess ? free_error : error;
+}
+
+template <typename GradientT>
+__global__ static void tensor_repeat_counts_gradient_kernel(
+    const GradientT *__restrict__ upstream,
+    GradientT *__restrict__ input_gradient,
+    const int *__restrict__ prefix_counts,
+    RepeatCountParams params, size_t input_elements)
+{
+    for (size_t input_index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
+         input_index < input_elements;
+         input_index += (size_t)blockDim.x * gridDim.x)
+    {
+        size_t coordinates[MAX_DIMS] = {};
+        size_t remaining = input_index;
+        for (int axis = params.input_ndims - 1; axis >= 0; axis--)
+        {
+            coordinates[axis] = remaining % (size_t)params.input_shape[axis];
+            remaining /= (size_t)params.input_shape[axis];
+        }
+
+        size_t count_index = params.axis < 0
+            ? input_index : coordinates[params.axis];
+        size_t first_repeat = count_index
+            ? (size_t)prefix_counts[count_index - 1] : 0;
+        size_t end_repeat = (size_t)prefix_counts[count_index];
+        GradientT sum = static_cast<GradientT>(0);
+        for (size_t repeat = first_repeat; repeat < end_repeat; repeat++)
+        {
+            size_t upstream_offset = 0;
+            if (params.axis < 0)
+                upstream_offset = repeat;
+            else
+                for (int axis = 0; axis < params.input_ndims; axis++)
+                    upstream_offset += (axis == params.axis
+                        ? repeat : coordinates[axis]) *
+                        params.input_strides[axis];
+            sum += upstream[upstream_offset];
+        }
+        input_gradient[input_index] = sum;
+    }
+}
+
+extern "C" cudaError_t launch_tensor_repeat_counts_gradient(
+    const void *upstream, void *input_gradient, dtype_t dtype,
+    const int *input_shape, int input_ndims,
+    const size_t *upstream_strides,
+    const int *prefix_counts, size_t count, int axis,
+    size_t input_elements)
+{
+    if (!input_elements) return cudaSuccess;
+    if (!upstream || !input_gradient || !prefix_counts ||
+        !input_shape || !upstream_strides ||
+        input_ndims < 1 || input_ndims > MAX_DIMS ||
+        axis < -1 || (axis >= 0 && axis >= input_ndims) ||
+        (axis < 0 && count != input_elements) ||
+        (axis >= 0 && count != (size_t)input_shape[axis]) ||
+        !count || count > SIZE_MAX / sizeof(int) ||
+        (dtype != DTYPE_FLOAT32 && dtype != DTYPE_FLOAT64))
+        return cudaErrorInvalidValue;
+
+    RepeatCountParams params = {};
+    params.input_ndims = input_ndims;
+    params.axis = axis;
+    params.count = count;
+    memcpy(params.input_shape, input_shape, input_ndims * sizeof(int));
+    if (axis >= 0)
+        memcpy(params.input_strides, upstream_strides,
+               input_ndims * sizeof(size_t));
+
+    int *device_prefix = nullptr;
+    cudaError_t error = cudaMalloc(&device_prefix, count * sizeof(int));
+    if (error != cudaSuccess) return error;
+    error = cudaMemcpy(device_prefix, prefix_counts, count * sizeof(int),
+                       cudaMemcpyHostToDevice);
+    if (error != cudaSuccess)
+    {
+        cudaFree(device_prefix);
+        return error;
+    }
+
+    dim3 grid = cuda_grid_1d(input_elements);
+    if (dtype == DTYPE_FLOAT32)
+        tensor_repeat_counts_gradient_kernel<<<grid, 256>>>(
+            (const float *)upstream, (float *)input_gradient,
+            device_prefix, params, input_elements);
+    else
+        tensor_repeat_counts_gradient_kernel<<<grid, 256>>>(
+            (const double *)upstream, (double *)input_gradient,
+            device_prefix, params, input_elements);
+    error = cudaGetLastError();
+    cudaError_t free_error = cudaFree(device_prefix);
+    return error == cudaSuccess ? free_error : error;
 }
 
 template <typename GradientT>

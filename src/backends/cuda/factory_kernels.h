@@ -1,7 +1,7 @@
 #ifndef FACTORY_KERNELS_H
 #define FACTORY_KERNELS_H
-#include "../data_types.h"
-#include "../tensor_transform.h"
+#include "../../data_types.h"
+#include "../../tensor_transform.h"
 #include <cuda_runtime.h>
 
 #ifdef __cplusplus
@@ -49,6 +49,17 @@ extern "C"
                                         dtype_t dtype,
                                         const tensor_transform_spec_t *spec,
                                         size_t total_elements);
+    cudaError_t launch_tensor_repeat_counts(
+        const void *input, void *output, size_t element_size,
+        const int *prefix_counts, size_t count, int axis,
+        const int *input_shape, const size_t *input_strides, int input_ndims,
+        const int *output_shape, int output_ndims, size_t output_elements);
+    cudaError_t launch_tensor_repeat_counts_gradient(
+        const void *upstream, void *input_gradient, dtype_t dtype,
+        const int *input_shape, int input_ndims,
+        const size_t *upstream_strides,
+        const int *prefix_counts, size_t count, int axis,
+        size_t input_elements);
     cudaError_t launch_tensor_transform_gradient(
         const void *upstream, void *input_gradient, dtype_t dtype,
         const tensor_transform_spec_t *spec, size_t total_elements,

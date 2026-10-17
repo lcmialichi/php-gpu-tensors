@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 
-use Cuda\CudaArray;
-use Cuda\FusionGraph;
+use PhpTensors\Cuda\CudaArray;
+use PhpTensors\FusionGraph;
 
 const C_RST = "\033[0m";
 

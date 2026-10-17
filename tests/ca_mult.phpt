@@ -2,7 +2,7 @@
 Cuda Array Multiplication
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip');
+if (!extension_loaded('phptensors')) die('skip');
 ?>
 --FILE--
 <?php

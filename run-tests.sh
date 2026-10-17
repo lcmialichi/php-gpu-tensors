@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-EXT_NAME="cuda"
+EXT_NAME="phptensors"
 PHP_CONFIG=${PHP_CONFIG:-php-config}
 PHP_BIN=${PHP_BIN:-php}
 PHP_VERSION=$($PHP_CONFIG --version | cut -d. -f1,2)
@@ -21,8 +21,12 @@ fi
 
 cd "$BUILD_DIR"
 "$PHP_BIN" -n tests/check_api_surface.php
+if [ "$CPU_ONLY" -eq 1 ]; then
+   make test TESTS="tests/cpu_backend.phpt" TEST_PHP_ARGS="-q"
+   exit 0
+fi
 if [ "${1:-}" = "--require-gpu" ]; then
-   if ! "$PHP_BIN" -n -d extension="$PWD/modules/cuda.so" -r 'exit(extension_loaded("cuda") && cuda_get_device_count() > 0 ? 0 : 1);'; then
+   if ! "$PHP_BIN" -n -d extension="$PWD/modules/phptensors.so" -r 'exit(extension_loaded("phptensors") && cuda_get_device_count() > 0 ? 0 : 1);'; then
       echo "GPU validation needs a working NVIDIA driver (libcuda.so.1) and a visible device" >&2
       exit 1
    fi
@@ -30,25 +34,21 @@ fi
 POOL_TEST_BINARY=$(mktemp)
 trap 'rm -f "$POOL_TEST_BINARY"' EXIT
 ${CC:-cc} -D_GNU_SOURCE -pthread $($PHP_CONFIG --includes) \
-   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc/cuda \
+   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc/backends/cuda \
    tests/memory_pool_test.c -o "$POOL_TEST_BINARY"
 "$POOL_TEST_BINARY"
 NPY_TEST_BINARY=$(mktemp)
 trap 'rm -f "$POOL_TEST_BINARY" "$NPY_TEST_BINARY"' EXIT
 ${CC:-cc} -D_GNU_SOURCE -ffunction-sections -fdata-sections \
    -Wl,--gc-sections $($PHP_CONFIG --includes) \
-   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc -Isrc/cuda -Isrc/cuda_array \
+   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc -Isrc/backends/cuda -Isrc/cuda_array \
    tests/npy_header_test.c -o "$NPY_TEST_BINARY"
 "$NPY_TEST_BINARY"
 WHERE_TEST_BINARY=$(mktemp)
 trap 'rm -f "$POOL_TEST_BINARY" "$NPY_TEST_BINARY" "$WHERE_TEST_BINARY"' EXIT
 ${CC:-cc} -D_GNU_SOURCE -ffunction-sections -fdata-sections \
    -Wl,--gc-sections $($PHP_CONFIG --includes) \
-   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc -Isrc/cuda -Isrc/cuda_array \
+   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc -Isrc/backends/cuda -Isrc/cuda_array \
    tests/where_shape_test.c -o "$WHERE_TEST_BINARY"
 "$WHERE_TEST_BINARY"
-if [ "$CPU_ONLY" -eq 1 ]; then
-   echo "Skipping PHP/GPU PHPT tests (--cpu-only)."
-   exit 0
-fi
 make test TEST_PHP_ARGS="-q"

@@ -850,13 +850,13 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_run, 0, 1, IS_MIXED, 0)
     ZEND_ARG_TYPE_INFO(0, callback, IS_CALLABLE, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, enabled, _IS_BOOL, 0, "true")
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_fusion_compile, 0, 2, Cuda\\FusionGraph, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_fusion_compile, 0, 2, PhpTensors\\FusionGraph, 0)
     ZEND_ARG_TYPE_INFO(0, callback, IS_CALLABLE, 0)
     ZEND_ARG_TYPE_INFO(0, inputs, IS_ARRAY, 0)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cudaGraph, _IS_BOOL, 0, "false")
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_fusion_graph_async, 0, 0, Cuda\\FusionExecution, 0)
-    ZEND_ARG_VARIADIC_OBJ_INFO(0, inputs, Cuda\\CudaArray, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_fusion_graph_async, 0, 0, PhpTensors\\FusionExecution, 0)
+    ZEND_ARG_VARIADIC_OBJ_INFO(0, inputs, PhpTensors\\Cuda\\CudaArray, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_wait, 0, 0, IS_MIXED, 0)
 ZEND_END_ARG_INFO()
@@ -868,7 +868,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_profiling, 0, 1, IS_VOID,
     ZEND_ARG_TYPE_INFO(0, enabled, _IS_BOOL, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_graph_run, 0, 0, IS_MIXED, 0)
-    ZEND_ARG_VARIADIC_OBJ_INFO(0, inputs, Cuda\\CudaArray, 0)
+    ZEND_ARG_VARIADIC_OBJ_INFO(0, inputs, PhpTensors\\Cuda\\CudaArray, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_stats, 0, 0, IS_ARRAY, 0)
 ZEND_END_ARG_INFO()
@@ -903,11 +903,13 @@ static const zend_function_entry fusion_execution_methods[] = {
 int fusion_init(void)
 {
     zend_class_entry ce;
-    INIT_CLASS_ENTRY(ce, "Cuda\\Fusion", fusion_methods);
+    INIT_CLASS_ENTRY(ce, "PhpTensors\\Fusion", fusion_methods);
     fusion_ce = zend_register_internal_class(&ce);
+    zend_register_class_alias("Cuda\\Fusion", fusion_ce);
     fusion_ce->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NOT_SERIALIZABLE;
-    INIT_CLASS_ENTRY(ce, "Cuda\\FusionGraph", fusion_graph_methods);
+    INIT_CLASS_ENTRY(ce, "PhpTensors\\FusionGraph", fusion_graph_methods);
     fusion_graph_ce = zend_register_internal_class(&ce);
+    zend_register_class_alias("Cuda\\FusionGraph", fusion_graph_ce);
     fusion_graph_ce->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NOT_SERIALIZABLE;
     fusion_graph_ce->create_object = fusion_graph_create;
     memcpy(&fusion_graph_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
@@ -915,8 +917,9 @@ int fusion_init(void)
     fusion_graph_handlers.free_obj = fusion_graph_free;
     fusion_graph_handlers.get_gc = fusion_graph_gc;
     fusion_graph_handlers.clone_obj = NULL;
-    INIT_CLASS_ENTRY(ce, "Cuda\\FusionExecution", fusion_execution_methods);
+    INIT_CLASS_ENTRY(ce, "PhpTensors\\FusionExecution", fusion_execution_methods);
     fusion_execution_ce = zend_register_internal_class(&ce);
+    zend_register_class_alias("Cuda\\FusionExecution", fusion_execution_ce);
     fusion_execution_ce->ce_flags |= ZEND_ACC_FINAL | ZEND_ACC_NOT_SERIALIZABLE;
     fusion_execution_ce->create_object = fusion_execution_create;
     memcpy(&fusion_execution_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));

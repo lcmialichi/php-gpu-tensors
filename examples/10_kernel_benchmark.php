@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\Cuda\CudaArray;
+use PhpTensors\Fusion;
 
 /**
  * Kernel Benchmark Suite
@@ -13,7 +13,7 @@ use Cuda\Fusion;
  * JSON report that can be compared across runs, drivers or GPUs.
  */
 
-if (!extension_loaded('cuda') || cuda_get_device_count() < 1) {
+if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) {
     throw new RuntimeException('CUDA extension and GPU required.');
 }
 
@@ -340,7 +340,7 @@ $report = [
     'runtime' => cuda_get_runtime_version(),
     'driver' => cuda_get_driver_version(),
     'precision' => $precision,
-    'memoryPoolLimit' => ini_get('cuda.memory_size'),
+    'memoryPoolLimit' => ini_get('phptensors.cuda.memory_pool_size'),
     'configuration' => [
         'warmups' => $warmups,
         'samples' => $sampleCount,

@@ -1,7 +1,7 @@
 #ifndef BROADCAST_OPS_H
 #define BROADCAST_OPS_H
 
-#include "../operations.h"
+#include "../../operations.h"
 
 #ifdef __cplusplus
 extern "C"

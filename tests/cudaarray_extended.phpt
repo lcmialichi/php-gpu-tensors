@@ -2,7 +2,7 @@
 CudaArray shape views, elementwise bounds, logical/statistical reductions and item
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
@@ -116,6 +116,21 @@ $gatherFusion = Fusion::compile(function ($x, $i) {
 }, [$gatherTracked, $gatherIndices]);
 [, $gatherFusionGrad] = $gatherFusion->run($gatherTracked, $gatherIndices);
 echo json_encode($gatherFusionGrad->toArray()), "\n";
+$stridedGatherInput = (new CudaArray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
+  ->transpose()->requiresGrad();
+$stridedGatherIndices = CudaArray::fromFlatArray([2, 0, 1, 2], [2, 2], 'int32');
+$stridedGatherInput->gather($stridedGatherIndices, 0)->sum()->backward();
+echo json_encode($stridedGatherInput->grad()->toArray()), "\n";
+$stridedGatherFusionInput = (new CudaArray([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
+  ->transpose()->requiresGrad();
+$stridedGatherFusion = Fusion::compile(function ($x, $i) {
+    $loss = $x->gather($i, 0)->sum();
+    $loss->backward();
+    return [$loss, $x->grad()];
+}, [$stridedGatherFusionInput, $stridedGatherIndices]);
+[, $stridedGatherFusionGradient] = $stridedGatherFusion->run(
+    $stridedGatherFusionInput, $stridedGatherIndices);
+echo json_encode($stridedGatherFusionGradient->toArray()), "\n";
 $broadcastTracked = (new CudaArray([[1.0, 2.0, 3.0]]))->requiresGrad();
 $broadcastTracked->broadcastTo([2, 3])->sum()->backward();
 echo json_encode($broadcastTracked->grad()->toArray()), "\n";
@@ -156,13 +171,15 @@ int(42)
 [[2,0,1],[0,7,0]]
 bool(false)
 [[30,40],[20,60],[10,50]]
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
-Cuda\RuntimeException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\RuntimeException
 [0,1,0]
 [[1,0,1]]
 [[1,0,1]]
+[[0,1],[1,0],[1,1]]
+[[0,1],[1,0],[1,1]]
 [[2,2,2]]
 [[1,1]]
 [[1,1]]

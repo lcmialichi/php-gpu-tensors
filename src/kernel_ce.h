@@ -4,7 +4,7 @@
 #include "php.h"
 #include "kernel_types.h"
 
-#define KERNEL_CLASS_NAME "Cuda\\Kernel"
+#define KERNEL_CLASS_NAME "PhpTensors\\Cuda\\Kernel"
 
 extern zend_class_entry *kernel_ce;
 

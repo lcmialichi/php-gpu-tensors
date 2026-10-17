@@ -32,9 +32,9 @@ to use the optimizer's default. Command-line options remain available for
 advanced data and reporting options and override the PHP settings. Model math,
 data preparation, and Fusion internals are kept under `Support/` so the example
 entrypoint can focus on the settings a PHP developer is most likely to change.
-Its SGD and AdamW updates use `Cuda\Optimizer`, with state passed explicitly so
+Its SGD and AdamW updates use `PhpTensors\Optimizer`, with state passed explicitly so
 the optimizer steps can be captured by Fusion. It compiles and retains
-`Cuda\FusionGraph` plans by batch shape, then calls `run()` for each step rather
+`PhpTensors\FusionGraph` plans by batch shape, then calls `run()` for each step rather
 than recompiling in the training loop. `--profile` reports fused kernel counts
 and native boundaries for the captured plans. Tune batch size and learning
 rate together, and compare validation metrics because larger batches mean

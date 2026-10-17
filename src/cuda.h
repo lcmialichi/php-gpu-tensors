@@ -2,14 +2,16 @@
 #define CUDA_H
 
 #include "php.h"
+#ifdef HAVE_CUDA
 #include "operations.h"
 #include <cuda_runtime.h>
+#endif
 
-#define PHP_CUDA_VERSION "0.1.0-beta.5"
-#define PHP_CUDA_EXTNAME "cuda"
+#define PHP_PHPTENSORS_VERSION "0.1.0-beta.5"
+#define PHP_PHPTENSORS_EXTNAME "phptensors"
 
-extern zend_module_entry cuda_module_entry;
-#define phpext_cuda_ptr &cuda_module_entry
+extern zend_module_entry phptensors_module_entry;
+#define phpext_phptensors_ptr &phptensors_module_entry
 
 #ifdef ZTS
 #include "TSRM.h"
@@ -17,9 +19,12 @@ extern zend_module_entry cuda_module_entry;
 
 ZEND_BEGIN_MODULE_GLOBALS(cuda)
 char *memory_size;
+char *legacy_memory_size;
 struct fusion_scope *fusion_scope;
 struct fusion_cache *fusion_cache;
 size_t fusion_pending;
+HashTable custom_backends;
+zend_bool custom_backends_initialized;
 ZEND_END_MODULE_GLOBALS(cuda)
 
 ZEND_EXTERN_MODULE_GLOBALS(cuda);

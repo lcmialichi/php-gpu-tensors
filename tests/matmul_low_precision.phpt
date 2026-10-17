@@ -2,7 +2,7 @@
 FP16 and BF16 conversion, storage, matmul and Fusion matmul
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
+if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
 ?>
 --FILE--
 <?php
@@ -151,11 +151,11 @@ foreach (['float16', 'bfloat16'] as $dtype) {
         $fusedRightGradient->toArray() === [[1.0], [2.0]],
         "$dtype Fusion matmul backward mismatch");
 
-    try {
-        A::ones([2, 2], $dtype)->requiresGrad()->astype('float32');
-        throw new RuntimeException("$dtype cast silently dropped gradient tracking");
-    } catch (Cuda\InvalidArgumentException) {
-    }
+    $castTracked = A::ones([2, 2], $dtype)->requiresGrad();
+    $castTracked->astype('float32')->sum()->backward();
+    check($castTracked->grad()->dtype() === 'float32' &&
+        $castTracked->grad()->toArray() === [[1.0, 1.0], [1.0, 1.0]],
+        "$dtype widening cast gradient mismatch");
 }
 
 echo "FP16/BF16 conversion and matmul checks passed\n";

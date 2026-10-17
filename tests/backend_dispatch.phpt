@@ -2,7 +2,7 @@
 Backend dispatch: large CUB reductions, coalesced axes, padded GEMM and concurrent Fusion streams
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
+if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
 ?>
 --FILE--
 <?php

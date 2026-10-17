@@ -20,7 +20,7 @@ foreach ($configureOptions as $option) {
 if (
     ($package['name'] ?? null) !== 'lcmialichi/php-gpu-tensors' ||
     ($package['type'] ?? null) !== 'php-ext' ||
-    ($package['php-ext']['extension-name'] ?? null) !== 'cuda' ||
+    ($package['php-ext']['extension-name'] ?? null) !== 'phptensors' ||
     ($package['php-ext']['support-zts'] ?? null) !== true ||
     ($package['php-ext']['os-families'] ?? null) !== ['linux'] ||
     ($cudaOption['needs-value'] ?? false) !== true

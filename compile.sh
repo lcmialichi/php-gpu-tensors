@@ -6,12 +6,17 @@ PHP_BIN=${PHP_BIN:-php}
 PHPIZE=${PHPIZE:-phpize}
 PHP_CONFIG=${PHP_CONFIG:-php-config}
 INSTALL=0
-if [ "${1:-}" = "--install" ]; then
-    INSTALL=1
-elif [ "$#" -ne 0 ]; then
-    echo "Usage: $0 [--install]" >&2
-    exit 2
-fi
+CPU_ONLY=0
+for argument in "$@"; do
+    case "$argument" in
+        --install) INSTALL=1 ;;
+        --cpu-only) CPU_ONLY=1 ;;
+        *)
+            echo "Usage: $0 [--install] [--cpu-only]" >&2
+            exit 2
+            ;;
+    esac
+done
 
 PHP_VERSION=$($PHP_CONFIG --version | cut -d. -f1,2)
 RUNTIME_VERSION=$($PHP_BIN -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
@@ -71,32 +76,44 @@ detect_cuda_home() {
 
 echo ""
 echo "┌───────────────────────────────────────────────────────┐"
-echo "│     PHP CUDA Extension — Build & Install Script       │"
+echo "│          PHP Tensors — Build & Install Script         │"
 echo "└───────────────────────────────────────────────────────┘"
 echo ""
 
-EXT_NAME="cuda"
+EXT_NAME="phptensors"
 SRC_DIR="$(pwd)"
 BUILD_DIR=${BUILD_DIR:-"./${EXT_NAME}_build-${PHP_VERSION}"}
-CUDA_HOME=$(detect_cuda_home || true)
+EXPLICIT_CUDA_HOME=${CUDA_HOME:-}
 
-if [ "$CUDA_HOME" = "1" ] || [ -z "$CUDA_HOME" ]; then
-    echo "Unable to detect CUDA home. Make sure NVCC is installed."
-    exit 1
+if [ "$CPU_ONLY" -eq 1 ]; then
+    CUDA_HOME=""
+elif [ -n "$EXPLICIT_CUDA_HOME" ]; then
+    if [ ! -f "$EXPLICIT_CUDA_HOME/include/cuda_runtime.h" ]; then
+        echo "ERROR: CUDA Toolkit headers not found at $EXPLICIT_CUDA_HOME" >&2
+        exit 1
+    fi
+    CUDA_HOME="$EXPLICIT_CUDA_HOME"
+else
+    CUDA_HOME=$(detect_cuda_home || true)
+    if [ ! -f "$CUDA_HOME/include/cuda_runtime.h" ]; then
+        CUDA_HOME=""
+    fi
 fi
 
-if [ ! -f "$CUDA_HOME/include/cuda_runtime.h" ]; then
-    echo "ERROR: CUDA Toolkit headers not found at $CUDA_HOME"
-    exit 1
+if [ -n "$CUDA_HOME" ]; then
+    echo "✔ CUDA Toolkit found; building CUDA backend."
+else
+    echo "CUDA Toolkit not found; building the CPU-only backend."
 fi
-
-echo "✔ CUDA Toolkit found."
 
 echo ""
 echo "Preparing build directory..."
 mkdir -p "$BUILD_DIR"
 
-cp config.m4 Makefile.frag "$BUILD_DIR"
+cp config.m4 "$BUILD_DIR"
+if [ -n "$CUDA_HOME" ]; then
+    cp Makefile.frag "$BUILD_DIR"
+fi
 cp -R src/ tests/ "$BUILD_DIR"
 cd "$BUILD_DIR"
 
@@ -104,15 +121,23 @@ echo ""
 echo "Building PHP extension: $EXT_NAME"
 
 "$PHPIZE"
-./configure --with-php-config="$PHP_CONFIG" --with-cuda="$CUDA_HOME"
+if [ -n "$CUDA_HOME" ]; then
+    ./configure --with-php-config="$PHP_CONFIG" --with-cuda="$CUDA_HOME"
+else
+    ./configure --with-php-config="$PHP_CONFIG" --without-cuda
+fi
 
 echo ""
 echo "Compiling..."
 make -j"$(nproc)"
 
 if [ "$INSTALL" -eq 0 ]; then
-    echo "Build complete: $BUILD_DIR/modules/cuda.so"
-    echo "Run ./run-tests.sh --require-gpu to validate with NVIDIA driver access."
+    echo "Build complete: $BUILD_DIR/modules/phptensors.so"
+    if [ -n "$CUDA_HOME" ]; then
+        echo "Run ./run-tests.sh --require-gpu to validate with NVIDIA driver access."
+    else
+        echo "Run ./run-tests.sh --cpu-only to validate the CPU backend."
+    fi
     exit 0
 fi
 
@@ -128,7 +153,7 @@ INI_FILE_NAME="$EXT_NAME.ini"
 INI_FILE_TEMP="/tmp/$INI_FILE_NAME"
 
 cat > "$INI_FILE_TEMP" <<EOF
-; PHP CUDA Extension
+; PHP Tensors extension
 extension=$EXT_NAME.so
 EOF
 

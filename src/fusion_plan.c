@@ -4,9 +4,6 @@ int fusion_inline(tensor_t *tensor)
 {
     fusion_node *node = tensor->fusion;
     if (!node) return 0;
-    if (node->kind == FUSION_CAST &&
-        (node->a->dtype == DTYPE_FLOAT16 || node->a->dtype == DTYPE_BFLOAT16))
-        return 0;
     if (node->kind == FUSION_UNARY || node->kind == FUSION_CAST ||
         node->kind == FUSION_WHERE || node->kind == FUSION_VIEW ||
         node->kind == FUSION_SLICE_SCATTER ||
@@ -32,9 +29,11 @@ int fusion_preallocated(fusion_plan *plan, fusion_step *step)
     return step->name[0] || (kind == FUSION_CAST &&
         (node->a->dtype == DTYPE_FLOAT16 || node->a->dtype == DTYPE_BFLOAT16)) ||
         kind == FUSION_MATMUL || kind == FUSION_REDUCE ||
-        kind == FUSION_ARG_REDUCE || kind == FUSION_GATHER ||
+        kind == FUSION_ARG_REDUCE || kind == FUSION_SCAN ||
+        kind == FUSION_GATHER ||
         kind == FUSION_SCATTER_ADD || kind == FUSION_CONCAT ||
-        kind == FUSION_TRANSFORM_BACKWARD;
+        kind == FUSION_REPEAT_COUNTS || kind == FUSION_REPEAT_COUNTS_BACKWARD ||
+        kind == FUSION_TRANSFORM_BACKWARD || kind == FUSION_SCAN_BACKWARD;
 }
 
 static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
@@ -83,9 +82,13 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
             plan->items[id].reason = node->kind == FUSION_MATMUL ? "native-matmul" :
                 node->kind == FUSION_CAST ? "native-low-precision-cast" :
                 node->kind == FUSION_REDUCE || node->kind == FUSION_ARG_REDUCE ? "native-reduction" :
+                node->kind == FUSION_SCAN ? "native-cumulative-scan" :
+                node->kind == FUSION_REPEAT_COUNTS ? "native-repeat-counts" :
+                node->kind == FUSION_REPEAT_COUNTS_BACKWARD ? "native-repeat-count-gradient" :
                 node->kind == FUSION_GATHER || node->kind == FUSION_SCATTER_ADD ? "native-indexed" :
                 node->kind == FUSION_CONCAT ? "native-concat" :
                 node->kind == FUSION_TRANSFORM_BACKWARD ? "native-transform-gradient" :
+                node->kind == FUSION_SCAN_BACKWARD ? "native-cumulative-gradient" :
                 "native-power";
             if (a != SIZE_MAX && plan->items[a].cost) plan->items[a].cut = 1;
             if (b != SIZE_MAX && plan->items[b].cost) plan->items[b].cut = 1;
@@ -298,13 +301,39 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
         {
             plan->native_steps++;
             fusion_kind kind = plan->items[plan->steps[i].root].tensor->fusion->kind;
+            fusion_node *node = plan->items[plan->steps[i].root].tensor->fusion;
+            int scan_stream_compatible = kind == FUSION_SCAN &&
+                is_contiguous(node->a) &&
+                (node->parameter == -1 ||
+                 node->parameter == node->a->ndims - 1);
             if (kind != FUSION_MATMUL && kind != FUSION_REDUCE &&
-                kind != FUSION_ARG_REDUCE && kind != FUSION_TRANSFORM_BACKWARD)
+                kind != FUSION_ARG_REDUCE && kind != FUSION_TRANSFORM_BACKWARD &&
+                !scan_stream_compatible)
                 plan->graph_compatible = 0;
             if (kind == FUSION_GATHER || kind == FUSION_SCATTER_ADD)
             {
                 plan->stream_compatible = 0;
                 plan->incompatibility = "indexed-operation";
+            }
+            if (kind == FUSION_SCAN && !scan_stream_compatible)
+            {
+                plan->stream_compatible = 0;
+                plan->incompatibility = "cumulative-scan-layout";
+            }
+            if (kind == FUSION_REPEAT_COUNTS)
+            {
+                plan->stream_compatible = 0;
+                plan->incompatibility = "repeat-counts";
+            }
+            if (kind == FUSION_REPEAT_COUNTS_BACKWARD)
+            {
+                plan->stream_compatible = 0;
+                plan->incompatibility = "repeat-count-gradient";
+            }
+            if (kind == FUSION_SCAN_BACKWARD)
+            {
+                plan->stream_compatible = 0;
+                plan->incompatibility = "cumulative-gradient";
             }
             if (kind == FUSION_CONCAT || kind == FUSION_CAST)
             {

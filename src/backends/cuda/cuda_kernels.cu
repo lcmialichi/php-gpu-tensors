@@ -4,7 +4,7 @@
 #include "launch_config.cuh"
 #include <float.h>
 #include <cstdio>
-#include "../data_types.h"
+#include "../../data_types.h"
 
 #define SUCCESS 0
 #define FAILURE 1

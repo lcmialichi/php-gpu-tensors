@@ -2,7 +2,7 @@
 #include "scalar_ops.h"
 #include "scalar_ops.cuh"
 #include "dispatcher.h"
-#include "../data_types.h"
+#include "../../data_types.h"
 
 template <typename OutputT>
 static void launch_low_precision_scalar(

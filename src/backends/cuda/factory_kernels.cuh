@@ -1,7 +1,7 @@
 #ifndef FACTORY_KERNELS_CUH
 #define FACTORY_KERNELS_CUH
 
-#include "../data_types.h"
+#include "../../data_types.h"
 #include "launch_config.cuh"
 
 template <typename T>

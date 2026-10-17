@@ -2,7 +2,7 @@
 #define BROADCAST_OPS_CUH
 
 #include <cuda_runtime.h>
-#include "../data_types.h"
+#include "../../data_types.h"
 #include "cast.cuh"
 #include "launch_config.cuh"
 

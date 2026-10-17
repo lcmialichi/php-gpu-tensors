@@ -1,8 +1,8 @@
 <?php
 declare(strict_types=1);
 
-use Cuda\CudaArray;
-use Cuda\Optimizer;
+use PhpTensors\Cuda\CudaArray;
+use PhpTensors\Optimizer;
 
 /**
  * -------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 CudaArray variance and standard deviation preserve dtype, layouts, autograd and Fusion
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
@@ -67,8 +67,8 @@ printf("%.6f\n", $graph->run($values)->item());
 bool(true)
 bool(true)
 [0]
-Cuda\InvalidArgumentException
-Cuda\InvalidArgumentException
+PhpTensors\InvalidArgumentException
+PhpTensors\InvalidArgumentException
 -0.666667 0.000000 0.666667
 -0.408248 0.000000 0.408248
 1.250000

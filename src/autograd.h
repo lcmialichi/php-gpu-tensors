@@ -11,6 +11,7 @@ typedef enum
     AUTOGRAD_SCALAR,
     AUTOGRAD_UNARY,
     AUTOGRAD_REDUCE,
+    AUTOGRAD_SCAN,
     AUTOGRAD_MATMUL,
     AUTOGRAD_VIEW,
     AUTOGRAD_CAST,
@@ -20,7 +21,8 @@ typedef enum
     AUTOGRAD_UNSUPPORTED,
     AUTOGRAD_CONCAT,
     AUTOGRAD_SLICE,
-    AUTOGRAD_INDEX_TRANSFORM
+    AUTOGRAD_INDEX_TRANSFORM,
+    AUTOGRAD_REPEAT_COUNTS
 } autograd_kind_t;
 
 typedef struct autograd_node
@@ -46,6 +48,8 @@ typedef struct autograd_node
     int starts[MAX_DIMS];
     int steps[MAX_DIMS];
     tensor_transform_spec_t transform;
+    int *repeat_prefix_counts;
+    size_t repeat_count;
 } autograd_node_t;
 
 void autograd_release_node(tensor_t *tensor);
@@ -54,6 +58,10 @@ int autograd_record_binary(tensor_t *result, tensor_t *a, tensor_t *b, operation
 int autograd_record_scalar(tensor_t *result, tensor_t *a, scalar_value_t scalar, operation_type_t op, int inverse);
 int autograd_record_unary(tensor_t *result, tensor_t *a, operation_type_t op);
 int autograd_record_reduce(tensor_t *result, tensor_t *a, operation_type_t op, int axis);
+int autograd_record_scan(tensor_t *result, tensor_t *a, operation_type_t op, int axis);
+int autograd_record_repeat_counts(tensor_t *result, tensor_t *a,
+                                  const int *prefix_counts, size_t count,
+                                  int axis);
 int autograd_record_matmul(tensor_t *result, tensor_t *a, tensor_t *b);
 int autograd_record_view(tensor_t *result, tensor_t *a, operation_type_t op, const int *axes);
 int autograd_record_slice(tensor_t *result, tensor_t *a, const int *axes,

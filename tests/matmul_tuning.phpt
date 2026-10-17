@@ -2,7 +2,7 @@
 Explicit cuBLASLt autotuning selects a cached zero-workspace matmul algorithm
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
+if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) die('skip CUDA GPU required');
 $backend = cuda_get_backend_info();
 if (!$backend['cublas'] || !$backend['cublasLt']) die('skip cuBLASLt required');
 ?>

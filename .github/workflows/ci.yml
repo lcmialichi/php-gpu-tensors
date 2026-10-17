@@ -63,7 +63,7 @@ jobs:
             echo "Invalid release tag: $RELEASE_TAG" >&2
             exit 1
           fi
-          MODULE_VERSION=$(sed -n 's/^#define PHP_CUDA_VERSION "\(.*\)"/\1/p' src/cuda.h | tr -d '\r')
+          MODULE_VERSION=$(sed -n 's/^#define PHP_PHPTENSORS_VERSION "\(.*\)"/\1/p' src/cuda.h | tr -d '\r')
           RELEASE_VERSION="${RELEASE_TAG#v}"
           if [[ "$MODULE_VERSION" != "$RELEASE_VERSION" ]]; then
             echo "Release tag $RELEASE_TAG does not match module version $MODULE_VERSION" >&2

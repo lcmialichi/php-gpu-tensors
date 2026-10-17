@@ -2,6 +2,7 @@
 #include "php.h"
 #include "contiguous_array_ce.h"
 #include "contiguous_array_arginfo.h"
+#include "backend_contract.h"
 #include "zend_smart_str.h"
 #include <string.h>
 #include "tensor_factory.h"
@@ -651,6 +652,18 @@ ZEND_METHOD(ContiguousArray, getDtype)
     RETURN_STRING(dtype_to_string(contiguous_array_from_obj(Z_OBJ_P(getThis()))->dtype));
 }
 
+ZEND_METHOD(ContiguousArray, dtype)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    RETURN_STRING(dtype_to_string(contiguous_array_from_obj(Z_OBJ_P(getThis()))->dtype));
+}
+
+ZEND_METHOD(ContiguousArray, getBackend)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    RETURN_STRING("cpu");
+}
+
 ZEND_METHOD(ContiguousArray, getElementSize)
 {
     RETURN_LONG(contiguous_array_from_obj(Z_OBJ_P(getThis()))->element_size);
@@ -813,12 +826,14 @@ static zend_object_iterator *contiguous_array_get_iterator(zend_class_entry *ce,
 int contiguous_array_init()
 {
     zend_class_entry ce;
-    INIT_CLASS_ENTRY(ce, "Cuda\\ContiguousArray", contiguous_array_methods);
+    INIT_CLASS_ENTRY(ce, "PhpTensors\\HostArray", contiguous_array_methods);
     contiguous_array_ce = zend_register_internal_class(&ce);
+    zend_register_class_alias("Cuda\\ContiguousArray", contiguous_array_ce);
     zend_register_class_alias("Cuda\\HostArray", contiguous_array_ce);
     contiguous_array_ce->create_object = contiguous_array_create_object;
     contiguous_array_ce->get_iterator = contiguous_array_get_iterator;
     contiguous_array_ce->ce_flags |= ZEND_ACC_FINAL;
+    zend_class_implements(contiguous_array_ce, 1, php_tensors_tensor_ce);
 
     memcpy(&contiguous_array_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     contiguous_array_handlers.offset = XtOffsetOf(contiguous_array_object, std);

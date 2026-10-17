@@ -1,10 +1,10 @@
 <?php
 declare(strict_types=1);
 
-use Cuda\CudaArray;
-use Cuda\Fusion;
+use PhpTensors\Cuda\CudaArray;
+use PhpTensors\Fusion;
 
-if (!extension_loaded('cuda') || cuda_get_device_count() < 1) {
+if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) {
     throw new RuntimeException('This example requires the CUDA extension and a visible GPU.');
 }
 

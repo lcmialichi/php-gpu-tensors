@@ -2,7 +2,7 @@
 FP16/BF16 eager and Fusion elementwise parity with FP32 gradients
 --SKIPIF--
 <?php
-if (!extension_loaded('cuda')) die('skip cuda extension unavailable');
+if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
 ?>
 --FILE--
@@ -53,6 +53,38 @@ foreach (['float16', 'bfloat16'] as $dtype) {
     check($product->dtype() === $dtype, "$dtype gradient output dtype mismatch");
     check($gradient->dtype() === 'float32', "$dtype gradient accumulation dtype mismatch");
     check($gradient->toArray() === [2.0, 4.0], "$dtype gradient values mismatch");
+
+    $condition = A::fromFlatArray([true, false, true], [3], 'bool');
+    $selectedTrue = A::fromFlatArray([1.0, 2.0, 3.0], [3], $dtype);
+    $selectedFalse = A::fromFlatArray([4.0, 5.0, 6.0], [3], $dtype);
+    $eagerWhere = A::where($condition, $selectedTrue, $selectedFalse);
+    $fusedWhere = Fusion::compile(
+        fn($mask, $x, $y) => A::where($mask, $x, $y),
+        [$condition, $selectedTrue, $selectedFalse]
+    )->run($condition, $selectedTrue, $selectedFalse);
+    check($fusedWhere->dtype() === $dtype &&
+        $fusedWhere->toBuffer() === $eagerWhere->toBuffer(),
+        "$dtype where result mismatch");
+
+    $trackedTrue = A::fromFlatArray([1.0, 2.0, 3.0], [3], $dtype)->requiresGrad();
+    $trackedFalse = A::fromFlatArray([4.0, 5.0, 6.0], [3], $dtype)->requiresGrad();
+    $seed = A::ones([3], $dtype);
+    A::where($condition, $trackedTrue, $trackedFalse)->backward($seed);
+    $expectedTrueGradient = $trackedTrue->grad()->toArray();
+    $expectedFalseGradient = $trackedFalse->grad()->toArray();
+
+    $fusedTrackedTrue = A::fromFlatArray([1.0, 2.0, 3.0], [3], $dtype)->requiresGrad();
+    $fusedTrackedFalse = A::fromFlatArray([4.0, 5.0, 6.0], [3], $dtype)->requiresGrad();
+    [, $fusedTrueGradient, $fusedFalseGradient] = Fusion::run(
+        function () use ($condition, $fusedTrackedTrue, $fusedTrackedFalse, $seed) {
+            $output = A::where($condition, $fusedTrackedTrue, $fusedTrackedFalse);
+            $output->backward($seed);
+            return [$output, $fusedTrackedTrue->grad(), $fusedTrackedFalse->grad()];
+        }
+    );
+    check($fusedTrueGradient->toArray() === $expectedTrueGradient &&
+        $fusedFalseGradient->toArray() === $expectedFalseGradient,
+        "$dtype where gradients mismatch");
 }
 
 $mask = A::fromFlatArray([0, 1], [2], 'float16');

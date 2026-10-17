@@ -216,12 +216,16 @@ tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
 
 tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t operation_type)
 {
+    if (fusion_active())
+        return fusion_reduce(input, axis, operation_type, 1);
     if (input && is_low_precision_dtype(input->dtype))
     {
-        CUDA_THROW_INVALID("Arg reductions do not yet support float16 or bfloat16");
-        return NULL;
+        tensor_t *promoted = tensor_cast(input, DTYPE_FLOAT32);
+        if (!promoted) return NULL;
+        tensor_t *result = cuda_tensor_reduce_arg(promoted, axis, operation_type);
+        cuda_tensor_destroy(promoted);
+        return result;
     }
-    if (fusion_active()) return fusion_reduce(input, axis, operation_type, 1);
     if (!fusion_materialize(input)) return NULL;
     int result_shape_arr[MAX_DIMS];
     size_t total_elements_out;
@@ -267,12 +271,16 @@ tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t ope
 
 tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operation_type)
 {
+    if (fusion_active())
+        return fusion_reduce(input, axis, operation_type, 0);
     if (input && is_low_precision_dtype(input->dtype))
     {
-        CUDA_THROW_INVALID("Reductions do not yet support float16 or bfloat16");
-        return NULL;
+        tensor_t *promoted = tensor_cast(input, DTYPE_FLOAT32);
+        if (!promoted) return NULL;
+        tensor_t *result = cuda_tensor_reduce(promoted, axis, operation_type);
+        cuda_tensor_destroy(promoted);
+        return result;
     }
-    if (fusion_active()) return fusion_reduce(input, axis, operation_type, 0);
     if (!fusion_materialize(input)) return NULL;
     int result_shape_arr[MAX_DIMS];
     size_t total_elements_out;
@@ -312,6 +320,345 @@ tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operati
     return result;
 }
 
+dtype_t cuda_cumulative_result_dtype(dtype_t input_dtype)
+{
+    switch (input_dtype)
+    {
+        case DTYPE_FLOAT32:
+        case DTYPE_FLOAT64:
+            return input_dtype;
+        case DTYPE_FLOAT16:
+        case DTYPE_BFLOAT16:
+            return DTYPE_FLOAT32;
+        case DTYPE_INT8:
+        case DTYPE_INT16:
+        case DTYPE_INT32:
+        case DTYPE_UINT8:
+        case DTYPE_UINT16:
+        case DTYPE_UINT32:
+        case DTYPE_BOOL:
+            return DTYPE_INT64;
+        case DTYPE_INT64:
+            return DTYPE_INT64;
+        case DTYPE_UINT64:
+            return DTYPE_UINT64;
+        default:
+            return DTYPE_UNKNOWN;
+    }
+}
+
+int cuda_tensor_cumulative_into(tensor_t *input, tensor_t *result, int axis,
+                                operation_type_t operation_type,
+                                cudaStream_t stream)
+{
+    if (!input || !result ||
+        (operation_type != OP_CUMSUM && operation_type != OP_CUMPROD))
+    {
+        CUDA_THROW_INVALID("Cumulative operation requires valid tensors and operation");
+        return 0;
+    }
+    dtype_t output_dtype = cuda_cumulative_result_dtype(input->dtype);
+    if (output_dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Cumulative scans do not support dtype %s",
+                           dtype_to_string(input->dtype));
+        return 0;
+    }
+    if (result->dtype != output_dtype)
+    {
+        CUDA_THROW_INVALID("Cumulative output dtype does not match the input promotion rule");
+        return 0;
+    }
+    if (axis < -1 || axis >= input->ndims)
+    {
+        CUDA_THROW_INVALID("Cumulative scan axis is out of range");
+        return 0;
+    }
+    if (stream && (!is_contiguous(input) ||
+        (axis != -1 && axis != input->ndims - 1)))
+    {
+        CUDA_THROW_INVALID("Asynchronous cumulative scans require contiguous input and a flattened or last-axis scan");
+        return 0;
+    }
+    if (axis == -1)
+    {
+        if (result->ndims != 1 || result->shape[0] != (int)input->total_size)
+        {
+            CUDA_THROW_INVALID("Global cumulative scan output must be a flattened tensor");
+            return 0;
+        }
+    }
+    else
+    {
+        if (result->ndims != input->ndims)
+        {
+            CUDA_THROW_INVALID("Axis cumulative scan output rank mismatch");
+            return 0;
+        }
+        for (int dim = 0; dim < input->ndims; dim++)
+            if (result->shape[dim] != input->shape[dim])
+            {
+                CUDA_THROW_INVALID("Axis cumulative scan output shape mismatch");
+                return 0;
+            }
+    }
+    if (!input->total_size) return 1;
+
+    if (axis == -1)
+    {
+        if (input->total_size > INT_MAX)
+        {
+            CUDA_THROW_INVALID("Flattened cumulative scan exceeds the supported dimension size");
+            return 0;
+        }
+        tensor_t *packed = is_contiguous(input) ? NULL : cuda_tensor_clone(input);
+        if (!is_contiguous(input) && !packed) return 0;
+        cudaError_t status = launch_cumulative_scan(
+            packed ? packed->data : input->data, result->data, input->dtype,
+            output_dtype, input->total_size, input->total_size, 1,
+            operation_type, stream);
+        if (packed) cuda_tensor_destroy(packed);
+        if (status != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Cumulative scan failed: %s", cudaGetErrorString(status));
+            return 0;
+        }
+        return 1;
+    }
+
+    if (axis == input->ndims - 1 && is_contiguous(input))
+    {
+        size_t segment_length = (size_t)input->shape[axis];
+        cudaError_t status = launch_cumulative_scan(
+            input->data, result->data, input->dtype, output_dtype,
+            input->total_size, segment_length,
+            input->total_size / segment_length, operation_type, stream);
+        if (status != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Cumulative scan failed: %s",
+                               cudaGetErrorString(status));
+            return 0;
+        }
+        return 1;
+    }
+
+    int permuted_shape[MAX_DIMS];
+    size_t permuted_strides[MAX_DIMS];
+    int permutation[MAX_DIMS];
+    int destination = 0;
+    for (int dim = 0; dim < input->ndims; dim++)
+        if (dim != axis)
+        {
+            permutation[destination] = dim;
+            permuted_shape[destination] = input->shape[dim];
+            permuted_strides[destination] = input->strides[dim];
+            destination++;
+        }
+    permutation[destination] = axis;
+    permuted_shape[destination] = input->shape[axis];
+    permuted_strides[destination] = input->strides[axis];
+
+    tensor_t *view = cuda_tensor_create_view(
+        input, permuted_shape, permuted_strides, input->ndims, 0,
+        input->total_size);
+    if (!view) return 0;
+    tensor_t *packed = cuda_tensor_clone(view);
+    cuda_tensor_destroy(view);
+    if (!packed) return 0;
+    tensor_t *scanned = cuda_tensor_create_empty_dtype(
+        permuted_shape, input->ndims, output_dtype);
+    if (!scanned)
+    {
+        cuda_tensor_destroy(packed);
+        return 0;
+    }
+
+    size_t segment_length = (size_t)input->shape[axis];
+    size_t segment_count = segment_length
+        ? input->total_size / segment_length : 0;
+    cudaError_t status = launch_cumulative_scan(
+        packed->data, scanned->data, input->dtype, output_dtype,
+        input->total_size, segment_length, segment_count,
+        operation_type, stream);
+    if (status == cudaSuccess)
+        status = launch_cumulative_reorder(
+            scanned->data, result->data, output_dtype, input->shape,
+            input->ndims, axis, input->total_size, stream);
+    cuda_tensor_destroy(scanned);
+    cuda_tensor_destroy(packed);
+    if (status != cudaSuccess)
+    {
+        CUDA_THROW_RUNTIME("Cumulative scan failed: %s", cudaGetErrorString(status));
+        return 0;
+    }
+    return 1;
+}
+
+tensor_t *cuda_tensor_cumulative(tensor_t *input, int axis,
+                                 operation_type_t operation_type)
+{
+    if (!input)
+    {
+        CUDA_THROW_INVALID("Cumulative operation requires an input tensor");
+        return NULL;
+    }
+    if (operation_type != OP_CUMSUM && operation_type != OP_CUMPROD)
+    {
+        CUDA_THROW_INVALID("Unsupported cumulative operation");
+        return NULL;
+    }
+    if (fusion_active())
+        return fusion_scan(input, axis, operation_type);
+    if (is_low_precision_dtype(input->dtype))
+    {
+        tensor_t *promoted = tensor_cast(input, DTYPE_FLOAT32);
+        if (!promoted) return NULL;
+        tensor_t *result = cuda_tensor_cumulative(
+            promoted, axis, operation_type);
+        cuda_tensor_destroy(promoted);
+        return result;
+    }
+    if (!fusion_materialize(input)) return NULL;
+    if (axis < -1 || axis >= input->ndims)
+    {
+        CUDA_THROW_INVALID("Cumulative scan axis is out of range");
+        return NULL;
+    }
+    dtype_t output_dtype = cuda_cumulative_result_dtype(input->dtype);
+    if (output_dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Cumulative scans do not support dtype %s",
+                           dtype_to_string(input->dtype));
+        return NULL;
+    }
+    int output_shape[MAX_DIMS];
+    int output_ndims;
+    if (axis == -1)
+    {
+        if (input->total_size > INT_MAX)
+        {
+            CUDA_THROW_INVALID("Flattened cumulative scan exceeds the supported dimension size");
+            return NULL;
+        }
+        output_shape[0] = (int)input->total_size;
+        output_ndims = 1;
+    }
+    else
+    {
+        memcpy(output_shape, input->shape, input->ndims * sizeof(int));
+        output_ndims = input->ndims;
+    }
+
+    tensor_t *result = cuda_tensor_create_empty_dtype(
+        output_shape, output_ndims, output_dtype);
+    if (!result) return NULL;
+    if (!cuda_tensor_cumulative_into(input, result, axis, operation_type, NULL))
+    {
+        cuda_tensor_destroy(result);
+        return NULL;
+    }
+    autograd_record_scan(result, input, operation_type, axis);
+    return result;
+}
+
+int cuda_tensor_cumulative_product_gradient_into(tensor_t *input,
+                                                 tensor_t *upstream,
+                                                 tensor_t *result, int axis)
+{
+    if (!input || !upstream || !result ||
+        (input->dtype != DTYPE_FLOAT32 && input->dtype != DTYPE_FLOAT64) ||
+        upstream->dtype != input->dtype || result->dtype != input->dtype ||
+        axis < -1 || axis >= input->ndims || !is_contiguous(result))
+    {
+        CUDA_THROW_INVALID("Cumulative product gradients require matching float32/float64 tensors and a valid axis");
+        return 0;
+    }
+    if (axis == -1)
+    {
+        if (input->total_size > INT_MAX ||
+            upstream->ndims != 1 ||
+            upstream->shape[0] != (int)input->total_size)
+        {
+            CUDA_THROW_INVALID("Flattened cumulative product gradient shape mismatch");
+            return 0;
+        }
+    }
+    else
+    {
+        if (upstream->ndims != input->ndims ||
+            result->ndims != input->ndims)
+        {
+            CUDA_THROW_INVALID("Axis cumulative product gradient rank mismatch");
+            return 0;
+        }
+        for (int dimension = 0; dimension < input->ndims; dimension++)
+            if (upstream->shape[dimension] != input->shape[dimension] ||
+                result->shape[dimension] != input->shape[dimension])
+            {
+                CUDA_THROW_INVALID("Axis cumulative product gradient shape mismatch");
+                return 0;
+            }
+    }
+    if (result->total_size != input->total_size)
+    {
+        CUDA_THROW_INVALID("Cumulative product gradient output size mismatch");
+        return 0;
+    }
+    if (!input->total_size) return 1;
+
+    int prefix_shape[MAX_DIMS];
+    int prefix_ndims = axis == -1 ? 1 : input->ndims;
+    if (axis == -1) prefix_shape[0] = (int)input->total_size;
+    else memcpy(prefix_shape, input->shape, input->ndims * sizeof(int));
+    tensor_t *prefix_product = cuda_tensor_create_empty_dtype(
+        prefix_shape, prefix_ndims, input->dtype);
+    if (!prefix_product) return 0;
+    if (!cuda_tensor_cumulative_into(input, prefix_product, axis,
+                                     OP_CUMPROD, NULL))
+    {
+        cuda_tensor_destroy(prefix_product);
+        return 0;
+    }
+
+    cudaError_t status = launch_cumulative_product_gradient(
+        input->data, input->dtype, input->shape, input->strides,
+        input->ndims, upstream->data, upstream->strides,
+        prefix_product->data, result->data, input->total_size, axis, NULL);
+    cuda_tensor_destroy(prefix_product);
+    if (status != cudaSuccess)
+    {
+        CUDA_THROW_RUNTIME("Cumulative product gradient failed: %s",
+                           cudaGetErrorString(status));
+        return 0;
+    }
+    return 1;
+}
+
+tensor_t *cuda_tensor_cumulative_product_gradient(tensor_t *input,
+                                                  tensor_t *upstream,
+                                                  int axis)
+{
+    if (!input || !upstream)
+    {
+        CUDA_THROW_INVALID("Cumulative product gradient requires input and upstream tensors");
+        return NULL;
+    }
+    if (fusion_active())
+        return fusion_scan_backward(input, upstream, axis);
+    if (!fusion_materialize(input) || !fusion_materialize(upstream))
+        return NULL;
+    tensor_t *result = cuda_tensor_create_empty_dtype(
+        input->shape, input->ndims, upstream->dtype);
+    if (!result) return NULL;
+    if (!cuda_tensor_cumulative_product_gradient_into(
+            input, upstream, result, axis))
+    {
+        cuda_tensor_destroy(result);
+        return NULL;
+    }
+    return result;
+}
+
 tensor_t *cuda_tensor_moments_reduce(tensor_t *input, int axis, int correction,
                                      int standard_deviation)
 {
@@ -322,8 +669,12 @@ tensor_t *cuda_tensor_moments_reduce(tensor_t *input, int axis, int correction,
     }
     if (is_low_precision_dtype(input->dtype))
     {
-        CUDA_THROW_INVALID("Moments reductions do not yet support float16 or bfloat16");
-        return NULL;
+        tensor_t *promoted = tensor_cast(input, DTYPE_FLOAT32);
+        if (!promoted) return NULL;
+        tensor_t *result = cuda_tensor_moments_reduce(
+            promoted, axis, correction, standard_deviation);
+        cuda_tensor_destroy(promoted);
+        return result;
     }
     if (!fusion_materialize(input)) return NULL;
 
@@ -538,11 +889,6 @@ int cuda_tensor_validate_indexed_shapes(tensor_t *input, tensor_t *indices,
 
 tensor_t *cuda_tensor_gather(tensor_t *input, tensor_t *indices, int axis)
 {
-    if (input && is_low_precision_dtype(input->dtype))
-    {
-        CUDA_THROW_INVALID("gather does not yet support float16 or bfloat16");
-        return NULL;
-    }
     if (fusion_active())
         return fusion_indexed_gather(input, indices, axis);
     if (!cuda_tensor_validate_indexed_shapes(input, indices, NULL, axis, "gather"))
@@ -583,6 +929,18 @@ tensor_t *cuda_tensor_scatter_add(tensor_t *input, tensor_t *indices,
         return fusion_indexed_scatter_add(input, indices, updates, axis);
     if (!cuda_tensor_validate_indexed_shapes(input, indices, updates, axis, "scatterAdd"))
         return NULL;
+    if (is_low_precision_dtype(input->dtype))
+    {
+        tensor_t *promoted_input = tensor_cast(input, DTYPE_FLOAT32);
+        tensor_t *promoted_updates = promoted_input
+            ? tensor_cast(updates, DTYPE_FLOAT32) : NULL;
+        tensor_t *result = promoted_updates
+            ? cuda_tensor_scatter_add(promoted_input, indices, promoted_updates, axis)
+            : NULL;
+        if (promoted_input) cuda_tensor_destroy(promoted_input);
+        if (promoted_updates) cuda_tensor_destroy(promoted_updates);
+        return result;
+    }
     if (input->dtype != DTYPE_FLOAT32 && input->dtype != DTYPE_FLOAT64)
     {
         CUDA_THROW_INVALID("scatterAdd currently supports float32 and float64 tensors");
@@ -969,6 +1327,208 @@ tensor_t *cuda_tensor_index_transform_backward(
         cuda_tensor_destroy(result);
         CUDA_THROW_RUNTIME("Tensor transform gradient kernel failed: %s",
                            cudaGetErrorString(status));
+        return NULL;
+    }
+    return result;
+}
+
+int cuda_tensor_repeat_counts_into(tensor_t *input, tensor_t *result,
+                                   const int *prefix_counts, size_t count,
+                                   int axis, cudaStream_t stream)
+{
+    if (!input || !result || axis < -1 || axis >= input->ndims)
+    {
+        CUDA_THROW_INVALID("Repeat requires valid input/output tensors and axis");
+        return 0;
+    }
+    if (stream)
+    {
+        CUDA_THROW_INVALID("Per-element repeat currently requires synchronous execution");
+        return 0;
+    }
+    size_t expected_count = axis < 0
+        ? input->total_size : (size_t)input->shape[axis];
+    if (count != expected_count || (count && !prefix_counts))
+    {
+        CUDA_THROW_INVALID("Repeat counts must match the selected input axis");
+        return 0;
+    }
+    int output_extent = count ? prefix_counts[count - 1] : 0;
+    if (output_extent < 0)
+    {
+        CUDA_THROW_INVALID("Repeat output extent cannot be negative");
+        return 0;
+    }
+    if (result->dtype != input->dtype)
+    {
+        CUDA_THROW_INVALID("Per-element repeat cannot change the tensor dtype");
+        return 0;
+    }
+    if (axis < 0)
+    {
+        if (result->ndims != 1 || result->shape[0] != output_extent)
+        {
+            CUDA_THROW_INVALID("Flattened repeat output shape mismatch");
+            return 0;
+        }
+    }
+    else
+    {
+        if (result->ndims != input->ndims)
+        {
+            CUDA_THROW_INVALID("Axis repeat output rank mismatch");
+            return 0;
+        }
+        for (int dim = 0; dim < input->ndims; dim++)
+        {
+            int expected = dim == axis ? output_extent : input->shape[dim];
+            if (result->shape[dim] != expected)
+            {
+                CUDA_THROW_INVALID("Axis repeat output shape mismatch");
+                return 0;
+            }
+        }
+    }
+    if (!result->total_size) return 1;
+
+    cudaError_t status = launch_tensor_repeat_counts(
+        input->data, result->data, input->element_size, prefix_counts, count,
+        axis, input->shape, input->strides, input->ndims, result->shape,
+        result->ndims, result->total_size);
+    if (status != cudaSuccess)
+    {
+        CUDA_THROW_RUNTIME("Per-element repeat failed: %s",
+                           cudaGetErrorString(status));
+        return 0;
+    }
+    return 1;
+}
+
+tensor_t *cuda_tensor_repeat_counts(tensor_t *input,
+                                   const int *prefix_counts, size_t count,
+                                   int axis, const int *output_shape,
+                                   int output_ndims)
+{
+    if (!input || !output_shape || output_ndims < 1 ||
+        output_ndims > MAX_DIMS || axis < -1 || axis >= input->ndims)
+    {
+        CUDA_THROW_INVALID("Per-element repeat requires valid input and shape metadata");
+        return NULL;
+    }
+    if (fusion_active())
+        return fusion_repeat_counts(input, prefix_counts, count, axis,
+                                    output_shape, output_ndims);
+    if (!fusion_materialize(input)) return NULL;
+
+    tensor_t *result = cuda_tensor_create_empty_dtype(
+        (int *)output_shape, output_ndims, input->dtype);
+    if (!result) return NULL;
+    if (!cuda_tensor_repeat_counts_into(input, result, prefix_counts, count,
+                                        axis, NULL))
+    {
+        cuda_tensor_destroy(result);
+        return NULL;
+    }
+    autograd_record_repeat_counts(result, input, prefix_counts, count, axis);
+    return result;
+}
+
+int cuda_tensor_repeat_counts_backward_into(tensor_t *upstream,
+                                             tensor_t *result,
+                                             const int *prefix_counts,
+                                             size_t count, int axis)
+{
+    if (!upstream || !result || axis < -1 || axis >= result->ndims)
+    {
+        CUDA_THROW_INVALID("Repeat-count gradient requires valid tensors and axis");
+        return 0;
+    }
+    size_t expected_count = axis < 0
+        ? result->total_size : (size_t)result->shape[axis];
+    if (count != expected_count || (count && !prefix_counts))
+    {
+        CUDA_THROW_INVALID("Repeat-count gradient metadata does not match the input");
+        return 0;
+    }
+    if (upstream->dtype != result->dtype ||
+        (upstream->dtype != DTYPE_FLOAT32 && upstream->dtype != DTYPE_FLOAT64))
+    {
+        CUDA_THROW_INVALID("Per-element repeat gradients require float32 or float64 data");
+        return 0;
+    }
+    int output_extent = count ? prefix_counts[count - 1] : 0;
+    if (axis < 0)
+    {
+        if (upstream->ndims != 1 || upstream->shape[0] != output_extent)
+        {
+            CUDA_THROW_INVALID("Flattened repeat gradient shape mismatch");
+            return 0;
+        }
+    }
+    else
+    {
+        if (upstream->ndims != result->ndims)
+        {
+            CUDA_THROW_INVALID("Axis repeat gradient rank mismatch");
+            return 0;
+        }
+        for (int dim = 0; dim < result->ndims; dim++)
+        {
+            int expected = dim == axis ? output_extent : result->shape[dim];
+            if (upstream->shape[dim] != expected)
+            {
+                CUDA_THROW_INVALID("Axis repeat gradient shape mismatch");
+                return 0;
+            }
+        }
+    }
+    if (!result->total_size) return 1;
+    if (!upstream->total_size)
+    {
+        cudaError_t status = cudaMemset(result->data, 0,
+                                        result->total_size * result->element_size);
+        if (status != cudaSuccess)
+        {
+            CUDA_THROW_RUNTIME("Cannot zero per-element repeat gradient: %s",
+                               cudaGetErrorString(status));
+            return 0;
+        }
+        return 1;
+    }
+    cudaError_t status = launch_tensor_repeat_counts_gradient(
+        upstream->data, result->data, result->dtype, result->shape,
+        result->ndims, upstream->strides, prefix_counts, count, axis,
+        result->total_size);
+    if (status != cudaSuccess)
+    {
+        CUDA_THROW_RUNTIME("Per-element repeat gradient failed: %s",
+                           cudaGetErrorString(status));
+        return 0;
+    }
+    return 1;
+}
+
+tensor_t *cuda_tensor_repeat_counts_backward(tensor_t *upstream,
+                                              tensor_t *input,
+                                              const int *prefix_counts,
+                                              size_t count, int axis)
+{
+    if (!upstream || !input)
+    {
+        CUDA_THROW_INVALID("Repeat-count gradient requires input and upstream tensors");
+        return NULL;
+    }
+    if (fusion_active())
+        return fusion_repeat_counts_backward(
+            upstream, prefix_counts, count, axis, input->shape, input->ndims);
+    if (!fusion_materialize(upstream)) return NULL;
+    tensor_t *result = cuda_tensor_create_empty_dtype(
+        input->shape, input->ndims, upstream->dtype);
+    if (!result) return NULL;
+    if (!cuda_tensor_repeat_counts_backward_into(
+            upstream, result, prefix_counts, count, axis))
+    {
+        cuda_tensor_destroy(result);
         return NULL;
     }
     return result;

@@ -98,6 +98,8 @@ ZEND_METHOD(CudaArray, mean);
 ZEND_METHOD(CudaArray, max);
 ZEND_METHOD(CudaArray, min);
 ZEND_METHOD(CudaArray, prod);
+ZEND_METHOD(CudaArray, cumsum);
+ZEND_METHOD(CudaArray, cumprod);
 
 ZEND_METHOD(CudaArray, argMax);
 ZEND_METHOD(CudaArray, argMin);
@@ -125,6 +127,7 @@ ZEND_METHOD(CudaArray, toArray);
 ZEND_METHOD(CudaArray, toBuffer);
 ZEND_METHOD(CudaArray, toHost);
 ZEND_METHOD(CudaArray, dtype);
+ZEND_METHOD(CudaArray, getBackend);
 ZEND_METHOD(CudaArray, requiresGrad);
 ZEND_METHOD(CudaArray, backward);
 ZEND_METHOD(CudaArray, grad);

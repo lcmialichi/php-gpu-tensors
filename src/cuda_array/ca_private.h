@@ -34,6 +34,16 @@ extern "C"
     tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type);
     tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operation_type);
     tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t operation_type);
+    tensor_t *cuda_tensor_cumulative(tensor_t *input, int axis,
+                                     operation_type_t operation_type);
+    dtype_t cuda_cumulative_result_dtype(dtype_t input_dtype);
+    int cuda_tensor_cumulative_into(tensor_t *input, tensor_t *result,
+                                    int axis, operation_type_t operation_type,
+                                    cudaStream_t stream);
+    tensor_t *cuda_tensor_cumulative_product_gradient(
+        tensor_t *input, tensor_t *upstream, int axis);
+    int cuda_tensor_cumulative_product_gradient_into(
+        tensor_t *input, tensor_t *upstream, tensor_t *result, int axis);
     tensor_t *cuda_tensor_moments_reduce(tensor_t *input, int axis, int correction,
                                          int standard_deviation);
 
@@ -53,6 +63,21 @@ extern "C"
                                           tensor_transform_spec_t *spec);
     tensor_t *cuda_tensor_index_transform_backward(
         tensor_t *upstream, const tensor_transform_spec_t *spec);
+    tensor_t *cuda_tensor_repeat_counts(tensor_t *input,
+                                        const int *prefix_counts,
+                                        size_t count, int axis,
+                                        const int *output_shape,
+                                        int output_ndims);
+    int cuda_tensor_repeat_counts_into(tensor_t *input, tensor_t *result,
+                                       const int *prefix_counts,
+                                       size_t count, int axis,
+                                       cudaStream_t stream);
+    tensor_t *cuda_tensor_repeat_counts_backward(
+        tensor_t *upstream, tensor_t *input, const int *prefix_counts,
+        size_t count, int axis);
+    int cuda_tensor_repeat_counts_backward_into(
+        tensor_t *upstream, tensor_t *result, const int *prefix_counts,
+        size_t count, int axis);
     size_t cuda_tensor_size(tensor_t *tensor);
 
 #ifdef __cplusplus

@@ -1,7 +1,7 @@
 #ifndef WHERE_KERNELS_H
 #define WHERE_KERNELS_H
 
-#include "../tensor.h"
+#include "../../tensor.h"
 
 #ifdef __cplusplus
 extern "C" {

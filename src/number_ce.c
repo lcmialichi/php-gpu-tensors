@@ -1,5 +1,6 @@
 #include "php.h"
 #include "number_ce.h"
+#include "backend_contract.h"
 #include "zend_interfaces.h"
 
 static zend_object_handlers number_handlers;
@@ -52,10 +53,12 @@ static zend_object* number_create_object(zend_class_entry *ce) {
 
 void register_number_class() {
     zend_class_entry ce;
-    INIT_CLASS_ENTRY(ce, "Cuda\\Number", number_methods);
+    INIT_CLASS_ENTRY(ce, "PhpTensors\\Number", number_methods);
     number_ce = zend_register_internal_class(&ce);
     number_ce->ce_flags |= ZEND_ACC_ABSTRACT;
     number_ce->create_object = number_create_object;
+    zend_class_implements(number_ce, 1, php_tensors_numbers_ce);
+    zend_register_class_alias("Cuda\\Number", number_ce);
 
     memcpy(&number_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     number_handlers.do_operation = number_do_operation;

@@ -2,7 +2,7 @@
 #define CUDA_INDEXED_OPS_H
 
 #include <cuda_runtime.h>
-#include "../tensor.h"
+#include "../../tensor.h"
 
 #ifdef __cplusplus
 extern "C" {

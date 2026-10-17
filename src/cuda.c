@@ -22,6 +22,8 @@
 #include "reduction_ops.h"
 #include "nn.h"
 #include "optimizer.h"
+#include "backend_contract.h"
+#include <string.h>
 
 ZEND_DECLARE_MODULE_GLOBALS(cuda);
 
@@ -31,10 +33,16 @@ static size_t parse_size_string(const char *str);
 
 static PHP_INI_MH(OnUpdateMemSize)
 {
+    if (entry && zend_string_equals_literal(entry->name, "cuda.memory_size") &&
+        new_value && ZSTR_LEN(new_value) > 0)
+    {
+        php_error_docref(NULL, E_DEPRECATED,
+                         "cuda.memory_size is deprecated; use phptensors.cuda.memory_pool_size instead.");
+    }
     if (stage == PHP_INI_STAGE_RUNTIME)
     {
         php_error_docref(NULL, E_WARNING,
-                         "Changing cuda.memory_size at runtime (via ini_set) has no effect.");
+                         "Changing the CUDA memory pool size at runtime (via ini_set) has no effect.");
     }
 
     return SUCCESS;
@@ -42,11 +50,19 @@ static PHP_INI_MH(OnUpdateMemSize)
 
 PHP_INI_BEGIN()
 STD_PHP_INI_ENTRY(
-    "cuda.memory_size",
+    "phptensors.cuda.memory_pool_size",
     "3G",
     PHP_INI_ALL,
     OnUpdateMemSize,
     memory_size,
+    zend_cuda_globals,
+    cuda_globals)
+STD_PHP_INI_ENTRY(
+    "cuda.memory_size",
+    "",
+    PHP_INI_ALL,
+    OnUpdateMemSize,
+    legacy_memory_size,
     zend_cuda_globals,
     cuda_globals)
 PHP_INI_END()
@@ -54,17 +70,23 @@ PHP_INI_END()
 static PHP_GINIT_FUNCTION(cuda)
 {
     cuda_globals->memory_size = "3G";
+    cuda_globals->legacy_memory_size = "";
     cuda_globals->fusion_scope = NULL;
     cuda_globals->fusion_cache = NULL;
     cuda_globals->fusion_pending = 0;
+    cuda_globals->custom_backends_initialized = 0;
 }
 
 PHP_MINIT_FUNCTION(cuda)
 {
     REGISTER_INI_ENTRIES();
-    cuda_register_exceptions();
-
-    const char *ini_value = INI_STR("cuda.memory_size");
+    const char *ini_value = INI_STR("phptensors.cuda.memory_pool_size");
+    const char *legacy_ini_value = INI_STR("cuda.memory_size");
+    if (legacy_ini_value && legacy_ini_value[0] &&
+        (!ini_value || strcmp(ini_value, "3G") == 0))
+    {
+        ini_value = legacy_ini_value;
+    }
     size_t pool_size = parse_size_string(ini_value);
 
     int count = cuda_wrapper_get_device_count();
@@ -73,13 +95,17 @@ PHP_MINIT_FUNCTION(cuda)
         php_error_docref(NULL, E_WARNING, "CUDA initialization failed");
     }
 
+    if (php_tensors_backend_contract_init() != SUCCESS)
+    {
+        return FAILURE;
+    }
+    cuda_register_exceptions();
     register_number_class();
     compiler_init();
     module_init();
     contiguous_array_init();
     fusion_init();
     cuda_nn_init();
-
     if (!cuda_array_init(pool_size))
     {
         return FAILURE;
@@ -477,6 +503,11 @@ PHP_MSHUTDOWN_FUNCTION(cuda)
 
 PHP_RSHUTDOWN_FUNCTION(cuda)
 {
+    if (CUDA_G(custom_backends_initialized))
+    {
+        zend_hash_destroy(&CUDA_G(custom_backends));
+        CUDA_G(custom_backends_initialized) = 0;
+    }
     fusion_request_shutdown();
     cuda_blas_shutdown();
     cuda_blas_set_precision(CUDA_MATMUL_PRECISION_FP32_STRICT);
@@ -487,19 +518,21 @@ PHP_RSHUTDOWN_FUNCTION(cuda)
 
 PHP_RINIT_FUNCTION(cuda)
 {
+    zend_hash_init(&CUDA_G(custom_backends), 4, NULL, ZVAL_PTR_DTOR, 0);
+    CUDA_G(custom_backends_initialized) = 1;
     return SUCCESS;
 }
 
-zend_module_entry cuda_module_entry = {
+zend_module_entry phptensors_module_entry = {
     STANDARD_MODULE_HEADER,
-    PHP_CUDA_EXTNAME,
+    PHP_PHPTENSORS_EXTNAME,
     cuda_functions,
     PHP_MINIT(cuda),
     PHP_MSHUTDOWN(cuda),
     PHP_RINIT(cuda),
     PHP_RSHUTDOWN(cuda),
     NULL,
-    PHP_CUDA_VERSION,
+    PHP_PHPTENSORS_VERSION,
     PHP_MODULE_GLOBALS(cuda),
     PHP_GINIT(cuda),
     NULL,
@@ -527,6 +560,6 @@ static size_t parse_size_string(const char *str)
     }
 }
 
-#ifdef COMPILE_DL_CUDA
-ZEND_GET_MODULE(cuda)
+#ifdef COMPILE_DL_PHPTENSORS
+ZEND_GET_MODULE(phptensors)
 #endif

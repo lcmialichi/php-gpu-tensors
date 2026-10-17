@@ -3,7 +3,7 @@
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
-#include "../data_types.h"
+#include "../../data_types.h"
 
 template <typename T>
 __device__ __forceinline__ float low_precision_to_float(T value)

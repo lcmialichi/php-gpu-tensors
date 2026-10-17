@@ -1,9 +1,9 @@
 <?php
 declare(strict_types=1);
 
-use Cuda\CudaArray;
-use Cuda\Fusion;
-use Cuda\FusionGraph;
+use PhpTensors\Cuda\CudaArray;
+use PhpTensors\Fusion;
+use PhpTensors\FusionGraph;
 
 /**
  * -------------------------------------------------------------------------
@@ -471,7 +471,7 @@ function runClassifierInference(
 function runClassifier(array $settings = []): int
 {
     $cfg = parseConfig($settings);
-    if (!extension_loaded('cuda') || cuda_get_device_count() < 1) {
+    if (!extension_loaded('phptensors') || cuda_get_device_count() < 1) {
         throw new RuntimeException('This tool requires the CUDA extension and a visible NVIDIA GPU.');
     }
     @ini_set('memory_limit', '4G');

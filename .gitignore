@@ -1,6 +1,8 @@
 cuda_build
 cuda_build/**
 cuda_build-*/
+phptensors_build
+phptensors_build-*/
 examples/cache
 examples/cache/**
 examples/training

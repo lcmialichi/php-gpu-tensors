@@ -2,7 +2,7 @@
 #define SCALAR_OPS_H
 
 #include <stddef.h>
-#include "../operations.h"
+#include "../../operations.h"
 
 #ifdef __cplusplus
 extern "C"

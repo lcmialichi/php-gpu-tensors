@@ -8,24 +8,24 @@
 #include <limits.h>
 #include <stdint.h>
 
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_conv_args, 0, 2, Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, weights, Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, bias, Cuda\\CudaArray, 1, "null")
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_conv_args, 0, 2, PhpTensors\\Cuda\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\Cuda\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO(0, weights, PhpTensors\\Cuda\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, bias, PhpTensors\\Cuda\\CudaArray, 1, "null")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, stride, IS_ARRAY, 0, "[1, 1]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, padding, IS_ARRAY, 0, "[0, 0]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dilation, IS_ARRAY, 0, "[1, 1]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, groups, IS_LONG, 0, "1")
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_pool_args, 0, 2, Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, Cuda\\CudaArray, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_pool_args, 0, 2, PhpTensors\\Cuda\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\Cuda\\CudaArray, 0)
 ZEND_ARG_TYPE_INFO(0, window, IS_ARRAY, 0)
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, stride, IS_ARRAY, 0, "[2, 2]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, padding, IS_ARRAY, 0, "[0, 0]")
 ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, mode, IS_STRING, 0, "\"max\"")
 ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_softmax_args, 0, 1, Cuda\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, Cuda\\CudaArray, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_softmax_args, 0, 1, PhpTensors\\Cuda\\CudaArray, 0)
+ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\Cuda\\CudaArray, 0)
 ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(nn_private_args, 0, 0, 0)
 ZEND_END_ARG_INFO()
@@ -205,8 +205,9 @@ static const zend_function_entry nn_methods[] = {
 int cuda_nn_init(void)
 {
     zend_class_entry entry;
-    INIT_NS_CLASS_ENTRY(entry, "Cuda", "NN", nn_methods);
+    INIT_NS_CLASS_ENTRY(entry, "PhpTensors\\Cuda", "NN", nn_methods);
     zend_class_entry *ce = zend_register_internal_class(&entry);
+    zend_register_class_alias("Cuda\\NN", ce);
     ce->ce_flags |= ZEND_ACC_FINAL;
     return SUCCESS;
 }
