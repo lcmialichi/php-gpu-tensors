@@ -178,7 +178,7 @@ if test "$PHP_CUDA" != "no"; then
     src/backend_contract.c \
     src/cuda_exceptions.c \
     src/kernel_ce.c \
-    src/number_ce.c \
+    src/operator_overload_ce.c \
     src/nvidia_types.c \
     src/cuda_wrapper.cpp \
     src/cuda_array/cuda_array_ce.c \ 
@@ -214,7 +214,7 @@ else
     src/cpu_module.c \
     src/backend_contract.c \
     src/cuda_exceptions.c \
-    src/number_ce.c \
+    src/operator_overload_ce.c \
     src/cpu_host_array.c \
     src/host_array_unsupported.c"
     PHP_NEW_EXTENSION(phptensors, $SRC_FILES, yes)

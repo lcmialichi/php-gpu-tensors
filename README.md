@@ -15,19 +15,14 @@
     <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/lcmialichi/php-gpu-tensors"></a>
 </p>
 
-PHP Tensors is a native PHP extension with an explicit CPU tensor and an
-optional CUDA implementation. It provides GPU-resident arrays, tensor
-operations, custom CUDA kernels, optional expression fusion, reverse-mode
-automatic differentiation and experimental machine-learning building blocks.
+PHP Tensors is a native PHP extension for tensor operations on the CPU or
+optional NVIDIA GPUs. It includes custom CUDA kernels, Fusion and reverse-mode
+autograd.
 
-**Status:** beta · Linux · PHP 8.1-8.5 · NTS and ZTS · CPU-only builds supported; CUDA is optional.
-The documented package baseline is `0.1.0-beta.5`; this source checkout may
-contain newer features.
-
-This is a low-level tensor library, not a replacement for a complete machine
-learning framework. CUDA operations require the CUDA Toolkit at build time and
-a compatible NVIDIA driver at runtime; CPU-only builds need no CUDA installation.
-Custom backends may implement the public PHP contracts.
+**Status:** beta · Linux · PHP 8.1-8.5 · NTS/ZTS · CPU-only builds supported.
+The package baseline is `0.1.0-beta.5`; this checkout may include newer APIs.
+CUDA builds require the Toolkit; running CUDA operations also needs a compatible
+NVIDIA driver and GPU. This is a low-level library, not a complete ML framework.
 
 **Contents:** [Quick start](#quick-start) · [Results](#results) ·
 [Install](#install) · [`CudaArray`](#gpu-tensors-with-cudaarray) ·
@@ -43,8 +38,8 @@ Custom backends may implement the public PHP contracts.
 
 ## Quick start
 
-Tensor operations run on the GPU by default. Fusion is opt-in; use it when a
-compatible expression is repeated and worth compiling.
+Use `CudaArray` for GPU tensors. Fusion is opt-in and useful for expressions
+replayed many times.
 
 ```php
 use PhpTensors\CudaArray;
@@ -54,18 +49,16 @@ $a = CudaArray::ones([4]);
 $b = CudaArray::full([4], 2.0);
 $c = CudaArray::full([4], 3.0);
 
-// Eager execution: separate operation calls.
 $eager = $a + $b * $c;
 
-// Fusion: capture once, then replay a compiled plan.
 $plan = Fusion::compile(fn($x, $y, $z) => $x + $y * $z, inputs: [$a, $b, $c]);
 $fused = $plan->run($a, $b, $c);
 
 print_r($fused->toArray()); // [7, 7, 7, 7]
 ```
 
-`CudaArray` keeps its data on the GPU. Calls such as `toArray()`, `toBuffer()`,
-`toHost()` and `item()` explicitly transfer results to the host.
+`CudaArray` keeps data on the GPU. `toArray()`, `toBuffer()`, `toHost()` and
+`item()` explicitly read data back to the host.
 
 ## Results
 
@@ -110,37 +103,16 @@ php -n -d extension=./phptensors_build-8.3/modules/phptensors.so -r \
   '$a = new PhpTensors\HostArray([[1, 2], [3, 4]]); print_r($a->multiply(2)->toArray());'
 ```
 
-Pass `--cpu-only` to `compile.sh` to force a CPU build even when CUDA is
-installed. The default build mode is selected independently of runtime GPU
-availability: a CUDA build can compile without a GPU, but CUDA operations
-require a working NVIDIA driver and device.
-Omit `--cpu-only` to select CUDA automatically when a Toolkit is detected; use
-`./run-tests.sh --require-gpu` for the CUDA runtime suite.
-
-The module is written to `phptensors_build-<PHP major.minor>/modules/phptensors.so`.
-Replace `8.3` with the version selected by `php-config`; add `--install` to
-install the extension and its INI file.
-
-Choose a PHP ABI explicitly if multiple versions are installed:
+Without `--cpu-only`, the build uses CUDA when a Toolkit is detected. CUDA
+runtime operations still require a GPU. The extension is written to
+`phptensors_build-<PHP version>/modules/phptensors.so`; replace `8.3` below
+with the version selected by `php-config`. Add `--install` to install it.
 
 ```bash
 PHP_BIN=php8.3 PHPIZE=phpize8.3 PHP_CONFIG=php-config8.3 ./compile.sh
-PHP_BIN=php8.3 PHP_CONFIG=php-config8.3 ./run-tests.sh --require-gpu
 ```
 
-Build options:
-
-- `CUDA_HOME` selects the Toolkit prefix; `CUDA_ARCH` selects a target such as
-  `sm_86`.
-- `./compile.sh --cpu-only` skips CUDA detection and builds the CPU-only extension.
-  `./configure --without-cuda` also selects a CPU-only build.
-- `CUDA_USE_CUBLAS=no` disables cuBLAS; `CUDA_USE_CUBLASLT=no` disables cuBLASLt.
-  Both default to enabled when available.
-- `CUDA_USE_CUDNN=auto|yes|no` controls optional cuDNN detection;
-  `CUDA_CUDNN_ROOT` selects its prefix. Runtime libraries must be loader-visible.
-- The CUDA memory pool defaults to `3G`. Configure it with
-  `phptensors.cuda.memory_pool_size`; the old `cuda.memory_size` key is accepted
-  temporarily and emits a deprecation notice when set.
+For advanced configuration, see `./configure --help` in the build directory.
 
 ### Install with PIE
 
@@ -148,32 +120,21 @@ Build options:
 pie install lcmialichi/php-gpu-tensors:0.1.0-beta.5
 ```
 
-PIE builds for the selected PHP installation. CUDA is optional; provide
-`--with-cuda=/path/to/toolkit` when building the CUDA backend. A CPU-only
-installation does not need the Toolkit or an NVIDIA driver.
+PIE builds for the selected PHP installation. CUDA is optional.
 
-### Build and test with Docker
+### Docker and tests
 
-With NVIDIA Container Toolkit and a working host driver, build and test in the
-CUDA 12.6.3/cuDNN development container:
+GPU tests in Docker require NVIDIA Container Toolkit and a working host driver:
 
 ```bash
 docker compose run --build --rm php_cuda_dev bash -lc './compile.sh && ./run-tests.sh --require-gpu'
 ```
 
-Set `CUDA_IMAGE` to choose another base image. Use `CUDA_USE_CUDNN=no` only
-when deliberately building without cuDNN.
-
-### Run tests
-
 ```bash
-./run-tests.sh                 # CPU-side C tests and PHP tests
-./run-tests.sh --cpu-only      # CPU-only backend PHPT; does not validate CUDA
-./run-tests.sh --require-gpu   # Fail if no GPU is visible
+./run-tests.sh               # Run CPU-side and available PHP tests
+./run-tests.sh --cpu-only    # Test the CPU-only backend
+./run-tests.sh --require-gpu # Require a visible GPU
 ```
-
-Use `--require-gpu` in CI to fail instead of silently skipping GPU tests when no
-device is available.
 
 ## GPU tensors with `CudaArray`
 
@@ -197,97 +158,35 @@ echo $output->dtype();       // float32
 
 ### Creation and data transfer
 
-- **Import:** `new CudaArray($nested, $dtype)`, `fromFlatArray()`,
-  `fromBuffer()`, `fromFile()` and `fromNpy()`. Nested values must be
-  rectangular and numeric. `.npy` import supports C-order, little-endian
-  numeric and boolean arrays, but not Fortran-order or big-endian files.
-- **Factories:** `zeros()`, `ones()`, `full()`, `eye()`, `identity()`,
-  `arange()`, `linspace()`, `zerosLike()`, `onesLike()` and `fullLike()`.
-  Integer-only `arange()` defaults to `int64`; floating sequences default to
-  `float64`; `linspace()` includes the endpoint. Like-factories preserve the
-  prototype dtype unless overridden.
-- **Random:** `rand()` generates uniform values and `randn()` standard-normal
-  values. Calls without a seed are fresh; an integer seed is reproducible.
-- **Export:** `toArray()` creates nested PHP arrays; `toBuffer()` returns
-  packed bytes; `toHost()` returns a `PhpTensors\HostArray`.
-  `item()` transfers a single-element tensor's value.
-
-`float16` and `bfloat16` values can be created from PHP numeric arrays, packed
-buffers, fill/like factories, `eye()` and `randn()`. They can be exported with
-`toArray()`, `toBuffer()` and `toHost()`, or safely widened with `astype()`.
-Packed transfers avoid per-value PHP conversion; keep intermediates on GPU.
+Create tensors from nested arrays or with `fromFlatArray()`, `fromBuffer()`,
+`fromFile()` and `fromNpy()`. Factories include `zeros()`, `ones()`, `full()`,
+`eye()`, `arange()`, `linspace()`, `rand()` and `randn()`.
+`toArray()` returns nested PHP arrays, `toBuffer()` returns packed bytes,
+`toHost()` copies to a `HostArray`, and `item()` reads a single value.
 
 ### Operations
 
-`CudaArray` supports:
+- **Math:** arithmetic operators and methods, elementwise functions,
+  comparisons, `where()`, `maximum()`, `minimum()` and `clamp()`.
+- **Linear algebra:** `matmul()` supports batched tensors and broadcasting.
+- **Reductions:** `sum()`, `mean()`, `min()`, `max()`, `prod()`, `argMin()`,
+  `argMax()`, `all()`, `any()`, `var()`, `std()`, `cumsum()` and `cumprod()`.
+- **Neural network helpers:** `softmax()` and `layerNorm()`.
+- **Indexing:** `concat()`, `gather()` and `scatterAdd()`.
+- **Shape and dtype:** views, transforms, `astype()` and tensor metadata.
 
-- **Arithmetic:** `add()`, `subtract()`, `multiply()`, `divide()`, `power()`,
-  scalar arithmetic, and PHP arithmetic operators.
-- **Elementwise math:** `sqrt()`, `exp()`, `expm1()`, `exp2()`, `log()`,
-  `log1p()`, `log2()`, `log10()`, `sin()`, `cos()`, `tan()`, `abs()`, `neg()`,
-  `asin()`, `acos()`, `atan()`, `sinh()`, `cosh()`, `tanh()`, `floor()`,
-  `ceil()` and `round()`. `expm1()` and `log1p()` use numerically stable CUDA
-  functions near zero.
-- **Normalization:** `softmax()` computes stable probabilities along an axis
-  (last axis by default), preserving `float32`/`float64`, widening low-
-  precision inputs to `float32`, and promoting integer and boolean inputs to
-  `float64`. `layerNorm()` normalizes across an explicit axis list; optional
-  `scale` and `bias` shapes follow that list's order.
-- **Comparisons and selection:** `gt()`, `lt()`, `eq()`, `ne()`, `ge()`,
-  `le()`, `where()`, `maximum()`, `minimum()` and `clamp()`.
-- **Matrix products:** `matmul()`, including supported batched and broadcast
-  layouts. Matching `float32`, `float16` and `bfloat16` inputs are supported;
-  low-precision products accumulate in `float32` and return the input dtype.
-- **Reductions/scans:** `sum()`, `mean()`, `min()`, `max()`, `prod()`,
-  `argMin()`, `argMax()`, `all()`, `any()`, `var()`, `std()`, `cumsum()` and
-  `cumprod()`. Cumulative methods accept an axis; null flattens first.
-- **Dtype conversion:** `astype()` for safe conversions.
-- **Inspection:** `getShape()`, `getSize()`, `getStrides()`, `getNdims()` and
-  `dtype()`.
-
-Arithmetic uses broadcasting and dtype promotion. `mean()` returns `float32`
-for `float32` input and `float64` for `float64`, integer or boolean input;
-`all()` and `any()` return booleans. `where()` broadcasts its condition and
-values, treats nonzero conditions as true and requires matching value dtypes.
-`var()` and `std()` accept an optional axis and correction (default `0`).
-`layerNorm()` uses population variance, distinct non-empty axes and a finite
-positive epsilon; optional `scale` and `bias` match normalized dimensions in
-axis-list order. It preserves `float32`/`float64`, promotes integer/boolean to
-`float64`, and uses `float64` if either affine parameter is `float64`.
-`cumsum()` and `cumprod()` use CUB scans, support strided inputs and promote
-small integers and booleans to `int64`; `uint64` stays unsigned. FP16/BF16
-reductions and cumulative scans promote to `float32`. Autograd supports
-floating-point `cumsum()` and zero-safe `cumprod()` in eager execution and
-synchronous Fusion.
-
-Low-precision matmul accumulates in `float32` and returns the operand dtype,
-using cuBLAS for eligible 2D workloads and tiled kernels otherwise. Elementwise
-math and comparisons compute in `float32` and round to the promoted dtype.
-Low-precision `where()` conditions and values are supported. `gather()` also
-supports FP16/BF16. Value reductions accumulate in and return `float32`;
-arg-reductions return `int32`, while `all()`/`any()` return booleans. Cumulative
-scans also promote to `float32`. `scatterAdd()` promotes low-precision inputs
-and updates to `float32`, returning FP32 results and gradients.
-`cuda_set_matmul_precision()` only affects `float32` matmul. Low-precision
-matmul and elementwise autograd are supported; leaf gradients use `float32`,
-while operation outputs and explicit backward seeds retain their dtype.
-`softmax()` and `layerNorm()` return `float32` for low-precision inputs.
+Arithmetic broadcasts compatible shapes and promotes dtypes. FP16/BF16
+operations use FP32 intermediates; reductions and `scatterAdd()` may return
+FP32. Unsupported dtype combinations or gradients raise exceptions. See the
+[API stubs](stubs/cuda.stub.php) for method signatures and options.
 
 ### Shape operations, views and indexing
 
 Shape methods include `reshape()`, `flatten()`, `transpose()`, `swapaxes()`,
-`moveaxis()`, `squeeze()`, `unsqueeze()`, `broadcastTo()` and Python-style
-positive-step `slice()`. Views may share storage; `copy()` creates independent
-contiguous storage. `reshape()` requires contiguous input. `diagonal()`,
-scalar-count `repeat()`, `tile()`, `flip()` and `roll()` materialize contiguous
-results and support float32/float64 autograd. Fusion inlines their index
-mappings, including chained transforms; its backward uses a native GPU
-scatter-add boundary.
-`repeat()` accepts one scalar count or a list of non-negative per-element
-counts (one per flattened input element when axis is null, otherwise one per
-element along that axis). Counts must fit the supported output dimension.
-Per-element counts also support float32/float64 autograd in eager execution
-and synchronous Fusion.
+`moveaxis()`, `squeeze()`, `unsqueeze()`, `broadcastTo()` and `slice()`.
+Views may share storage; `copy()` creates independent storage. `reshape()`
+requires contiguous input. `repeat()`, `tile()`, `diagonal()`, `flip()` and
+`roll()` create transformed tensors.
 
 ```php
 $row = new CudaArray([[1.0, 2.0, 3.0]]);
@@ -296,25 +195,13 @@ $columns = $batch->slice(':, 1:3');
 $flat = $columns->flatten();
 ```
 
-`slice()` uses exclusive stops, supports negative indices/bounds and accepts a
-comma-separated expression or per-axis selectors. Integer selectors remove
-axes; ranges retain them. `null`, `':'`, omitted selectors and zero-argument
-`slice()` select the full extent. Steps must be positive. Ellipsis, new axes,
-index lists and executable expressions are unsupported. Legacy `__invoke()`
-and `[]` selection remains available with inclusive range stops.
+`slice()` uses exclusive stops, supports negative indices and positive steps,
+and accepts per-axis selectors. Integer selectors remove axes; ranges retain
+them. Ellipsis and index lists are not supported.
 
-`concat()` joins tensors along an axis. `gather($indices, $axis)` reads values
-using an `int32` index tensor; `scatterAdd($indices, $updates, $axis)` returns
-a new tensor and accumulates duplicate indices. `gather()` supports all tensor
-dtypes. `scatterAdd()` supports `float32`/`float64`; FP16/BF16 values are
-promoted to `float32`. Both run in synchronous Fusion, but not async replay or
-CUDA Graph capture.
-
-Empty dimensions are supported for many operations and transfers. For example,
-sum and product over an empty axis return 0 and 1, respectively; mean returns
-NaN. Min/max and arg reductions reject empty reduced axes because they have no
-identity or index. A fully indexed scalar has shape `[]` and contains one
-element.
+`gather()` uses an `int32` index tensor. `scatterAdd()` returns a new tensor and
+adds updates at the requested indices. Empty dimensions are supported by many
+operations; some reductions, such as min/max, require non-empty input.
 
 ### Serialization
 
@@ -337,21 +224,13 @@ $gradient = $weight->grad();
 $weight->zeroGrad();
 ```
 
-Gradients accumulate until `zeroGrad()`. `detach()` returns a shared-storage
-view without gradient history. Non-scalar outputs need a matching seed.
-Backward releases the graph by default; pass `retainGraph: true` to keep it.
-In-place changes to saved tensors make backward fail rather than use stale data.
+Gradients accumulate until `zeroGrad()`. Use `detach()` to stop gradient
+tracking. Non-scalar outputs need a matching seed; pass `retainGraph: true` to
+reuse the graph. Supported gradients depend on operation and dtype; unsupported
+cases raise exceptions. Inputs must enable gradients before Fusion capture.
 
-Gradient rules cover arithmetic/broadcasting, batched matmul, sum/mean/product
-and min/max reductions, `where()`, floating-point casts, shape/view operations,
-concatenation and common unary math. Min/max ties share gradients. Comparisons
-and `where()` conditions have no gradients; unsupported rules fail explicitly.
-Backward can run in Fusion; mark inputs with `requiresGrad()` before compiling.
-
-`PhpTensors\Optimizer` implements functional SGD and AdamW: `step()` returns updated
-parameters and explicit state, suitable for Fusion capture. SGD state contains
-velocity; AdamW state contains first/second moments and beta powers.
-`weightDecayMask` can exclude selected parameters from decay.
+`Optimizer` provides functional SGD and AdamW. Each `step()` returns updated
+parameters and explicit state; `weightDecayMask` can exclude parameters.
 
 ## Custom CUDA kernels
 
@@ -381,13 +260,9 @@ $module->launch('scale', args: [$data, 3, 512],
     config: ['block' => [256, 1, 1], 'grid' => [2, 1, 1]]);
 ```
 
-`launch()` is synchronous; `launchAsync()` and `launchAsyncBatch()` submit work
-for collection with `sync()`, `wait()` or completion queries. Keep arrays alive
-until completion. Modules expose metadata, PTX, statistics and pending-operation
-controls, and can be serialized or saved. See the
-[synchronous JIT example](examples/04_custom_jit_kernels.php),
-[async example](examples/05_jit_async_execution.php) and
-[serialization example](examples/06_serialize_compiled_module.php).
+`launch()` runs synchronously. Use `launchAsync()` or `launchAsyncBatch()` for
+asynchronous work, and keep input arrays alive until it completes. See the
+[JIT examples](examples/README.md).
 
 ## Optional kernel fusion
 
@@ -409,38 +284,15 @@ print_r($graph->getPlan());
 echo $graph->getSource();
 ```
 
-The callback runs during capture, not on each replay. Input shapes, dtypes and
-strides must remain compatible, but values and pointers may change. Closure
-tensors stay alive with the graph; use callback parameters for replaceable
-inputs.
+The callback runs during capture, not on replay. Input shapes, dtypes and
+strides must remain compatible. Fusion combines supported elementwise work and
+views; reductions, matmul and some indexing operations use native kernels.
+Unsupported operations may work in `Fusion::run()` but fail in
+`Fusion::compile()`. The planner can generate multiple kernels, so one
+expression does not always mean one launch.
 
-Fusion combines elementwise arithmetic, implicit broadcasting, scalars, unary
-math, comparisons, `where()`, safe casts and reshape/transpose/slice/
-`broadcastTo()` views. Scalar `repeat()` plus `diagonal()`, `tile()`, `flip()`
-and `roll()` are inlined as index mappings. Generated kernels can surround
-native boundaries:
-
-- **Native boundaries:** reductions, cumulative scans, per-element `repeat()`,
-  `matmul()` (matching `float32`, `float16` or `bfloat16` inputs), powers,
-  `concat()`, `gather()` and `scatterAdd()` use existing kernels. Contiguous
-  flattened and last-axis scans support async replay and CUDA Graph capture;
-  strided or other-axis scans remain synchronous. Indexed operations validate
-  indices synchronously; per-element `repeat()`, `concat()` and indexed
-  operations do not support async replay or CUDA Graph capture.
-- `softmax()` and `layerNorm()` are capturable, but are currently decomposed
-  into elementwise segments and separate native reduction boundaries rather
-  than a single kernel.
-- **Unsupported capture:** cuDNN and operations requiring CPU reads are not
-  captured. Other unsupported operations may materialize inputs in scoped
-  `Fusion::run()`, but fail in `Fusion::compile()` if they need placeholder data.
-- **Diagnostics/cache:** `getStats()`, `getPlan()` and `getSource()` describe
-  generated work. Per-request/thread PTX cache uses LRU eviction (16 entries
-  or 16 MiB); inspect or clear it with `getCacheStats()` / `clearCache()`.
-
-The planner can split large expressions, deduplicate eligible repeated nodes
-and avoid intermediates; one callback is not necessarily one kernel. The
-[Fusion example](examples/07_fusion_graph.php) covers capture, replay,
-diagnostics and benchmarking.
+Use `getStats()`, `getPlan()` and `getSource()` to inspect a plan. See the
+[Fusion example](examples/07_fusion_graph.php) for capture and replay.
 
 ## Streams, asynchronous execution and CUDA Graphs
 
@@ -454,37 +306,20 @@ $graph = Fusion::compile(
     cudaGraph: true
 );
 $pending = $graph->runAsync($a, $b);
-$finished = $pending->isFinished();
 $result = $pending->wait();
 ```
 
-Async replay supports generated kernels, matmul and reduction boundaries.
-Compatible CUDA Graph plans recapture sequences containing native boundaries,
-which may add host overhead; power boundaries currently require synchronous
-execution. Stream plans allow concurrent executions, but a graph executable
-allows only one outstanding replay. Collect it with `wait()` before replaying.
-Keep inputs alive until collection; mutations, custom launches and device reset
-are blocked while work is pending. Destroying a pending execution synchronizes.
-
-`getStats()` reports the backend and replay/resource counters;
-`cudaGraphCompatible` and `cudaGraphIncompatibility` explain graph eligibility.
-`setProfiling(true)` reports end-to-end bind/execute/collect timings, not
-isolated kernel time. See the
-[stream and CUDA Graph example](examples/07_fusion_graph.php).
+Async plans return a `FusionExecution`; call `wait()` to collect results and
+keep inputs alive until then. A CUDA Graph plan allows only one outstanding
+replay. Some operations are not graph-compatible; inspect
+`cudaGraphCompatible` and `cudaGraphIncompatibility` in `getStats()`.
+Profiling reports end-to-end timings, not isolated kernel time.
 
 ## Accelerated kernels and backend diagnostics
 
-Execution uses a hybrid backend:
-
-- Custom CUDA kernels and Fusion for elementwise work.
-- CUB for eligible large reductions; coalesced kernels are available for
-  non-last-axis reductions.
-- cuBLAS/cuBLASLt for compatible matrix products, with built-in kernels for
-  small products and fallback layouts.
-- Optional cuDNN for CNN inference.
-
-Reduction scratch is cached per device and stream. Arg reductions choose the
-first tied index and ignore NaNs; parallel reduction order may change low bits.
+The CUDA backend uses custom kernels and Fusion for elementwise work, CUB for
+reductions, cuBLAS/cuBLASLt for compatible matrix products and optional cuDNN
+for CNN inference. Floating-point reduction order may affect low bits.
 
 ### Matrix multiplication precision and tuning
 
@@ -497,15 +332,11 @@ $result = $left->matmul($right);
 cuda_set_matmul_precision('fp32-strict');
 ```
 
-The per-request/thread policy resets to strict FP32 at shutdown. It affects
-eligible cuBLAS/cuBLASLt GEMMs, not tensor dtypes, dot products or built-in
-fallback kernels. Set it before compiling Fusion plans with `matmul()`; plans
-capture the selected mode.
+This setting affects eligible cuBLAS/cuBLASLt FP32 matmuls only. Set it before
+compiling Fusion plans that use matmul.
 
-For repeatedly used large 2D `float32` shapes, `cuda_tune_matmul()` benchmarks
-zero-workspace cuBLASLt candidates and caches the fastest match for the request.
-This explicit setup step synchronizes and runs trial GEMMs. It requires
-cuBLASLt, BLAS-compatible layouts and at least 10 million multiply-accumulates.
+For repeated large 2D FP32 matmuls, `cuda_tune_matmul()` benchmarks and caches
+compatible cuBLASLt choices. It synchronizes and runs trial operations.
 
 ```php
 $tuning = cuda_tune_matmul($left, $right);
@@ -513,9 +344,7 @@ print_r($tuning['candidates']);
 $product = $left->matmul($right);
 ```
 
-`cuda_get_backend_info()` reports compiled capabilities, matmul backend,
-precision, BLAS status and per-request submission counters. Counters measure
-submissions, not completed work or CUDA Graph replays.
+`cuda_get_backend_info()` reports available capabilities and backend counters.
 
 ### Kernel benchmark
 
@@ -527,20 +356,15 @@ php -n -d memory_limit=-1 -d extension=./phptensors_build-8.3/modules/phptensors
   --binary=./phptensors_build-8.3/modules/phptensors.so --output=kernel-results.json
 ```
 
-The benchmark checks results and measures API wall-clock latency, including
-allocation and final synchronization—not isolated kernel time. It covers
-square/skinny/MLP, transposed/strided/batched/broadcast matmul, reductions,
-eager/Fusion/CUDA Graph and repeated allocation. Configure `--warmups`,
-`--samples` and `--pool-iterations`; `--precision=tf32` and `--tune-matmul`
-exercise the explicit matmul options.
+The benchmark validates results and measures end-to-end latency, including
+allocation and synchronization. Options control warmups, samples and matmul
+precision/tuning.
 
 ## CNN inference with optional cuDNN
 
-`PhpTensors\NN` provides static inference methods for initialized, contiguous
-`float32` tensors (NCHW inputs, OIHW filters). It prefers cuDNN when available
-and uses native CUDA kernels otherwise; there is no CPU fallback or backend
-preflight. Inputs are not silently cast or packed. NN does not support
-autograd or Fusion capture.
+`PhpTensors\NN` provides CUDA inference for contiguous FP32 tensors (NCHW input,
+OIHW filters). It uses cuDNN when available and native kernels otherwise.
+There is no CPU fallback; NN does not support autograd or Fusion capture.
 
 ```php
 use PhpTensors\NN;
@@ -550,25 +374,13 @@ $pooled = NN::pool2d($features, window: [2, 2], stride: [2, 2]);
 $probabilities = NN::softmax($pooled);
 ```
 
-- `conv2d()` supports stride, padding, dilation, groups and optional per-output
-  channel bias. It performs cross-correlation.
-- `pool2d()` supports deterministic max pooling and average pooling that
-  excludes padded cells.
-- `softmax()` computes channel softmax.
-
-Both paths preserve FP32 inference semantics. cuDNN convolution uses
-deterministic FMA algorithms and a bounded reusable workspace; native kernels
-cover convolution, pooling and softmax when cuDNN is unavailable or cannot
-handle a supported configuration. Calls use the default stream. Backprop,
-mixed precision, async CNN plans and convolution/activation fusion are not
-included.
+`conv2d()` supports stride, padding, dilation, groups and optional bias;
+`pool2d()` supports max and average pooling; `softmax()` normalizes channels.
 
 ## Training example
 
 [`examples/08_gpu_classifier.php`](examples/08_gpu_classifier.php) trains an
-MLP on MNIST, Fashion-MNIST or a custom CSV dataset. It demonstrates PHP data
-preparation, packed GPU batches, autograd, SGD/AdamW and Fusion replay without
-requiring custom CUDA source:
+MLP on MNIST, Fashion-MNIST or a custom CSV dataset using autograd and SGD/AdamW.
 
 ```bash
 php -n -d extension=./phptensors_build-8.3/modules/phptensors.so \
@@ -576,17 +388,15 @@ php -n -d extension=./phptensors_build-8.3/modules/phptensors.so \
   --batch-size=128 --optimizer=adam
 ```
 
-The `$config` array or command-line options select the dataset, hidden layers,
-epochs, batch size, optimizer and learning rate. `--profile` reports Fusion
-stats; `--predict-index=N` predicts one sample; `--no-save` disables saving;
-`--load` evaluates a saved model.
+Use `--profile` for Fusion stats, `--predict-index=N` for a sample prediction,
+`--no-save` to disable saving, or `--load` to evaluate a saved model.
 
 ## API and limits
 
 | API | Purpose |
 | --- | --- |
 | `PhpTensors\Tensor` | Minimal backend-independent tensor metadata and transfer contract |
-| `PhpTensors\Numbers` / `PhpTensors\Number` | Operator-overload capability marker and base class for PHP-defined numeric objects |
+| `PhpTensors\OperatorOverloadable` / `PhpTensors\OperatorOverload` | Operator-overload marker and userland base class |
 | `PhpTensors\BackendInterface` | Optional contract for user-created backend implementations |
 | `PhpTensors\CudaArray` | GPU storage, arithmetic, reductions, views, indexing, data transfer and opt-in autograd |
 | `PhpTensors\HostArray` | Host storage, CPU arithmetic and explicit transfer to/from `CudaArray` |
@@ -598,14 +408,12 @@ stats; `--predict-index=N` predicts one sample; `--no-save` disables saving;
 | `cuda_*()` functions | Device management, memory, synchronization, backend diagnostics and matmul settings |
 | `PhpTensors\Exception` and subclasses | Runtime, argument, allocation and compilation errors |
 
-Annotated signatures are in [class stubs](stubs/cuda.stub.php) and
-[device-function stubs](stubs/cuda_methods.stub.php). Runnable examples are
-listed in the [examples guide](examples/README.md).
+See [API stubs](stubs/cuda.stub.php) for signatures and the
+[examples guide](examples/README.md) for runnable code.
 
 ### Backend contracts and custom backends
 
-`Tensor` describes the common metadata and transfer surface. Users choose the
-implementation by constructing its concrete class:
+Choose a backend by constructing its tensor class:
 
 ```php
 use PhpTensors\HostArray;
@@ -615,49 +423,36 @@ $cpu = new HostArray([1, 2, 3]);
 $gpu = new CudaArray([1, 2, 3]);
 ```
 
-`PhpTensors\CudaArray` and `PhpTensors\HostArray` are the public tensor classes.
-All public classes use the `PhpTensors` namespace.
-Mixed-backend arithmetic does not transfer data implicitly: use
-`HostArray::toGpu()` or `CudaArray::toHost()` to request a transfer explicitly.
-Host arithmetic currently supports same-shape `float32`/`float64` tensors and
-scalars. CUDA builds also preserve other dtypes when transferring through
-`HostArray`.
+`HostArray` stores data on the CPU; `CudaArray` stores it on the GPU. Operations
+do not move data implicitly. Use `toGpu()` and `toHost()` for synchronous copies
+that preserve shape and dtype.
 
-`BackendInterface` is an optional userland contract, not a registry or an
-automatic dispatcher. An application can instantiate its backend directly and
-call its `createTensor()` / `execute()` methods. Tensor operations and custom
-operator behavior remain the responsibility of the tensor implementation.
+`HostArray` supports CPU `+`, `-`, `*` and `/` for same-shape, same-dtype
+float32/float64 tensors and numeric scalars. Broadcasting is not supported.
+CPU-only builds need no CUDA installation; `toGpu()` and `CudaArray` operations
+throw if CUDA is unavailable. In CUDA builds, `HostArray` also stores
+`CudaArray::toHost()` results and supports the CUDA storage dtypes.
 
-`Numbers` is a marker for objects that support arithmetic overloading.
-`Number` is an abstract base class that installs PHP's operator handler for
-user-defined numeric classes; an interface alone cannot install that Zend
-handler. A custom tensor can implement `Tensor` and extend `Number` to define
-its own PHP arithmetic operators. `CudaArray` implements `Numbers` and keeps
-its native operator handler.
+Custom backends can implement `BackendInterface`, but it does not automatically
+dispatch tensor operations. For PHP operator overloading, extend
+`OperatorOverload` and implement `Tensor`; the base class already implements
+`OperatorOverloadable`. Implement the required `__add`, `__sub`, `__mul`,
+`__div`, `__pow`, `__mod`, `__inc` and `__dec` methods. Native `HostArray` and
+`CudaArray` implement the marker directly with native operator handlers.
 
-CPU-only builds provide `HostArray` without requiring CUDA libraries or a GPU.
-It supports float32/float64 storage, nested-array and packed-buffer
-import/export, same-shape binary arithmetic, and scalar arithmetic. In CUDA
-builds the same `HostArray` class is used for host-resident tensor storage and
-`CudaArray::toHost()` results; it can also use pinned storage for transfers.
-Methods that do not yet have a CPU implementation are present on `HostArray`
-and throw `PhpTensors\RuntimeException` explicitly. Attempts to instantiate
-or call `CudaArray` in a CPU-only build fail explicitly.
+```php
+use PhpTensors\CudaArray;
+use PhpTensors\HostArray;
 
-The CUDA backend requires Linux/NVIDIA hardware for execution. Autograd supports
-documented operation/dtype subsets; `cumsum()` and `cumprod()` gradients are
-supported. `cumprod()` backward uses a synchronous native boundary in Fusion.
-Unsupported gradients and unsafe casts fail explicitly. Fusion
-matmul requires matching `float32`, `float16` or `bfloat16`
-inputs; low-precision elementwise nodes round at each step to match eager
-semantics. FP16/BF16 reductions and scans widen to `float32`; `scatterAdd()`
-does likewise and returns FP32. Casts are inlined; integer-output scalar
-powers, `concat()`, `gather()` and `scatterAdd()` use native boundaries and are
-not compatible with CUDA Graph capture. Powers, `concat()`, `gather()` and
-`scatterAdd()` also require synchronous replay. Contiguous flattened and
-last-axis scans support async replay and CUDA Graph capture, including FP16/BF16
-inputs promoted to `float32`; scans over other axes or strided inputs remain
-synchronous. cuDNN is optional; CNN inference cannot use Fusion or autograd.
+$cpu = new HostArray([[1, 2], [3, 4]], 'float32');
+$cpuResult = $cpu * 2;                   // Runs on CPU
+$gpuResult = $cpuResult->toGpu() + 1;    // Copy, then run on GPU
+$hostResult = $gpuResult->toHost();      // Copy back to CPU
+```
+
+CUDA autograd and Fusion support documented subsets of operations and dtypes.
+Unsupported combinations fail explicitly; see the API stubs and Fusion
+diagnostics for details.
 
 ## Validation status
 

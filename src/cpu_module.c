@@ -8,7 +8,7 @@
 #include "cuda.h"
 #include "cuda_exceptions.h"
 #include "ext/standard/info.h"
-#include "number_ce.h"
+#include "operator_overload_ce.h"
 #include "zend_exceptions.h"
 
 ZEND_DECLARE_MODULE_GLOBALS(cuda);
@@ -80,7 +80,8 @@ static int register_unavailable_cuda_array(void)
         return FAILURE;
     }
     unavailable_cuda_array_ce->ce_flags |= ZEND_ACC_FINAL;
-    zend_class_implements(unavailable_cuda_array_ce, 1, php_tensors_numbers_ce);
+    zend_class_implements(unavailable_cuda_array_ce, 1,
+                          php_tensors_operator_overloadable_ce);
     return SUCCESS;
 }
 
@@ -99,7 +100,7 @@ PHP_MINIT_FUNCTION(cuda)
         return FAILURE;
     }
     cuda_register_exceptions();
-    register_number_class();
+    register_operator_overload_class();
     if (cpu_host_array_init() != SUCCESS ||
         register_unavailable_cuda_array() != SUCCESS) {
         return FAILURE;

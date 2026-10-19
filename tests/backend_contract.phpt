@@ -7,7 +7,7 @@ if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable'
 --FILE--
 <?php
 use PhpTensors\BackendInterface;
-use PhpTensors\Number;
+use PhpTensors\OperatorOverload;
 use PhpTensors\Tensor;
 
 final class CustomTensor implements Tensor
@@ -37,7 +37,7 @@ final class CustomBackend implements BackendInterface
     }
 }
 
-final class CustomNumberTensor extends Number implements Tensor
+final class CustomNumberTensor extends OperatorOverload implements Tensor
 {
     public function __construct(public float $value) {}
     public function getBackend(): string { return 'custom-number'; }
@@ -83,8 +83,8 @@ var_dump($tensor instanceof Tensor);
 var_dump($tensor->getBackend());
 var_dump($backend->supports('identity'));
 var_dump($backend->execute('identity', [$tensor]) instanceof Tensor);
-var_dump(class_exists('PhpTensors\\BackendManager'));
 $number = new CustomNumberTensor(4.0) + 3.0;
+var_dump($number instanceof \PhpTensors\OperatorOverloadable);
 var_dump($number->toArray());
 ?>
 --EXPECT--
@@ -92,7 +92,7 @@ bool(true)
 string(6) "custom"
 bool(true)
 bool(true)
-bool(false)
+bool(true)
 array(1) {
   [0]=>
   float(7)

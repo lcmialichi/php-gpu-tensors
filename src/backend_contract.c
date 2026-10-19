@@ -4,7 +4,7 @@
 
 zend_class_entry *php_tensors_tensor_ce;
 zend_class_entry *php_tensors_backend_ce;
-zend_class_entry *php_tensors_numbers_ce;
+zend_class_entry *php_tensors_operator_overloadable_ce;
 zend_class_entry *php_tensors_exception_ce;
 zend_class_entry *php_tensors_invalid_argument_exception_ce;
 zend_class_entry *php_tensors_runtime_exception_ce;
@@ -106,7 +106,8 @@ int php_tensors_backend_contract_init(void)
     php_tensors_backend_ce = zend_register_internal_interface(&ce);
     if (!php_tensors_backend_ce) return FAILURE;
 
-    INIT_CLASS_ENTRY_EX(ce, "PhpTensors\\Numbers", sizeof("PhpTensors\\Numbers") - 1, NULL);
-    php_tensors_numbers_ce = zend_register_internal_interface(&ce);
-    return php_tensors_numbers_ce ? SUCCESS : FAILURE;
+    INIT_CLASS_ENTRY_EX(ce, "PhpTensors\\OperatorOverloadable",
+                        sizeof("PhpTensors\\OperatorOverloadable") - 1, NULL);
+    php_tensors_operator_overloadable_ce = zend_register_internal_interface(&ce);
+    return php_tensors_operator_overloadable_ce ? SUCCESS : FAILURE;
 }

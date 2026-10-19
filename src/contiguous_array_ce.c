@@ -4,6 +4,7 @@
 #include "contiguous_array_arginfo.h"
 #include "backend_contract.h"
 #include "zend_smart_str.h"
+#include <stdint.h>
 #include <string.h>
 #include "tensor_factory.h"
 #include "tensor_import.h"
@@ -61,6 +62,69 @@ static void contiguous_array_attach_tensor(contiguous_array_object *obj, tensor_
     obj->offset = tensor->offset;
     obj->is_contiguous = 1;
     obj->read_only = 0;
+}
+
+static int contiguous_array_has_contiguous_layout(const contiguous_array_object *obj)
+{
+    size_t expected_stride = 1;
+    for (int dimension = obj->ndims - 1; dimension >= 0; dimension--)
+    {
+        if (obj->shape[dimension] > 1 &&
+            obj->strides[dimension] != expected_stride)
+            return 0;
+        expected_stride *= (size_t)obj->shape[dimension];
+    }
+    return 1;
+}
+
+static size_t contiguous_array_element_offset(const contiguous_array_object *obj,
+                                              size_t linear_index)
+{
+    size_t offset = 0;
+    for (int dimension = obj->ndims - 1; dimension >= 0; dimension--)
+    {
+        size_t extent = (size_t)obj->shape[dimension];
+        offset += (linear_index % extent) * obj->strides[dimension];
+        linear_index /= extent;
+    }
+    return offset;
+}
+
+static int contiguous_array_host_data(const contiguous_array_object *obj,
+                                      const void **data, void **packed)
+{
+    *data = NULL;
+    *packed = NULL;
+    if (!obj->tensor)
+    {
+        CUDA_THROW_RUNTIME("Cannot transfer an uninitialized host array");
+        return FAILURE;
+    }
+    if (obj->total_elements > SIZE_MAX / obj->element_size)
+    {
+        CUDA_THROW_INVALID("Host array transfer size exceeds the supported limit");
+        return FAILURE;
+    }
+    size_t byte_count = obj->total_elements * obj->element_size;
+    if (!byte_count)
+        return SUCCESS;
+    if (contiguous_array_has_contiguous_layout(obj))
+    {
+        *data = obj->cached_data_ptr;
+        return SUCCESS;
+    }
+
+    char *buffer = emalloc(byte_count);
+    for (size_t i = 0; i < obj->total_elements; i++)
+    {
+        size_t offset = contiguous_array_element_offset(obj, i);
+        memcpy(buffer + i * obj->element_size,
+               obj->cached_data_ptr + offset * obj->element_size,
+               obj->element_size);
+    }
+    *data = buffer;
+    *packed = buffer;
+    return SUCCESS;
 }
 
 static int contiguous_array_validate_values(zval *value, int depth, int shape[MAX_DIMS], int *leaf_depth)
@@ -516,13 +580,17 @@ ZEND_METHOD(ContiguousArray, toHost)
 ZEND_METHOD(ContiguousArray, toGpu)
 {
     contiguous_array_object *obj = contiguous_array_from_obj(Z_OBJ_P(getThis()));
-    if (!obj->tensor || !obj->is_contiguous)
+    const void *host_data;
+    void *packed_data;
+    if (contiguous_array_host_data(obj, &host_data, &packed_data) != SUCCESS)
     {
-        CUDA_THROW_RUNTIME("Only initialized contiguous host arrays can be copied to GPU");
         RETURN_THROWS();
     }
     size_t data_size = obj->total_elements * obj->element_size;
-    tensor_t *gpu_tensor = cuda_tensor_create_from_host_buffer(obj->shape, obj->ndims, obj->dtype, obj->cached_data_ptr, data_size);
+    tensor_t *gpu_tensor = cuda_tensor_create_from_host_buffer(
+        obj->shape, obj->ndims, obj->dtype, host_data, data_size);
+    if (packed_data)
+        efree(packed_data);
     if (!gpu_tensor)
     {
         RETURN_THROWS();
@@ -586,14 +654,29 @@ static zend_result contiguous_array_binary_apply(zval *return_value, zval *tenso
 
     const void *left_data = left->cached_data_ptr;
     const void *right_data = right ? right->cached_data_ptr : NULL;
+    int left_contiguous = contiguous_array_has_contiguous_layout(left);
+    int right_contiguous = right && contiguous_array_has_contiguous_layout(right);
     for (size_t i = 0; i < left->total_elements; i++) {
+        size_t left_offset = left_contiguous
+            ? i
+            : contiguous_array_element_offset(left, i);
+        size_t right_offset = right
+            ? (right_contiguous
+                ? i
+                : contiguous_array_element_offset(right, i))
+            : 0;
+        const char *left_element =
+            (const char *)left_data + left_offset * left->element_size;
+        const char *right_element = right
+            ? (const char *)right_data + right_offset * right->element_size
+            : NULL;
         double tensor_value = left->dtype == DTYPE_FLOAT32
-            ? ((const float *)left_data)[i]
-            : ((const double *)left_data)[i];
+            ? *(const float *)left_element
+            : *(const double *)left_element;
         double other_tensor_value = right
             ? (left->dtype == DTYPE_FLOAT32
-                ? ((const float *)right_data)[i]
-                : ((const double *)right_data)[i])
+                ? *(const float *)right_element
+                : *(const double *)right_element)
             : scalar;
         double lhs = reverse ? other_tensor_value : tensor_value;
         double rhs = reverse ? tensor_value : other_tensor_value;
@@ -679,12 +762,20 @@ static zend_result contiguous_array_do_operation(zend_uchar opcode, zval *result
 ZEND_METHOD(ContiguousArray, toBuffer)
 {
     contiguous_array_object *obj = contiguous_array_from_obj(Z_OBJ_P(getThis()));
-    if (!obj->tensor || !obj->is_contiguous)
+    const void *host_data;
+    void *packed_data;
+    if (contiguous_array_host_data(obj, &host_data, &packed_data) != SUCCESS)
     {
-        CUDA_THROW_RUNTIME("Only initialized contiguous host arrays can be exported as bytes");
         RETURN_THROWS();
     }
-    RETURN_STRINGL(obj->cached_data_ptr, obj->total_elements * obj->element_size);
+    size_t byte_count = obj->total_elements * obj->element_size;
+    zend_string *buffer = zend_string_alloc(byte_count, 0);
+    if (byte_count)
+        memcpy(ZSTR_VAL(buffer), host_data, byte_count);
+    ZSTR_VAL(buffer)[byte_count] = '\0';
+    if (packed_data)
+        efree(packed_data);
+    RETURN_STR(buffer);
 }
 
 ZEND_METHOD(ContiguousArray, isPinned)
@@ -1183,7 +1274,8 @@ int contiguous_array_init()
     contiguous_array_ce->get_iterator = contiguous_array_get_iterator;
     contiguous_array_ce->ce_flags |= ZEND_ACC_FINAL;
     zend_class_implements(contiguous_array_ce, 2,
-                          php_tensors_tensor_ce, php_tensors_numbers_ce);
+                          php_tensors_tensor_ce,
+                          php_tensors_operator_overloadable_ce);
 
     memcpy(&contiguous_array_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     contiguous_array_handlers.offset = XtOffsetOf(contiguous_array_object, std);

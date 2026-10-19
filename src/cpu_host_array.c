@@ -846,6 +846,11 @@ static zend_result cpu_host_array_binary_apply(zval *return_value, zval *self,
                                  "CPU HostArray arithmetic requires identical shapes", 0);
             return FAILURE;
         }
+        if (array->float32 != right->float32) {
+            zend_throw_exception(cuda_invalid_argument_exception_ce,
+                                 "CPU HostArray arithmetic requires identical dtypes", 0);
+            return FAILURE;
+        }
     } else if (Z_TYPE_P(other) == IS_LONG || Z_TYPE_P(other) == IS_DOUBLE ||
                Z_TYPE_P(other) == IS_TRUE || Z_TYPE_P(other) == IS_FALSE) {
         scalar = zval_get_double(other);
@@ -1010,7 +1015,8 @@ int cpu_host_array_init(void)
     php_tensors_host_array_ce->ce_flags |= ZEND_ACC_FINAL;
     php_tensors_host_array_ce->create_object = cpu_host_array_create_object;
     zend_class_implements(php_tensors_host_array_ce, 2,
-                          php_tensors_tensor_ce, php_tensors_numbers_ce);
+                          php_tensors_tensor_ce,
+                          php_tensors_operator_overloadable_ce);
     memcpy(&cpu_host_array_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     cpu_host_array_handlers.offset = XtOffsetOf(cpu_host_array_object, std);
     cpu_host_array_handlers.free_obj = cpu_host_array_free_object;

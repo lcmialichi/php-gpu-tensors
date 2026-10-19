@@ -39,8 +39,7 @@ function publicApiSurface(array $stubFunctions): array
 {
     $classes = [];
     foreach (get_declared_classes() as $className) {
-        if (!str_starts_with($className, 'PhpTensors\\') &&
-            !str_starts_with($className, 'PhpTensors\\')) {
+        if (!str_starts_with($className, 'PhpTensors\\')) {
             continue;
         }
 
@@ -122,14 +121,14 @@ function publicApiSurface(array $stubFunctions): array
 $normalizeSelfTypes = static function (array $surface): array {
     foreach ($surface['classes'] as $className => &$class) {
         foreach ($class['methods'] as &$method) {
-            if ($method['returnType'] === $className) {
-                $method['returnType'] = 'self';
-            }
+            $method['returnType'] = $method['returnType'] === null
+                ? null
+                : str_replace($className, 'self', $method['returnType']);
 
             foreach ($method['parameters'] as &$parameter) {
-                if ($parameter['type'] === $className) {
-                    $parameter['type'] = 'self';
-                }
+                $parameter['type'] = $parameter['type'] === null
+                    ? null
+                    : str_replace($className, 'self', $parameter['type']);
             }
             unset($parameter);
         }
@@ -139,13 +138,13 @@ $normalizeSelfTypes = static function (array $surface): array {
 
     foreach ($surface['interfaces'] as $interfaceName => &$interface) {
         foreach ($interface['methods'] as &$method) {
-            if ($method['returnType'] === $interfaceName) {
-                $method['returnType'] = 'self';
-            }
+            $method['returnType'] = $method['returnType'] === null
+                ? null
+                : str_replace($interfaceName, 'self', $method['returnType']);
             foreach ($method['parameters'] as &$parameter) {
-                if ($parameter['type'] === $interfaceName) {
-                    $parameter['type'] = 'self';
-                }
+                $parameter['type'] = $parameter['type'] === null
+                    ? null
+                    : str_replace($interfaceName, 'self', $parameter['type']);
             }
             unset($parameter);
         }

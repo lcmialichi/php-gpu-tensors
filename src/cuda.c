@@ -3,7 +3,7 @@
 #endif
 
 #include "php.h"
-#include "number_ce.h"
+#include "operator_overload_ce.h"
 #include "php_ini.h"
 #include "zend_interfaces.h"
 #include "zend_attributes.h"
@@ -99,7 +99,7 @@ PHP_MINIT_FUNCTION(cuda)
         return FAILURE;
     }
     cuda_register_exceptions();
-    register_number_class();
+    register_operator_overload_class();
     compiler_init();
     module_init();
     contiguous_array_init();

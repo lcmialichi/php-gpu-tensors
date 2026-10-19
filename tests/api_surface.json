@@ -579,7 +579,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -739,7 +739,7 @@
                     "parameters": [
                         {
                             "name": "gradient",
-                            "type": "?PhpTensors\\CudaArray",
+                            "type": "?self",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -938,7 +938,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -962,7 +962,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|float",
+                            "type": "self|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1293,7 +1293,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|float",
+                            "type": "self|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1343,7 +1343,7 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "?PhpTensors\\CudaArray"
+                    "returnType": "?self"
                 },
                 "gt": {
                     "static": false,
@@ -1352,7 +1352,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|float",
+                            "type": "self|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1420,7 +1420,7 @@
                         },
                         {
                             "name": "scale",
-                            "type": "?PhpTensors\\CudaArray",
+                            "type": "?self",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -1429,7 +1429,7 @@
                         },
                         {
                             "name": "bias",
-                            "type": "?PhpTensors\\CudaArray",
+                            "type": "?self",
                             "byReference": false,
                             "variadic": false,
                             "optional": true,
@@ -1446,7 +1446,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|float",
+                            "type": "self|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1544,7 +1544,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|float",
+                            "type": "self|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1595,7 +1595,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1646,7 +1646,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1689,7 +1689,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1706,7 +1706,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|float",
+                            "type": "self|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1782,7 +1782,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|int|float",
+                            "type": "self|int|float",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2130,7 +2130,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\CudaArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -2442,7 +2442,7 @@
                             "default": false
                         }
                     ],
-                    "returnType": "PhpTensors\\FusionGraph"
+                    "returnType": "selfGraph"
                 },
                 "getCacheStats": {
                     "static": true,
@@ -2688,7 +2688,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\HostArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3071,7 +3071,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\HostArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3869,7 +3869,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\HostArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -4310,7 +4310,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "PhpTensors\\HostArray|int|float|bool",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -4584,12 +4584,6 @@
             "final": false,
             "methods": []
         },
-        "PhpTensors\\Kernel": {
-            "parent": null,
-            "abstract": false,
-            "final": true,
-            "methods": []
-        },
         "PhpTensors\\NN": {
             "parent": null,
             "abstract": false,
@@ -4753,7 +4747,7 @@
                 }
             }
         },
-        "PhpTensors\\Number": {
+        "PhpTensors\\OperatorOverload": {
             "parent": null,
             "abstract": true,
             "final": false,
@@ -5246,7 +5240,7 @@
                 }
             }
         },
-        "PhpTensors\\Numbers": {
+        "PhpTensors\\OperatorOverloadable": {
             "methods": []
         },
         "PhpTensors\\Tensor": {
@@ -5300,9 +5294,8 @@
         "PhpTensors\\FusionGraph": "PhpTensors\\FusionGraph",
         "PhpTensors\\HostArray": "PhpTensors\\HostArray",
         "PhpTensors\\InvalidArgumentException": "PhpTensors\\InvalidArgumentException",
-        "PhpTensors\\Kernel": "PhpTensors\\Kernel",
         "PhpTensors\\NN": "PhpTensors\\NN",
-        "PhpTensors\\Number": "PhpTensors\\Number",
+        "PhpTensors\\OperatorOverload": "PhpTensors\\OperatorOverload",
         "PhpTensors\\Optimizer": "PhpTensors\\Optimizer",
         "PhpTensors\\OutOfMemoryException": "PhpTensors\\OutOfMemoryException",
         "PhpTensors\\RuntimeException": "PhpTensors\\RuntimeException",

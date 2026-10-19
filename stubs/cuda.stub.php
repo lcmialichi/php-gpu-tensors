@@ -9,7 +9,7 @@ class UnexpectedValueException extends Exception {}
 class OutOfMemoryException extends RuntimeException {}
 class CompilationException extends RuntimeException {}
 
-interface Numbers {}
+interface OperatorOverloadable {}
 
 interface Tensor
 {
@@ -159,15 +159,12 @@ class CompiledModule
     public function cleanup(): int {}
 }
 
-/** Opaque CUDA kernel metadata registered by a Compiler. */
-final class Kernel {}
-
 namespace PhpTensors;
 
 /**
  * Host-resident tensor; unsupported operations throw RuntimeException.
  */
-final class HostArray implements Tensor, Numbers
+final class HostArray implements Tensor, OperatorOverloadable
 {
     /** Copy a rectangular numeric PHP array into CPU storage. */
     public function __construct(array $values, ?string $dtype = 'float32', bool $pinned = false) {}
@@ -408,7 +405,7 @@ namespace PhpTensors;
 
 /** Contiguous host-memory buffer for explicit copies to CUDA. */
 /** GPU-resident n-dimensional tensor; [] uses native dimension handlers. */
-class CudaArray implements \PhpTensors\Tensor, \PhpTensors\Numbers
+class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
 {
     /** Import row-major little-endian packed bytes matching shape and dtype. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32'): CudaArray {}
@@ -720,8 +717,11 @@ final class Optimizer
         ?CudaArray $learningRate = null, ?array $weightDecayMask = null): array {}
 }
 
-/** Abstract base dispatching PHP arithmetic operators to magic methods. */
-abstract class Number implements Numbers
+/**
+ * Abstract base that marks a class as operator-overloadable and dispatches PHP
+ * arithmetic operators to the corresponding methods.
+ */
+abstract class OperatorOverload implements OperatorOverloadable
 {
     /** Handle addition. */
     abstract public function __add(mixed $left, mixed $right): mixed;

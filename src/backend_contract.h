@@ -5,7 +5,7 @@
 
 extern zend_class_entry *php_tensors_tensor_ce;
 extern zend_class_entry *php_tensors_backend_ce;
-extern zend_class_entry *php_tensors_numbers_ce;
+extern zend_class_entry *php_tensors_operator_overloadable_ce;
 extern zend_class_entry *php_tensors_exception_ce;
 extern zend_class_entry *php_tensors_invalid_argument_exception_ce;
 extern zend_class_entry *php_tensors_runtime_exception_ce;
