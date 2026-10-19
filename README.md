@@ -434,11 +434,91 @@ throw if CUDA is unavailable. In CUDA builds, `HostArray` also stores
 `CudaArray::toHost()` results and supports the CUDA storage dtypes.
 
 Custom backends can implement `BackendInterface`, but it does not automatically
-dispatch tensor operations. For PHP operator overloading, extend
-`OperatorOverload` and implement `Tensor`; the base class already implements
-`OperatorOverloadable`. Implement the required `__add`, `__sub`, `__mul`,
-`__div`, `__pow`, `__mod`, `__inc` and `__dec` methods. Native `HostArray` and
-`CudaArray` implement the marker directly with native operator handlers.
+dispatch tensor operations. To overload PHP operators, extend
+`OperatorOverload` and implement `Tensor`. The base class already implements
+`OperatorOverloadable` and routes operators to `__add`, `__sub`, `__mul`,
+`__div`, `__pow`, `__mod`, `__inc` and `__dec`. Implement each method for your
+tensor; throw an exception for operations you do not support. The example below
+implements vector arithmetic with another vector or a scalar:
+
+```php
+use PhpTensors\OperatorOverload;
+use PhpTensors\OperatorOverloadable;
+use PhpTensors\Tensor;
+
+final class VectorTensor extends OperatorOverload implements Tensor
+{
+    public function __construct(private array $values)
+    {
+        if (!array_is_list($values) ||
+            array_filter($values, static fn($value) => !is_int($value) && !is_float($value))) {
+            throw new \InvalidArgumentException('Expected a flat list of numbers');
+        }
+    }
+
+    public function getBackend(): string { return 'example'; }
+    public function getShape(): array { return [count($this->values)]; }
+    public function getSize(): int { return count($this->values); }
+    public function dtype(): string { return 'float64'; }
+    public function toArray(): array { return $this->values; }
+
+    private static function apply(mixed $left, mixed $right, string $operator): self
+    {
+        $leftValues = $left instanceof self ? $left->values : null;
+        $rightValues = $right instanceof self ? $right->values : null;
+        if (($leftValues === null && !is_int($left) && !is_float($left)) ||
+            ($rightValues === null && !is_int($right) && !is_float($right))) {
+            throw new \InvalidArgumentException('Expected vectors or numeric scalars');
+        }
+        if ($leftValues === null && $rightValues === null) {
+            throw new \InvalidArgumentException('At least one operand must be a vector');
+        }
+        if ($leftValues !== null && $rightValues !== null &&
+            count($leftValues) !== count($rightValues)) {
+            throw new \InvalidArgumentException('Vector lengths must match');
+        }
+
+        $length = count($leftValues ?? $rightValues);
+        $result = [];
+        for ($i = 0; $i < $length; $i++) {
+            $a = $leftValues === null ? $left : $leftValues[$i];
+            $b = $rightValues === null ? $right : $rightValues[$i];
+            if (($operator === '/' || $operator === '%') && $b == 0) {
+                throw new \DivisionByZeroError();
+            }
+            $result[] = match ($operator) {
+                '+' => $a + $b,
+                '-' => $a - $b,
+                '*' => $a * $b,
+                '/' => $a / $b,
+                '**' => $a ** $b,
+                '%' => fmod($a, $b),
+            };
+        }
+        return new self($result);
+    }
+
+    public function __add(mixed $left, mixed $right): mixed { return self::apply($left, $right, '+'); }
+    public function __sub(mixed $left, mixed $right): mixed { return self::apply($left, $right, '-'); }
+    public function __mul(mixed $left, mixed $right): mixed { return self::apply($left, $right, '*'); }
+    public function __div(mixed $left, mixed $right): mixed { return self::apply($left, $right, '/'); }
+    public function __pow(mixed $left, mixed $right): mixed { return self::apply($left, $right, '**'); }
+    public function __mod(mixed $left, mixed $right): mixed { return self::apply($left, $right, '%'); }
+    public function __inc(): mixed { return self::apply($this, 1, '+'); }
+    public function __dec(): mixed { return self::apply($this, 1, '-'); }
+}
+
+$vector = new VectorTensor([1, 2, 3]);
+$sum = $vector + new VectorTensor([10, 20, 30]);
+$scaled = 2 * $vector; // Reversed scalar operands are passed in their original order.
+
+print_r($sum->toArray()); // [11, 22, 33]
+var_dump($scaled instanceof OperatorOverloadable); // true
+```
+
+The operator methods receive both operands in their original order, including
+expressions such as `2 * $vector`. Native `HostArray` and `CudaArray` implement
+`OperatorOverloadable` directly and use native handlers.
 
 ```php
 use PhpTensors\CudaArray;
