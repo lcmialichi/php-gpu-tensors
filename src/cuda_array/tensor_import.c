@@ -1,6 +1,7 @@
 #include "tensor_import.h"
 #include "cuda_exceptions.h"
 #include "tensor_factory.h"
+#include "tensor_shape.h"
 #include "main/php_streams.h"
 #include <limits.h>
 #include <stdint.h>
@@ -59,18 +60,60 @@ int tensor_import_shape(zval *shape_array, int shape[MAX_DIMS], size_t *elements
     zval *dimension;
     ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(shape_array), dimension)
     {
-        if (Z_TYPE_P(dimension) != IS_LONG || Z_LVAL_P(dimension) < 0 || Z_LVAL_P(dimension) > INT_MAX ||
-            (Z_LVAL_P(dimension) && *elements > SIZE_MAX / (size_t)Z_LVAL_P(dimension)))
+        if (Z_TYPE_P(dimension) != IS_LONG || Z_LVAL_P(dimension) < 0 || Z_LVAL_P(dimension) > INT_MAX)
         {
             CUDA_THROW_INVALID("Shape dimensions must be nonnegative integers within supported limits");
             return 0;
         }
         shape[index++] = (int)Z_LVAL_P(dimension);
-        *elements *= (size_t)Z_LVAL_P(dimension);
     }
     ZEND_HASH_FOREACH_END();
 
+    size_t bytes;
+    if (!tensor_shape_metrics(shape, (int)count, 1, NULL, elements, &bytes))
+    {
+        CUDA_THROW_INVALID("Shape or strides exceed supported limits");
+        return 0;
+    }
     return (int)count;
+}
+
+int tensor_import_serialized_shape(zval *shape_array, zend_long ndims,
+                                   int shape[MAX_DIMS], size_t *elements)
+{
+    if (ndims < 0 || ndims > MAX_DIMS || Z_TYPE_P(shape_array) != IS_ARRAY ||
+        !zend_array_is_list(Z_ARRVAL_P(shape_array)) ||
+        zend_hash_num_elements(Z_ARRVAL_P(shape_array)) != (uint32_t)ndims)
+    {
+        CUDA_THROW_INVALID("Invalid serialized tensor shape");
+        return 0;
+    }
+    int index = 0;
+    zval *dimension;
+    ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(shape_array), dimension)
+    {
+        if (Z_TYPE_P(dimension) != IS_LONG || Z_LVAL_P(dimension) < 0 ||
+            Z_LVAL_P(dimension) > INT_MAX)
+        {
+            CUDA_THROW_INVALID("Invalid serialized tensor dimension");
+            return 0;
+        }
+        shape[index++] = (int)Z_LVAL_P(dimension);
+    }
+    ZEND_HASH_FOREACH_END();
+
+    *elements = 1;
+    for (int d = (int)ndims - 1; d >= 0; d--)
+    {
+        if (*elements > ZEND_LONG_MAX ||
+            (shape[d] && *elements > (size_t)ZEND_LONG_MAX / (size_t)shape[d]))
+        {
+            CUDA_THROW_INVALID("Serialized tensor shape or strides exceed supported limits");
+            return 0;
+        }
+        *elements *= (size_t)shape[d];
+    }
+    return 1;
 }
 
 tensor_t *tensor_import_file(zend_string *path, const int *shape, int ndims, dtype_t dtype, size_t bytes)

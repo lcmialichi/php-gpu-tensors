@@ -1,5 +1,6 @@
 #include "fusion_internal.h"
 #include "autograd.h"
+#include "tensor_shape.h"
 int fusion_active(void)
 {
     return CUDA_G(fusion_scope) != NULL;
@@ -34,6 +35,12 @@ static tensor_t *fusion_metadata(const int *shape, int ndims, dtype_t dtype)
         CUDA_THROW_INVALID("Invalid fusion tensor metadata");
         return NULL;
     }
+    size_t strides[MAX_DIMS], elements, bytes;
+    if (!tensor_shape_metrics(shape, ndims, dtype_size(dtype), strides, &elements, &bytes))
+    {
+        CUDA_THROW_INVALID("Fusion shape, strides or storage exceed supported limits");
+        return NULL;
+    }
     tensor_t *tensor = ecalloc(1, sizeof(tensor_t));
     tensor->dtype = dtype;
     tensor->element_size = dtype_size(dtype);
@@ -41,29 +48,13 @@ static tensor_t *fusion_metadata(const int *shape, int ndims, dtype_t dtype)
     tensor->ref_count = 1;
     tensor->is_on_gpu = 1;
     tensor->is_contiguous_cached = 1;
-    tensor->total_size = 1;
+    tensor->total_size = elements;
     if (ndims)
     {
         tensor->shape = emalloc(ndims * sizeof(int));
         tensor->strides = emalloc(ndims * sizeof(size_t));
-    }
-    for (int i = ndims - 1; i >= 0; i--)
-    {
-        if (shape[i] < 0 || (shape[i] && tensor->total_size > SIZE_MAX / (size_t)shape[i]))
-        {
-            cuda_tensor_destroy(tensor);
-            CUDA_THROW_INVALID("Fusion shape size overflow");
-            return NULL;
-        }
-        tensor->shape[i] = shape[i];
-        tensor->strides[i] = tensor->total_size;
-        tensor->total_size *= shape[i];
-    }
-    if (tensor->total_size > SIZE_MAX / tensor->element_size)
-    {
-        cuda_tensor_destroy(tensor);
-        CUDA_THROW_INVALID("Fusion allocation size overflow");
-        return NULL;
+        memcpy(tensor->shape, shape, ndims * sizeof(int));
+        memcpy(tensor->strides, strides, ndims * sizeof(size_t));
     }
     return tensor;
 }
@@ -155,14 +146,21 @@ void fusion_request_shutdown(void)
 
 tensor_t *fusion_binary(tensor_t *a, tensor_t *b, operation_type_t op)
 {
-    int shape[MAX_DIMS], ndims, a_strides[MAX_DIMS], b_strides[MAX_DIMS];
+    int shape[MAX_DIMS], ndims;
+    size_t a_strides[MAX_DIMS], b_strides[MAX_DIMS];
     size_t total;
     if (!prepare_broadcast_operation(a, b, shape, &ndims, a_strides, b_strides, &total))
     {
-        CUDA_THROW_INVALID("Broadcast failed: operand shapes are incompatible");
+        if (!EG(exception)) CUDA_THROW_INVALID("Broadcast failed: operand shapes are incompatible");
         return NULL;
     }
     dtype_t dtype = promote_types_for_arithmetic(a->dtype, b->dtype, op);
+    if (dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("No exact common dtype for %s and %s; cast operands explicitly",
+                           dtype_to_string(a->dtype), dtype_to_string(b->dtype));
+        return NULL;
+    }
     if (!can_safely_cast_to(a->dtype, dtype) || !can_safely_cast_to(b->dtype, dtype))
     {
         CUDA_THROW_INVALID("Cannot safely promote fusion operands %s and %s to %s",
@@ -177,6 +175,12 @@ tensor_t *fusion_binary(tensor_t *a, tensor_t *b, operation_type_t op)
 tensor_t *fusion_scalar(tensor_t *a, scalar_value_t scalar, operation_type_t op, int inverse)
 {
     dtype_t dtype = promote_scalar_for_arithmetic(a->dtype, scalar.dtype, op, scalar.is_neg);
+    if (dtype == DTYPE_UNKNOWN ||
+        cast_single_value(scalar, dtype).dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Scalar cannot be represented by the promoted dtype; cast operands explicitly");
+        return NULL;
+    }
     tensor_t *tensor = fusion_record(FUSION_SCALAR, a, NULL, op, a->shape, a->ndims, dtype);
     if (tensor)
     {
@@ -198,9 +202,9 @@ tensor_t *fusion_cast(tensor_t *a, dtype_t dtype)
 {
     int low_precision_source = a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16;
     int low_precision_target = dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16;
-    if ((low_precision_source && dtype != DTYPE_FLOAT32) || low_precision_target)
+    if ((low_precision_source && dtype != DTYPE_FLOAT32 && dtype != DTYPE_FLOAT64) || low_precision_target)
     {
-        CUDA_THROW_INVALID("Fusion supports widening float16 or bfloat16 to float32 only");
+        CUDA_THROW_INVALID("Fusion supports widening float16 or bfloat16 to float32 or float64 only");
         return NULL;
     }
     tensor_t *tensor = fusion_record(FUSION_CAST, a, NULL, OP_ADD, a->shape, a->ndims, dtype);
@@ -257,6 +261,7 @@ tensor_t *fusion_where(tensor_t *condition, tensor_t *x, tensor_t *y)
 
 tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg)
 {
+    if (!autograd_check_discrete_reduction(a, op)) return NULL;
     if (a->dtype == DTYPE_FLOAT16 || a->dtype == DTYPE_BFLOAT16)
     {
         tensor_t *promoted = fusion_cast(a, DTYPE_FLOAT32);
@@ -272,12 +277,11 @@ tensor_t *fusion_reduce(tensor_t *a, int axis, operation_type_t op, int arg)
     {
         shape[0] = 1;
         ndims = 1;
+        total = 1;
     }
     else ndims = calculate_reduction_shape(a, axis, shape, &total);
     if (ndims <= 0) return NULL;
-    size_t output_size = 1;
-    for (int d = 0; d < ndims; d++) output_size *= shape[d];
-    if (output_size && (axis == -1 ? !a->total_size : a->shape[axis] == 0) &&
+    if (total && (axis == -1 ? !a->total_size : a->shape[axis] == 0) &&
         (arg || op == OP_REDUCE_MAX || op == OP_REDUCE_MIN))
     {
         CUDA_THROW_INVALID("Min/max and arg reductions have no identity for an empty axis");
@@ -645,9 +649,12 @@ tensor_t *fusion_slice(tensor_t *a, int *shape, size_t *strides, int ndims,
     {
         node->slice_starts[d] = starts[d];
         node->slice_steps[d] = steps[d];
-        node->slice_offset += (size_t)starts[d] * logical_stride;
+        if (tensor->total_size)
+            node->slice_offset += (size_t)starts[d] * logical_stride;
         for (int j = 0; j < ndims; j++)
-            if (axes[j] == d) node->slice_strides[j] = logical_stride * (size_t)steps[d];
+            if (axes[j] == d)
+                node->slice_strides[j] = tensor->total_size && shape[j] > 1
+                    ? logical_stride * (size_t)steps[d] : 0;
         logical_stride *= a->shape[d];
     }
     autograd_record_slice(tensor, a, axes, starts, steps);

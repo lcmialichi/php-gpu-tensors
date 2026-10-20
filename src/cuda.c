@@ -23,6 +23,8 @@
 #include "nn.h"
 #include "optimizer.h"
 #include "backend_contract.h"
+#include "memory_pool.h"
+#include <limits.h>
 #include <string.h>
 
 ZEND_DECLARE_MODULE_GLOBALS(cuda);
@@ -30,6 +32,16 @@ ZEND_DECLARE_MODULE_GLOBALS(cuda);
 static PHP_GINIT_FUNCTION(cuda);
 
 static size_t parse_size_string(const char *str);
+
+static int cuda_validate_device_id(zend_long device_id)
+{
+    if (device_id < 0 || device_id > INT_MAX)
+    {
+        CUDA_THROW_INVALID("Device ID must be between 0 and INT_MAX");
+        return 0;
+    }
+    return 1;
+}
 
 static PHP_INI_MH(OnUpdateMemSize)
 {
@@ -298,6 +310,7 @@ ZEND_FUNCTION(cuda_get_device_info)
     Z_PARAM_LONG(device_id)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (!cuda_validate_device_id(device_id)) RETURN_THROWS();
     char name[256];
     int major, minor;
     size_t total_mem;
@@ -328,11 +341,13 @@ ZEND_FUNCTION(cuda_set_device)
     Z_PARAM_LONG(device_id)
     ZEND_PARSE_PARAMETERS_END();
 
-    if (!cuda_wrapper_set_device((int)device_id))
+    if (!cuda_validate_device_id(device_id)) RETURN_THROWS();
+    if (device_id != tensor_mem_device())
     {
-        zend_throw_exception_ex(cuda_runtime_exception_ce, 0, "Failed to set device %d", (int)device_id);
+        CUDA_THROW_RUNTIME("PhpTensors owns device %d; select another GPU with CUDA_VISIBLE_DEVICES before starting PHP", tensor_mem_device());
         RETURN_THROWS();
     }
+    if (!cuda_tensor_require_context()) RETURN_THROWS();
 
     RETURN_TRUE;
 }
@@ -352,6 +367,7 @@ ZEND_FUNCTION(cuda_get_current_device)
 
 ZEND_FUNCTION(cuda_get_memory_info)
 {
+    if (!cuda_tensor_require_context()) RETURN_THROWS();
     size_t free_mem, total_mem;
 
     if (!cuda_wrapper_get_memory_info(&free_mem, &total_mem))
@@ -371,17 +387,10 @@ ZEND_FUNCTION(cuda_get_memory_info)
 
 ZEND_FUNCTION(cuda_device_reset)
 {
+    ZEND_PARSE_PARAMETERS_NONE();
     if (!fusion_check_mutation()) RETURN_THROWS();
-    cuda_blas_shutdown();
-    cuda_reduction_shutdown();
-    cuda_nn_shutdown();
-    if (!cuda_wrapper_device_reset())
-    {
-        zend_throw_exception(cuda_runtime_exception_ce, "Failed to reset device", 0);
-        RETURN_THROWS();
-    }
-
-    RETURN_TRUE;
+    CUDA_THROW_RUNTIME("CUDA device reset is not supported while PhpTensors owns its memory pool and context; start a new PHP process instead");
+    RETURN_THROWS();
 }
 
 ZEND_FUNCTION(cuda_get_driver_version)
@@ -422,6 +431,7 @@ ZEND_FUNCTION(cuda_get_runtime_version)
 
 ZEND_FUNCTION(cuda_synchronize)
 {
+    if (!cuda_tensor_require_context()) RETURN_THROWS();
     if (!cuda_wrapper_synchronize())
     {
         zend_throw_exception(cuda_runtime_exception_ce, "Failed to synchronize device", 0);
@@ -461,6 +471,7 @@ ZEND_FUNCTION(cuda_get_peer_access)
     Z_PARAM_LONG(device2)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (!cuda_validate_device_id(device1) || !cuda_validate_device_id(device2)) RETURN_THROWS();
     int result = cuda_wrapper_get_peer_access((int)device1, (int)device2);
 
     if (result == -1)
@@ -495,8 +506,8 @@ PHP_MSHUTDOWN_FUNCTION(cuda)
     cuda_blas_shutdown();
     cuda_reduction_shutdown();
     cuda_nn_shutdown();
+    module_shutdown();
     cuda_array_shutdown();
-    cuda_wrapper_device_reset();
     return SUCCESS;
 }
 

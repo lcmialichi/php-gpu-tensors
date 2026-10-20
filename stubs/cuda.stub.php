@@ -175,11 +175,13 @@ final class HostArray implements Tensor, OperatorOverloadable
     /** Create a one-filled host tensor. */
     public static function ones(array $shape, ?string $dtype = 'float32'): self {}
     /** Create a constant-filled host tensor. */
-    public static function full(array $shape, float|int $value, ?string $dtype = 'float32'): self {}
+    public static function full(array $shape, float|int|bool $value, ?string $dtype = 'float32'): self {}
     /** Create a zero-filled tensor matching a prototype's shape and dtype. */
     public static function zerosLike(self $prototype, ?string $dtype = null): self {}
     /** Create a one-filled tensor matching a prototype's shape and dtype. */
     public static function onesLike(self $prototype, ?string $dtype = null): self {}
+    /** Create a constant-filled tensor matching a prototype's shape and dtype. */
+    public static function fullLike(self $prototype, float|int|bool $value, ?string $dtype = null): self {}
     /** Import row-major packed bytes. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32', bool $pinned = false): self {}
     /** Whether storage is page-locked; always false for CPU tensors. */
@@ -362,8 +364,6 @@ final class HostArray implements Tensor, OperatorOverloadable
     /** Unsupported on the CPU backend until implemented. */
     public function flatten(): self {}
     /** Unsupported on the CPU backend until implemented. */
-    public function fullLike(self $prototype, float|int $value, ?string $dtype = null): self {}
-    /** Unsupported on the CPU backend until implemented. */
     public static function eye(int $rows, ?int $columns = null, int $k = 0, ?string $dtype = 'float32'): self {}
     /** Unsupported on the CPU backend until implemented. */
     public static function identity(int $size, ?string $dtype = 'float32'): self {}
@@ -388,7 +388,7 @@ final class HostArray implements Tensor, OperatorOverloadable
     /** Unsupported on the CPU backend until implemented. */
     public function detach(): self {}
     /** Unsupported on the CPU backend until implemented. */
-    public function item(): int|float|bool {}
+    public function item(): int|float|bool|string {}
     /** Copy CPU storage into a GPU tensor; requires a CUDA-enabled build. */
     public function toGpu(): CudaArray {}
     /** Return this already host-resident tensor. */
@@ -418,7 +418,7 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     public static function fromFile(string $path, array $shape, ?string $dtype = 'float32'): CudaArray {}
     /** Import a C-order little-endian NumPy .npy file. */
     public static function fromNpy(string $path): CudaArray {}
-    /** Select x or y by nonzero mask with broadcasting; x/y must share dtype. */
+    /** Select x or y by nonzero mask with broadcasting; x/y must share dtype. Gradients ignore the condition. */
     public static function where(CudaArray $condition, CudaArray $x, CudaArray $y): CudaArray {}
     /** Copy a rectangular numeric PHP array onto the GPU; keys are ignored in iteration order. */
     public function __construct(array $data, ?string $dtype = 'float32') {}
@@ -571,9 +571,9 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     public function cumsum(?int $axis = null): CudaArray {}
     /** Cumulative product; null axis flattens the input. Integer inputs widen to int64. */
     public function cumprod(?int $axis = null): CudaArray {}
-    /** Logical AND over nonzero values; returns a bool tensor. */
+    /** Logical AND over nonzero values; returns bool. Tracked inputs require detach() first. */
     public function all(?int $axis = null): CudaArray {}
-    /** Logical OR over nonzero values; returns a bool tensor. */
+    /** Logical OR over nonzero values; returns bool. Tracked inputs require detach() first. */
     public function any(?int $axis = null): CudaArray {}
     /** Population variance by default; correction adjusts the denominator. */
     public function var(?int $axis = null, int $correction = 0): CudaArray {}
@@ -587,9 +587,9 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
      * @param list<int> $axes
      */
     public function layerNorm(array $axes, float $epsilon = 0.00001, ?CudaArray $scale = null, ?CudaArray $bias = null): CudaArray {}
-    /** Index of maximum across an axis. */
+    /** Index of maximum across an axis. Tracked inputs require detach() first. */
     public function argMax(?int $axis = null): CudaArray {}
-    /** Index of minimum across an axis. */
+    /** Index of minimum across an axis. Tracked inputs require detach() first. */
     public function argMin(?int $axis = null): CudaArray {}
     /** Tensor shape in row-major dimension order. @return list<int> */
     public function getShape(): array {}
@@ -620,13 +620,13 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     /** Allocate a one-filled GPU tensor. */
     public static function ones(array $shape, ?string $dtype = 'float32'): CudaArray {}
     /** Allocate a constant-filled GPU tensor. */
-    public static function full(array $shape, float|int $value, ?string $dtype = 'float32'): CudaArray {}
+    public static function full(array $shape, float|int|bool $value, ?string $dtype = 'float32'): CudaArray {}
     /** Allocate a zero-filled tensor with a prototype's shape and, by default, dtype. */
     public static function zerosLike(CudaArray $prototype, ?string $dtype = null): CudaArray {}
     /** Allocate a one-filled tensor with a prototype's shape and, by default, dtype. */
     public static function onesLike(CudaArray $prototype, ?string $dtype = null): CudaArray {}
     /** Allocate a constant-filled tensor with a prototype's shape and, by default, dtype. */
-    public static function fullLike(CudaArray $prototype, float|int $value, ?string $dtype = null): CudaArray {}
+    public static function fullLike(CudaArray $prototype, float|int|bool $value, ?string $dtype = null): CudaArray {}
     /** Create a rectangular identity matrix with an optional diagonal offset. */
     public static function eye(int $rows, ?int $columns = null, int $k = 0, ?string $dtype = 'float32'): CudaArray {}
     /** Create a square identity matrix. */
@@ -674,7 +674,7 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     /** Backend that owns this tensor's storage. */
     public function getBackend(): string {}
     /** Enable or disable reverse-mode gradient tracking on a leaf tensor. */
-    /** FP16/BF16 tracking is currently supported for matmul and shape views only; gradients use float32. */
+    /** Supported FP16/BF16 gradient paths accumulate in float32; unsupported derivatives raise exceptions. */
     public function requiresGrad(bool $requiresGrad = true): CudaArray {}
     /** Compute gradients; non-scalar tensors require a seed. Graphs are freed unless retained. */
     public function backward(?CudaArray $gradient = null, bool $retainGraph = false): void {}
@@ -684,8 +684,8 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     public function zeroGrad(): void {}
     /** Return a view that shares storage but is disconnected from gradient history. */
     public function detach(): CudaArray {}
-    /** Return the sole tensor element as a PHP scalar. */
-    public function item(): int|float|bool {}
+    /** Return the sole element; integers outside PHP's int range use decimal strings. */
+    public function item(): int|float|bool|string {}
 }
 
 /**
@@ -719,24 +719,21 @@ final class Optimizer
 
 /**
  * Abstract base that marks a class as operator-overloadable and dispatches PHP
- * arithmetic operators to the corresponding methods.
+ * arithmetic operators to the corresponding optional hooks. Unimplemented hooks
+ * throw RuntimeException. ++ and -- use __add and __sub with a right operand of 1.
  */
 abstract class OperatorOverload implements OperatorOverloadable
 {
-    /** Handle addition. */
-    abstract public function __add(mixed $left, mixed $right): mixed;
+    /** Handle addition and increment. Return a value without mutating operands. */
+    public function __add(mixed $left, mixed $right): mixed {}
     /** Handle subtraction. */
-    abstract public function __sub(mixed $left, mixed $right): mixed;
+    public function __sub(mixed $left, mixed $right): mixed {}
     /** Handle multiplication. */
-    abstract public function __mul(mixed $left, mixed $right): mixed;
+    public function __mul(mixed $left, mixed $right): mixed {}
     /** Handle division. */
-    abstract public function __div(mixed $left, mixed $right): mixed;
+    public function __div(mixed $left, mixed $right): mixed {}
     /** Handle exponentiation. */
-    abstract public function __pow(mixed $left, mixed $right): mixed;
+    public function __pow(mixed $left, mixed $right): mixed {}
     /** Handle remainder. */
-    abstract public function __mod(mixed $left, mixed $right): mixed;
-    /** Return the incremented value. */
-    abstract public function __inc(): mixed;
-    /** Return the decremented value. */
-    abstract public function __dec(): mixed;
+    public function __mod(mixed $left, mixed $right): mixed {}
 }

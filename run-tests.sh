@@ -22,7 +22,7 @@ fi
 cd "$BUILD_DIR"
 "$PHP_BIN" -n tests/check_api_surface.php
 if [ "$CPU_ONLY" -eq 1 ]; then
-   make test TESTS="tests/backend_contract.phpt tests/cpu_backend.phpt tests/namespaces.phpt" TEST_PHP_ARGS="-q"
+   make test TESTS="tests/backend_contract.phpt tests/cpu_backend.phpt tests/host_array_lifecycle.phpt tests/host_array_operator_aliasing.phpt tests/host_array_serialization.phpt tests/namespaces.phpt tests/operator_overload_aliasing.phpt tests/tensor_shape_boundaries.phpt" TEST_PHP_ARGS="-q"
    exit 0
 fi
 if [ "${1:-}" = "--require-gpu" ]; then
@@ -51,4 +51,36 @@ ${CC:-cc} -D_GNU_SOURCE -ffunction-sections -fdata-sections \
    -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc -Isrc/backends/cuda -Isrc/cuda_array \
    tests/where_shape_test.c -o "$WHERE_TEST_BINARY"
 "$WHERE_TEST_BINARY"
+SHAPE_TEST_BINARY=$(mktemp)
+LAUNCH_TEST_BINARY=$(mktemp)
+trap 'rm -f "$POOL_TEST_BINARY" "$NPY_TEST_BINARY" "$WHERE_TEST_BINARY" "$SHAPE_TEST_BINARY" "$LAUNCH_TEST_BINARY"' EXIT
+${CC:-cc} -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+   -Wl,--gc-sections $($PHP_CONFIG --includes) \
+   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc -Isrc/backends/cuda -Isrc/cuda_array \
+   tests/tensor_shape_test.c -o "$SHAPE_TEST_BINARY"
+"$SHAPE_TEST_BINARY"
+${CXX:-c++} -I"${CUDA_HOME:-/usr/local/cuda}/include" \
+   tests/launch_config_test.cpp -o "$LAUNCH_TEST_BINARY"
+"$LAUNCH_TEST_BINARY"
+SCALAR_TEST_BINARY=$(mktemp)
+trap 'rm -f "$POOL_TEST_BINARY" "$NPY_TEST_BINARY" "$WHERE_TEST_BINARY" "$SHAPE_TEST_BINARY" "$LAUNCH_TEST_BINARY" "$SCALAR_TEST_BINARY"' EXIT
+${CC:-cc} -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+   -Wl,--gc-sections $($PHP_CONFIG --includes) \
+   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc -Isrc/backends/cuda -Isrc/cuda_array \
+   tests/scalar_cast_test.c -lm -o "$SCALAR_TEST_BINARY"
+"$SCALAR_TEST_BINARY"
+if [ "${1:-}" = "--require-gpu" ]; then
+   KERNEL_INDEX_TEST_BINARY=$(mktemp)
+   SCALAR_TYPES_OBJECT=$(mktemp --suffix=.o)
+   trap 'rm -f "$POOL_TEST_BINARY" "$NPY_TEST_BINARY" "$WHERE_TEST_BINARY" "$SHAPE_TEST_BINARY" "$LAUNCH_TEST_BINARY" "$SCALAR_TEST_BINARY" "$KERNEL_INDEX_TEST_BINARY" "$SCALAR_TYPES_OBJECT"' EXIT
+   ${CC:-cc} -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+      $($PHP_CONFIG --includes) -I"${CUDA_HOME:-/usr/local/cuda}/include" \
+      -Isrc -Isrc/backends/cuda -Isrc/cuda_array \
+      -c src/data_types.c -o "$SCALAR_TYPES_OBJECT"
+   "${NVCC:-${CUDA_HOME:-/usr/local/cuda}/bin/nvcc}" -std=c++17 \
+      tests/kernel_index_test.cu src/backends/cuda/reduction_ops.o src/backends/cuda/factory_kernels.o \
+      "$SCALAR_TYPES_OBJECT" -Xlinker --gc-sections \
+      -o "$KERNEL_INDEX_TEST_BINARY"
+   "$KERNEL_INDEX_TEST_BINARY"
+fi
 make test TEST_PHP_ARGS="-q"

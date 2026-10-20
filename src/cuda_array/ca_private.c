@@ -15,6 +15,7 @@
 #include "fusion.h"
 #include "autograd.h"
 #include "indexed_ops.h"
+#include "tensor_shape.h"
 #include "factory_kernels.h"
 
 static int is_low_precision_dtype(dtype_t dtype)
@@ -31,18 +32,24 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
 
     int result_shape[MAX_DIMS];
     int result_dims;
-    int a_strides[MAX_DIMS] = {0};
-    int b_strides[MAX_DIMS] = {0};
+    size_t a_strides[MAX_DIMS] = {0};
+    size_t b_strides[MAX_DIMS] = {0};
     size_t total_elements;
 
     if (!prepare_broadcast_operation(a, b, result_shape, &result_dims,
                                      a_strides, b_strides, &total_elements))
     {
-        CUDA_THROW_INVALID("Broadcast failed: operand shapes are incompatible");
+        if (!EG(exception)) CUDA_THROW_INVALID("Broadcast failed: operand shapes are incompatible");
         return NULL;
     }
 
     dtype_t promoted_type = promote_types_for_arithmetic(a->dtype, b->dtype, operation_type);
+    if (promoted_type == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("No exact common dtype for %s and %s; cast operands explicitly",
+                           dtype_to_string(a->dtype), dtype_to_string(b->dtype));
+        return NULL;
+    }
     if (!can_safely_cast_to(a->dtype, promoted_type))
     {
         CUDA_THROW_INVALID("Cannot safely promote operand A (%s) to %s",
@@ -60,7 +67,7 @@ tensor_t *cuda_tensor_op(tensor_t *a, tensor_t *b, operation_type_t operation_ty
     tensor_t *result = cuda_tensor_create_empty_dtype(result_shape, result_dims, promoted_type);
     if (!result)
     {
-        CUDA_THROW_OOM("Failed to create result tensor for operation between %s and %s",
+        if (!EG(exception)) CUDA_THROW_OOM("Failed to create result tensor for operation between %s and %s",
                    dtype_to_string(a->dtype), dtype_to_string(b->dtype));
         return NULL;
     }
@@ -106,6 +113,12 @@ tensor_t *cuda_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_t op
         return NULL;
     }
     dtype_t promoted_type = promote_scalar_for_arithmetic(a->dtype, scalar.dtype, operation_type, scalar.is_neg);
+    if (promoted_type == DTYPE_UNKNOWN ||
+        cast_single_value(scalar, promoted_type).dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Scalar cannot be represented by the promoted dtype; cast operands explicitly");
+        return NULL;
+    }
 
     tensor_t *result = cuda_tensor_create_empty_dtype(a->shape, a->ndims, promoted_type);
     if (!result)
@@ -152,6 +165,12 @@ tensor_t *cuda_inv_scalar_op(tensor_t *a, scalar_value_t scalar, operation_type_
     }
 
     dtype_t promoted_type = promote_scalar_for_arithmetic(a->dtype, scalar.dtype, operation_type, scalar.is_neg);
+    if (promoted_type == DTYPE_UNKNOWN ||
+        cast_single_value(scalar, promoted_type).dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Scalar cannot be represented by the promoted dtype; cast operands explicitly");
+        return NULL;
+    }
 
     tensor_t *result = cuda_tensor_create_empty_dtype(a->shape, a->ndims, promoted_type);
     if (!result)
@@ -216,6 +235,7 @@ tensor_t *cuda_unary_op(tensor_t *a, operation_type_t operation_type)
 
 tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t operation_type)
 {
+    if (!autograd_check_discrete_reduction(input, operation_type)) return NULL;
     if (fusion_active())
         return fusion_reduce(input, axis, operation_type, 1);
     if (input && is_low_precision_dtype(input->dtype))
@@ -271,6 +291,7 @@ tensor_t *cuda_tensor_reduce_arg(tensor_t *input, int axis, operation_type_t ope
 
 tensor_t *cuda_tensor_reduce(tensor_t *input, int axis, operation_type_t operation_type)
 {
+    if (!autograd_check_discrete_reduction(input, operation_type)) return NULL;
     if (fusion_active())
         return fusion_reduce(input, axis, operation_type, 0);
     if (input && is_low_precision_dtype(input->dtype))
@@ -724,19 +745,15 @@ tensor_t *cuda_tensor_moments_reduce(tensor_t *input, int axis, int correction,
 
 tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
 {
-    if (original == NULL || new_shape == NULL || new_ndims <= 0)
+    if (original == NULL || new_shape == NULL || new_ndims <= 0 || new_ndims > MAX_DIMS)
     {
+        CUDA_THROW_INVALID("Invalid reshape rank");
         return NULL;
     }
     if (!fusion_active() && !fusion_materialize(original)) return NULL;
 
-    size_t original_size = 1;
-    for (int i = 0; i < original->ndims; i++)
-    {
-        original_size *= original->shape[i];
-    }
-
-    size_t new_size_known = 1;
+    size_t original_size = original->total_size;
+    size_t new_size_known, bytes;
     int wildcard_index = -1;
     int final_shape[MAX_DIMS];
 
@@ -746,19 +763,21 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
 
         if (new_shape[i] < 0)
         {
-            if (wildcard_index != -1)
+            if (new_shape[i] != -1 || wildcard_index != -1)
             {
                 CUDA_THROW_INVALID("Reshape allows only one wildcard dimension (-1) in the new shape.");
                 return NULL;
             }
             wildcard_index = i;
-        }
-        else
-        {
-            new_size_known *= new_shape[i];
+            final_shape[i] = 1;
         }
     }
 
+    if (!tensor_shape_metrics(final_shape, new_ndims, 1, NULL, &new_size_known, &bytes))
+    {
+        CUDA_THROW_INVALID("Reshape shape or strides exceed supported limits");
+        return NULL;
+    }
     if (wildcard_index != -1)
     {
         if (!new_size_known)
@@ -771,7 +790,12 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
             CUDA_THROW_INVALID("Cannot reshape array of size %zu into shape with known elements %zu.", original_size, new_size_known);
             return NULL;
         }
-        final_shape[wildcard_index] = original_size / new_size_known;
+        if (original_size / new_size_known > INT_MAX)
+        {
+            CUDA_THROW_INVALID("Inferred reshape dimension exceeds INT_MAX");
+            return NULL;
+        }
+        final_shape[wildcard_index] = (int)(original_size / new_size_known);
         new_size_known = original_size;
     }
 
@@ -788,10 +812,11 @@ tensor_t *cuda_tensor_reshape(tensor_t *original, int *new_shape, int new_ndims)
     }
 
     size_t new_strides[MAX_DIMS];
-    new_strides[new_ndims - 1] = 1;
-    for (int i = new_ndims - 2; i >= 0; i--)
+    if (!tensor_shape_metrics(final_shape, new_ndims, original->element_size,
+                              new_strides, &new_size_known, &bytes))
     {
-        new_strides[i] = new_strides[i + 1] * final_shape[i + 1];
+        CUDA_THROW_INVALID("Reshape storage exceeds supported limits");
+        return NULL;
     }
 
     if (fusion_active())
@@ -818,7 +843,13 @@ tensor_t *cuda_tensor_broadcast_to(tensor_t *original, int *new_shape, int new_n
     }
 
     size_t strides[MAX_DIMS] = {0};
-    size_t total_size = 1;
+    size_t total_size, bytes;
+    if (!tensor_shape_metrics(new_shape, new_ndims, original->element_size,
+                              NULL, &total_size, &bytes))
+    {
+        CUDA_THROW_INVALID("broadcastTo shape, strides or storage exceed supported limits");
+        return NULL;
+    }
     int input_offset = new_ndims - original->ndims;
     for (int axis = 0; axis < new_ndims; axis++)
     {
@@ -827,12 +858,6 @@ tensor_t *cuda_tensor_broadcast_to(tensor_t *original, int *new_shape, int new_n
             CUDA_THROW_INVALID("broadcastTo dimensions must be non-negative");
             return NULL;
         }
-        if (new_shape[axis] && total_size > SIZE_MAX / (size_t)new_shape[axis])
-        {
-            CUDA_THROW_INVALID("broadcastTo target shape size overflows");
-            return NULL;
-        }
-        total_size *= (size_t)new_shape[axis];
         int input_axis = axis - input_offset;
         if (input_axis < 0)
             continue;
@@ -1220,18 +1245,12 @@ static int tensor_transform_element_count(const int *shape, int ndims,
 {
     if (!shape || !elements || ndims < 1 || ndims > MAX_DIMS)
         return 0;
-    size_t count = 1;
-    for (int axis = 0; axis < ndims; axis++)
+    size_t bytes;
+    if (!tensor_shape_metrics(shape, ndims, 1, NULL, elements, &bytes))
     {
-        if (shape[axis] < 0 ||
-            (shape[axis] != 0 && count > SIZE_MAX / (size_t)shape[axis]))
-        {
-            CUDA_THROW_INVALID("Tensor transform output shape is too large");
-            return 0;
-        }
-        count *= (size_t)shape[axis];
+        CUDA_THROW_INVALID("Tensor transform output shape or strides exceed supported limits");
+        return 0;
     }
-    *elements = count;
     return 1;
 }
 

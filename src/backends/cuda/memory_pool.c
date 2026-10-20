@@ -17,6 +17,8 @@ static CachedBlock *cached_list = NULL;
 static size_t cached_block_count = 0;
 static pthread_mutex_t central_mutex;
 static int initialized = 0;
+static int owner_device = -1;
+static CUcontext owner_context = NULL;
 
 static size_t max_pool_size = 0;
 static size_t current_allocated = 0;
@@ -40,6 +42,46 @@ static void __cache_evict_one(void);
 static void __cache_release_block(void *ptr, size_t size);
 static int expand_pool_if_needed(size_t aligned_size);
 static int can_allocate_more(size_t requested_size);
+
+int tensor_mem_device(void) {
+    return initialized ? owner_device : -1;
+}
+
+CUcontext tensor_mem_context(void) {
+    return initialized ? owner_context : NULL;
+}
+
+int tensor_mem_context_matches(void) {
+    int device = -1;
+    CUcontext context = NULL;
+    return initialized &&
+        cudaGetDevice(&device) == cudaSuccess && device == owner_device &&
+        cuCtxGetCurrent(&context) == CUDA_SUCCESS && context == owner_context;
+}
+
+static int cleanup_context_enter(int *pushed) {
+    CUcontext current = NULL;
+    *pushed = 0;
+    CUresult result = cuCtxGetCurrent(&current);
+    if (result == CUDA_SUCCESS && current != owner_context) {
+        result = cuCtxPushCurrent(owner_context);
+        if (result == CUDA_SUCCESS) *pushed = 1;
+    }
+    if (result != CUDA_SUCCESS) {
+        php_error_docref(NULL, E_WARNING, "Cannot activate CUDA memory pool context for cleanup (CUDA status %d)", (int)result);
+        return 0;
+    }
+    return 1;
+}
+
+static void cleanup_context_leave(int pushed) {
+    if (pushed) {
+        CUcontext popped = NULL;
+        CUresult result = cuCtxPopCurrent(&popped);
+        if (result != CUDA_SUCCESS)
+            php_error_docref(NULL, E_WARNING, "Cannot restore CUDA context after memory pool cleanup (CUDA status %d)", (int)result);
+    }
+}
 
 static size_t align_size(size_t s) {
     return (s + ALIGNMENT - 1) & ~(ALIGNMENT - 1);
@@ -93,6 +135,16 @@ int tensor_mem_init(size_t size) {
     if (cudaMalloc(&small_pool_ptr, small_pool_size) != cudaSuccess) {
         small_pool_ptr = NULL;
         small_pool_size = 0;
+        pthread_mutex_destroy(&central_mutex);
+        return 0;
+    }
+    if (cudaGetDevice(&owner_device) != cudaSuccess ||
+        cuCtxGetCurrent(&owner_context) != CUDA_SUCCESS || !owner_context) {
+        cudaFree(small_pool_ptr);
+        small_pool_ptr = NULL;
+        small_pool_size = 0;
+        owner_device = -1;
+        owner_context = NULL;
         pthread_mutex_destroy(&central_mutex);
         return 0;
     }
@@ -155,7 +207,7 @@ static int expand_pool_if_needed(size_t aligned_size) {
 }
 
 void *cuda_mem_alloc(size_t size) {
-    if (!initialized || size == 0 || size > SIZE_MAX - (ALIGNMENT - 1)) return NULL;
+    if (!tensor_mem_context_matches() || size == 0 || size > SIZE_MAX - (ALIGNMENT - 1)) return NULL;
 
     pthread_mutex_lock(&central_mutex);
     void *ptr = NULL;
@@ -258,6 +310,8 @@ static void *allocate_from_pool_logic(FreeBlock **pool_head, size_t aligned_size
 
 void cuda_mem_free(void *ptr) {
     if (!initialized || !ptr) return;
+    int pushed;
+    if (!cleanup_context_enter(&pushed)) return;
 
     pthread_mutex_lock(&central_mutex);
 
@@ -282,10 +336,13 @@ void cuda_mem_free(void *ptr) {
     }
 
     pthread_mutex_unlock(&central_mutex);
+    cleanup_context_leave(pushed);
 }
 
 void tensor_mem_destroy() {
     if (!initialized) return;
+    int pushed;
+    if (!cleanup_context_enter(&pushed)) return;
 
     pthread_mutex_lock(&central_mutex);
 
@@ -340,6 +397,7 @@ void tensor_mem_destroy() {
 
     initialized = 0;
     pthread_mutex_unlock(&central_mutex);
+    cleanup_context_leave(pushed);
     pthread_mutex_destroy(&central_mutex);
 }
 

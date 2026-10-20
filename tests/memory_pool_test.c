@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "php.h"
 #include <cuda_runtime.h>
+#include <cuda.h>
 #undef NDEBUG
 #include <assert.h>
 
@@ -15,6 +16,52 @@ static size_t live_bytes;
 static size_t device_allocation_calls;
 static int invalid_frees;
 static int fail_metadata;
+static int owner_context_token;
+static int foreign_context_token;
+static int test_device;
+static CUcontext test_context = (CUcontext)&owner_context_token;
+static CUcontext saved_context;
+static int saved_device;
+static int context_pushes;
+
+static cudaError_t test_get_device(int *device)
+{
+    *device = test_device;
+    return cudaSuccess;
+}
+
+static CUresult test_get_context(CUcontext *context)
+{
+    *context = test_context;
+    return CUDA_SUCCESS;
+}
+
+static CUresult test_push_context(CUcontext context)
+{
+    assert(context == (CUcontext)&owner_context_token);
+    saved_context = test_context;
+    saved_device = test_device;
+    test_context = context;
+    test_device = 0;
+    context_pushes++;
+    return CUDA_SUCCESS;
+}
+
+static CUresult test_pop_context(CUcontext *context)
+{
+    *context = test_context;
+    test_context = saved_context;
+    test_device = saved_device;
+    return CUDA_SUCCESS;
+}
+
+static void test_cleanup_warning(const char *docref, int severity, const char *format, ...)
+{
+    (void)docref;
+    (void)severity;
+    (void)format;
+    assert(!"Unexpected CUDA cleanup warning");
+}
 
 static void *test_malloc(size_t size, int persistent)
 {
@@ -49,6 +96,7 @@ static cudaError_t test_cuda_malloc(void **ptr, size_t size)
 
 static cudaError_t test_cuda_free(void *ptr)
 {
+    assert(test_device == 0 && test_context == (CUcontext)&owner_context_token);
     for (int index = 0; index < 32; index++)
     {
         if (device_allocations[index] == ptr)
@@ -68,6 +116,13 @@ static cudaError_t test_cuda_free(void *ptr)
 #define pefree test_free
 #define cudaMalloc test_cuda_malloc
 #define cudaFree test_cuda_free
+#define cudaGetDevice test_get_device
+#define cuCtxGetCurrent test_get_context
+#undef cuCtxPushCurrent
+#undef cuCtxPopCurrent
+#define cuCtxPushCurrent test_push_context
+#define cuCtxPopCurrent test_pop_context
+#define php_error_docref test_cleanup_warning
 #include "../src/backends/cuda/memory_pool.c"
 
 int main(void)
@@ -78,6 +133,19 @@ int main(void)
     fail_metadata = 0;
 
     assert(tensor_mem_init(64 * 1024 * 1024));
+    assert(tensor_mem_device() == 0);
+    assert(tensor_mem_context() == (CUcontext)&owner_context_token);
+    assert(tensor_mem_context_matches());
+    size_t owner_allocation_calls = device_allocation_calls;
+    test_device = 1;
+    assert(!tensor_mem_context_matches());
+    assert(cuda_mem_alloc(128) == NULL);
+    test_device = 0;
+    test_context = (CUcontext)&foreign_context_token;
+    assert(!tensor_mem_context_matches());
+    assert(cuda_mem_alloc(128) == NULL);
+    assert(device_allocation_calls == owner_allocation_calls);
+    test_context = (CUcontext)&owner_context_token;
     size_t reserved_bytes = live_bytes;
     fail_metadata = 1;
     assert(cuda_mem_alloc(128) == NULL);
@@ -152,6 +220,19 @@ int main(void)
     tensor_mem_destroy();
     assert(live_bytes == 0);
     assert(invalid_frees == 0);
+
+    assert(tensor_mem_init(1024 * 1024));
+    void *foreign_cleanup = cuda_mem_alloc(128);
+    assert(foreign_cleanup);
+    test_device = 1;
+    test_context = (CUcontext)&foreign_context_token;
+    cuda_mem_free(foreign_cleanup);
+    assert(test_device == 1 && test_context == (CUcontext)&foreign_context_token);
+    tensor_mem_destroy();
+    assert(test_device == 1 && test_context == (CUcontext)&foreign_context_token);
+    assert(context_pushes == 2);
+    assert(tensor_mem_device() == -1 && tensor_mem_context() == NULL);
+    assert(live_bytes == 0 && invalid_frees == 0);
     puts("memory pool checks passed");
     return 0;
 }

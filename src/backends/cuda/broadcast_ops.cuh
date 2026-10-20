@@ -27,7 +27,8 @@ __global__ void broadcast_kernel(
     const size_t a_base_offset,
     const size_t b_base_offset)
 {
-    for (size_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < total; idx += blockDim.x * gridDim.x)
+    for (size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
+         idx < total; idx += cuda_grid_stride(gridDim.x, blockDim.x))
     {
         size_t a_idx = 0;
         size_t b_idx = 0;
@@ -69,7 +70,8 @@ __global__ void broadcast_kernel_with_cast(
     const size_t a_base_offset,
     const size_t b_base_offset)
 {
-    for (size_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < total; idx += blockDim.x * gridDim.x)
+    for (size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
+         idx < total; idx += cuda_grid_stride(gridDim.x, blockDim.x))
     {
         size_t a_idx = 0;
         size_t b_idx = 0;
@@ -114,7 +116,8 @@ __global__ void broadcast_kernel_low_precision(
     const size_t a_base_offset,
     const size_t b_base_offset)
 {
-    for (size_t idx = blockIdx.x * blockDim.x + threadIdx.x; idx < total; idx += blockDim.x * gridDim.x)
+    for (size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
+         idx < total; idx += cuda_grid_stride(gridDim.x, blockDim.x))
     {
         size_t a_idx = 0;
         size_t b_idx = 0;
@@ -146,7 +149,7 @@ __global__ void broadcast_kernel_low_precision(
     }
 }
 
-static inline BroadcastParams setup_params(int *a_strides, int a_dims, int *b_strides, int b_dims, int *result_shape, int result_dims) {
+static inline BroadcastParams setup_params(const size_t *a_strides, int a_dims, const size_t *b_strides, int b_dims, int *result_shape, int result_dims) {
     BroadcastParams h_params;
     h_params.dims = result_dims;
     h_params.is_contiguous = (a_dims == result_dims && b_dims == result_dims);
@@ -171,8 +174,8 @@ static inline BroadcastParams setup_params(int *a_strides, int a_dims, int *b_st
 
 template <typename T, typename Op>
 void launch_broadcast_kernel_with_cast(void *a, dtype_t dtype_a, void *b, dtype_t dtype_b, T *result,
-                                       int *a_strides, int a_dims,
-                                       int *b_strides, int b_dims,
+                                       const size_t *a_strides, int a_dims,
+                                       const size_t *b_strides, int b_dims,
                                        int *result_shape, int result_dims,
                                        size_t total_elements,
                                        size_t a_base_offset,
@@ -194,8 +197,8 @@ void launch_broadcast_kernel_with_cast(void *a, dtype_t dtype_a, void *b, dtype_
 
 template <typename OutputT, typename Op>
 void launch_broadcast_kernel_low_precision(void *a, dtype_t dtype_a, void *b, dtype_t dtype_b,
-                                           OutputT *result, int *a_strides, int a_dims,
-                                           int *b_strides, int b_dims, int *result_shape,
+                                           OutputT *result, const size_t *a_strides, int a_dims,
+                                           const size_t *b_strides, int b_dims, int *result_shape,
                                            int result_dims, size_t total_elements,
                                            size_t a_base_offset, size_t b_base_offset)
 {
@@ -215,8 +218,8 @@ void launch_broadcast_kernel_low_precision(void *a, dtype_t dtype_a, void *b, dt
 
 template <typename T, typename Op>
 void launch_broadcast_kernel(T *a, T *b, T *result,
-                             int *a_strides, int a_dims,
-                             int *b_strides, int b_dims,
+                             const size_t *a_strides, int a_dims,
+                             const size_t *b_strides, int b_dims,
                              int *result_shape, int result_dims,
                              size_t total_elements,
                              size_t a_base_offset,

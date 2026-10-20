@@ -104,35 +104,13 @@ struct LTOpT
 template <typename T>
 struct EQOpT
 {
-    static __device__ __forceinline__ T apply(T a, T b)
-    {
-        if constexpr (std::is_floating_point<T>::value)
-        {
-            const T epsilon = static_cast<T>(1e-6);
-            return (fabs(a - b) < epsilon) ? static_cast<T>(1) : static_cast<T>(0);
-        }
-        else
-        {
-            return (a == b) ? static_cast<T>(1) : static_cast<T>(0);
-        }
-    }
+    static __device__ __forceinline__ T apply(T a, T b) { return (a == b) ? static_cast<T>(1) : static_cast<T>(0); }
 };
 
 template <typename T>
 struct NEOpT
 {
-    static __device__ __forceinline__ T apply(T a, T b)
-    {
-        if constexpr (std::is_floating_point<T>::value)
-        {
-            const T epsilon = static_cast<T>(1e-6);
-            return (fabs(a - b) >= epsilon) ? static_cast<T>(1) : static_cast<T>(0);
-        }
-        else
-        {
-            return (a != b) ? static_cast<T>(1) : static_cast<T>(0);
-        }
-    }
+    static __device__ __forceinline__ T apply(T a, T b) { return (a != b) ? static_cast<T>(1) : static_cast<T>(0); }
 };
 
 template <typename T>

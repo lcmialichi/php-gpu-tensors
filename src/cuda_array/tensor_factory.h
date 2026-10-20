@@ -36,7 +36,8 @@ tensor_t *cuda_tensor_create_arange(int count, dtype_t dtype, double start,
                                     double step, int exact_integer,
                                     int64_t integer_start, int64_t integer_step);
 tensor_t *cuda_tensor_create_linspace(int count, dtype_t dtype, double start,
-                                      double stop, int endpoint);
+                                      double stop, int endpoint, int exact_integer,
+                                      int64_t integer_start, int64_t integer_stop);
 
 tensor_t *cuda_tensor_create_scalar(float value, int *shape, int ndims);
 tensor_t *cuda_tensor_create_empty(const int shape[], int ndims);
@@ -44,6 +45,6 @@ tensor_t *cuda_tensor_create_empty_dtype(const int shape[], int ndims, dtype_t d
 tensor_t *resolve_result_tensor(tensor_t *t);
 tensor_t *cuda_tensor_clone(tensor_t *base_tensor);
 
-int cuda_tensor_get_scalar_value(tensor_t *t, float *result_val, int index);
+int cuda_tensor_get_scalar_value(tensor_t *t, zval *result, int index);
 
 #endif

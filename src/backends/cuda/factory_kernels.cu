@@ -97,7 +97,7 @@ __global__ static void scale_low_precision_kernel(
     for (size_t i = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
          i < count; i += (size_t)blockDim.x * gridDim.x)
     {
-        float value = values[i] * (max_value - min_value) + min_value;
+        float value = (1.0f - values[i]) * min_value + values[i] * max_value;
         base[i] = dtype == DTYPE_FLOAT16
             ? __half_as_ushort(__float2half_rn(value))
             : __bfloat16_as_ushort(__float2bfloat16_rn(value));
@@ -177,32 +177,7 @@ extern "C" void launch_assign_scalar_val_kernel(
     }
 
     DISPATCH_DTYPE(dtype, {
-        scalar_t scalar;
-
-        switch (dtype)
-        {
-        case DTYPE_FLOAT32:
-            scalar = (scalar_t)value.v.f32;
-            break;
-        case DTYPE_FLOAT64:
-            scalar = (scalar_t)value.v.f64;
-            break;
-        case DTYPE_INT32:
-            scalar = (scalar_t)value.v.i32;
-            break;
-        case DTYPE_INT64:
-            scalar = (scalar_t)value.v.i64;
-            break;
-        case DTYPE_INT8:
-            scalar = (scalar_t)value.v.i8;
-            break;
-        case DTYPE_BOOL:
-            scalar = (scalar_t)value.v.b;
-            break;
-        default:
-            scalar = (scalar_t)0;
-            break;
-        }
+        scalar_t scalar = get_scalar_value<scalar_t>(value);
 
         launch_fill_kernel_with_scalar<scalar_t>(
             (scalar_t *)base,
@@ -236,39 +211,8 @@ extern "C" void launch_scale_range_kernel(
     }
 
     DISPATCH_DTYPE(dtype, {
-        scalar_t s_min, s_max;
-
-        switch (dtype)
-        {
-        case DTYPE_FLOAT32:
-            s_min = (scalar_t)min.v.f32;
-            s_max = (scalar_t)max.v.f32;
-            break;
-        case DTYPE_FLOAT64:
-            s_min = (scalar_t)min.v.f64;
-            s_max = (scalar_t)max.v.f64;
-            break;
-        case DTYPE_INT32:
-            s_min = (scalar_t)min.v.i32;
-            s_max = (scalar_t)max.v.i32;
-            break;
-        case DTYPE_INT64:
-            s_min = (scalar_t)min.v.i64;
-            s_max = (scalar_t)max.v.i64;
-            break;
-        case DTYPE_INT8:
-            s_min = (scalar_t)min.v.i8;
-            s_max = (scalar_t)max.v.i8;
-            break;
-        case DTYPE_BOOL:
-            s_min = (scalar_t)min.v.b;
-            s_max = (scalar_t)max.v.b;
-            break;
-        default:
-            s_min = (scalar_t)0;
-            s_max = (scalar_t)0;
-            break;
-        }
+        scalar_t s_min = get_scalar_value<scalar_t>(min);
+        scalar_t s_max = get_scalar_value<scalar_t>(max);
 
         scale_kernel<scalar_t><<<cuda_grid_1d(total_elements), 256>>>(
             values,
@@ -365,6 +309,17 @@ __device__ static void store_generated_value(void *output, dtype_t dtype,
     }
 }
 
+__device__ static void store_generated_integer(void *output, dtype_t dtype,
+                                                size_t index, int64_t value)
+{
+    if (dtype == DTYPE_INT64)
+        ((int64_t *)output)[index] = value;
+    else if (dtype == DTYPE_UINT64)
+        ((uint64_t *)output)[index] = (uint64_t)value;
+    else
+        store_generated_value(output, dtype, index, (double)value);
+}
+
 __global__ static void arange_kernel(void *output, dtype_t dtype,
                                       size_t total_elements, double start,
                                       double step, int exact_integer,
@@ -373,16 +328,16 @@ __global__ static void arange_kernel(void *output, dtype_t dtype,
     for (size_t index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
          index < total_elements; index += (size_t)blockDim.x * gridDim.x)
     {
-        if (exact_integer && dtype == DTYPE_INT64)
+        if (exact_integer)
         {
             uint64_t bits = (uint64_t)integer_start +
                 (uint64_t)index * (uint64_t)integer_step;
-            ((int64_t *)output)[index] = (int64_t)bits;
+            store_generated_integer(output, dtype, index, (int64_t)bits);
         }
         else
         {
             store_generated_value(output, dtype, index,
-                                  start + (double)index * step);
+                                  fma((double)index, step, start));
         }
     }
 }
@@ -392,9 +347,11 @@ extern "C" cudaError_t launch_arange(void *output, dtype_t dtype,
                                       double step, int exact_integer,
                                       int64_t integer_start, int64_t integer_step)
 {
-    if (!total_elements) return cudaSuccess;
-    if (!output || dtype < 0 || dtype >= DTYPE_COUNT)
+    if (dtype < 0 || dtype >= DTYPE_COUNT || dtype == DTYPE_UNKNOWN ||
+        total_elements > INT_MAX)
         return cudaErrorInvalidValue;
+    if (!total_elements) return cudaSuccess;
+    if (!output) return cudaErrorInvalidValue;
     arange_kernel<<<cuda_grid_1d(total_elements), 256>>>(
         output, dtype, total_elements, start, step, exact_integer,
         integer_start, integer_step);
@@ -403,7 +360,8 @@ extern "C" cudaError_t launch_arange(void *output, dtype_t dtype,
 
 __global__ static void linspace_kernel(void *output, dtype_t dtype,
                                         size_t total_elements, double start,
-                                        double stop, int endpoint)
+                                        double stop, int endpoint, int exact_integer,
+                                        int64_t integer_start, int64_t integer_stop)
 {
     const double denominator = endpoint
         ? (total_elements > 1 ? (double)(total_elements - 1) : 1.0)
@@ -411,10 +369,33 @@ __global__ static void linspace_kernel(void *output, dtype_t dtype,
     for (size_t index = (size_t)blockIdx.x * blockDim.x + threadIdx.x;
          index < total_elements; index += (size_t)blockDim.x * gridDim.x)
     {
+        if (exact_integer)
+        {
+            uint64_t divisor = endpoint
+                ? (total_elements > 1 ? total_elements - 1 : 1) : total_elements;
+            int ascending = integer_stop >= integer_start;
+            uint64_t distance = ascending
+                ? (uint64_t)integer_stop - (uint64_t)integer_start
+                : (uint64_t)integer_start - (uint64_t)integer_stop;
+            // Split the product to cover the full int64 span without overflowing.
+            uint64_t remainder_product = (distance % divisor) * index;
+            uint64_t offset = (distance / divisor) * index + remainder_product / divisor;
+            int64_t value = (int64_t)(ascending
+                ? (uint64_t)integer_start + offset : (uint64_t)integer_start - offset);
+            if (remainder_product % divisor)
+            {
+                if (ascending && value < 0) value++;
+                else if (!ascending && value > 0) value--;
+            }
+            store_generated_integer(output, dtype, index, value);
+            continue;
+        }
         double ratio = (double)index / denominator;
-        double value = total_elements == 1
+        double value = total_elements == 1 || start == stop
             ? start
-            : start * (1.0 - ratio) + stop * ratio;
+            : ((start < 0) == (stop < 0)
+                ? fma(ratio, stop - start, start)
+                : start * (1.0 - ratio) + stop * ratio);
         if (endpoint && total_elements > 1 && index + 1 == total_elements)
             value = stop;
         store_generated_value(output, dtype, index, value);
@@ -423,13 +404,17 @@ __global__ static void linspace_kernel(void *output, dtype_t dtype,
 
 extern "C" cudaError_t launch_linspace(void *output, dtype_t dtype,
                                         size_t total_elements, double start,
-                                        double stop, int endpoint)
+                                        double stop, int endpoint, int exact_integer,
+                                        int64_t integer_start, int64_t integer_stop)
 {
-    if (!total_elements) return cudaSuccess;
-    if (!output || dtype < 0 || dtype >= DTYPE_COUNT)
+    if (dtype < 0 || dtype >= DTYPE_COUNT || dtype == DTYPE_UNKNOWN ||
+        total_elements > INT_MAX)
         return cudaErrorInvalidValue;
+    if (!total_elements) return cudaSuccess;
+    if (!output) return cudaErrorInvalidValue;
     linspace_kernel<<<cuda_grid_1d(total_elements), 256>>>(
-        output, dtype, total_elements, start, stop, endpoint);
+        output, dtype, total_elements, start, stop, endpoint, exact_integer,
+        integer_start, integer_stop);
     return cudaGetLastError();
 }
 

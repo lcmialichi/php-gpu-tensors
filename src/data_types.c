@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "operations.h"
 #include <stdio.h>
+#include <math.h>
 
 #define FOR_EACH_DTYPE(V)          \
     V(DTYPE_FLOAT32, float, f32)   \
@@ -249,42 +250,42 @@ int is_valid_dtype_string(const char *type_str)
 
 const char *dtype_to_string(dtype_t dtype)
 {
-    if (dtype >= DTYPE_COUNT)
+    if ((unsigned int)dtype >= DTYPE_COUNT)
         return "unknown";
     return dtype_infos[dtype].name;
 }
 
 size_t dtype_size(dtype_t dtype)
 {
-    if (dtype >= DTYPE_COUNT)
+    if ((unsigned int)dtype >= DTYPE_COUNT)
         return 0;
     return dtype_infos[dtype].size;
 }
 
 int dtype_is_floating(dtype_t dtype)
 {
-    if (dtype >= DTYPE_COUNT)
+    if ((unsigned int)dtype >= DTYPE_COUNT)
         return 0;
     return dtype_infos[dtype].is_floating;
 }
 
 int dtype_is_integer(dtype_t dtype)
 {
-    if (dtype >= DTYPE_COUNT)
+    if ((unsigned int)dtype >= DTYPE_COUNT)
         return 0;
     return dtype_infos[dtype].is_integer;
 }
 
 int dtype_is_signed(dtype_t dtype)
 {
-    if (dtype >= DTYPE_COUNT)
+    if ((unsigned int)dtype >= DTYPE_COUNT)
         return 0;
     return dtype_infos[dtype].is_signed;
 }
 
 int dtype_is_boolean(dtype_t dtype)
 {
-    if (dtype >= DTYPE_COUNT)
+    if ((unsigned int)dtype >= DTYPE_COUNT)
         return 0;
     return dtype_infos[dtype].is_boolean;
 }
@@ -298,38 +299,10 @@ int dtype_is_numeric_or_bool(dtype_t dtype)
     return info.is_boolean || info.is_integer || info.is_floating;
 }
 
-static const dtype_t type_hierarchy[] = {
-    DTYPE_BOOL,
-    DTYPE_UINT8,
-    DTYPE_UINT16,
-    DTYPE_UINT32,
-    DTYPE_UINT64,
-    DTYPE_INT8,
-    DTYPE_INT16,
-    DTYPE_INT32,
-    DTYPE_INT64,
-    DTYPE_FLOAT16,
-    DTYPE_BFLOAT16,
-    DTYPE_FLOAT32,
-    DTYPE_FLOAT64,
-};
-
-static const int type_hierarchy_size = sizeof(type_hierarchy) / sizeof(type_hierarchy[0]);
-
-static int type_index(dtype_t dtype)
-{
-    for (int i = 0; i < type_hierarchy_size; i++)
-    {
-        if (type_hierarchy[i] == dtype)
-        {
-            return i;
-        }
-    }
-    return -1;
-}
-
 dtype_t promote_types(dtype_t a, dtype_t b)
 {
+    if (!dtype_is_numeric_or_bool(a) || !dtype_is_numeric_or_bool(b))
+        return DTYPE_UNKNOWN;
     if (a == b)
         return a;
     if (dtype_is_floating(a) && dtype_is_floating(b) &&
@@ -357,54 +330,65 @@ dtype_t promote_types(dtype_t a, dtype_t b)
         return b;
     }
 
-    int idx_a = type_index(a);
-    int idx_b = type_index(b);
-
-    if (idx_a == -1 || idx_b == -1)
+    if (dtype_is_integer(a) && dtype_is_integer(b))
     {
-        return DTYPE_FLOAT32;
+        if (dtype_is_signed(a) == dtype_is_signed(b))
+            return dtype_size(a) > dtype_size(b) ? a : b;
+        dtype_t signed_type = dtype_is_signed(a) ? a : b;
+        dtype_t unsigned_type = dtype_is_signed(a) ? b : a;
+        if (dtype_size(signed_type) > dtype_size(unsigned_type))
+            return signed_type;
+        switch (unsigned_type)
+        {
+            case DTYPE_UINT8: return DTYPE_INT16;
+            case DTYPE_UINT16: return DTYPE_INT32;
+            case DTYPE_UINT32: return DTYPE_INT64;
+            default: return DTYPE_UNKNOWN;
+        }
     }
+    return a == DTYPE_FLOAT64 || b == DTYPE_FLOAT64 ? DTYPE_FLOAT64 : DTYPE_FLOAT32;
+}
 
-    return (idx_a > idx_b) ? a : b;
+int scalar_value_as_long_double(scalar_value_t value, long double *result)
+{
+    switch (value.dtype)
+    {
+        case DTYPE_FLOAT32: *result = value.v.f32; break;
+        case DTYPE_FLOAT64: *result = value.v.f64; break;
+        case DTYPE_FLOAT16: *result = float16_bits_to_float(value.v.u16); break;
+        case DTYPE_BFLOAT16: *result = bfloat16_bits_to_float(value.v.u16); break;
+        case DTYPE_INT8: *result = value.v.i8; break;
+        case DTYPE_INT16: *result = value.v.i16; break;
+        case DTYPE_INT32: *result = value.v.i32; break;
+        case DTYPE_INT64: *result = value.v.i64; break;
+        case DTYPE_UINT8: *result = value.v.u8; break;
+        case DTYPE_UINT16: *result = value.v.u16; break;
+        case DTYPE_UINT32: *result = value.v.u32; break;
+        case DTYPE_UINT64: *result = value.v.u64; break;
+        case DTYPE_BOOL: *result = value.v.b; break;
+        default: return 0;
+    }
+    return 1;
 }
 
 scalar_value_t cast_single_value(scalar_value_t value, dtype_t target_dtype)
 {
-    if (value.dtype == target_dtype)
-    {
-        return value;
-    }
-
-    scalar_value_t new_val;
-    new_val.dtype = target_dtype;
-    long double temp_val = 0;
-
-    switch (value.dtype)
-    {
-    case DTYPE_FLOAT32:
-        temp_val = (long double)value.v.f32;
-        break;
-    case DTYPE_FLOAT64:
-        temp_val = (long double)value.v.f64;
-        break;
-    case DTYPE_INT32:
-        temp_val = (long double)value.v.i32;
-        break;
-    case DTYPE_INT64:
-        temp_val = (long double)value.v.i64;
-        break;
-    case DTYPE_INT8:
-        temp_val = (long double)value.v.i8;
-        break;
-    case DTYPE_BOOL:
-        temp_val = (long double)value.v.b;
-        break;
-    default:
-        new_val.dtype = DTYPE_UNKNOWN;
-        new_val.is_neg = 0;
+    scalar_value_t new_val = {.dtype = DTYPE_UNKNOWN};
+    long double temp_val;
+    if (!dtype_is_numeric_or_bool(target_dtype) ||
+        !scalar_value_as_long_double(value, &temp_val))
         return new_val;
+    if (value.dtype == target_dtype)
+        return value;
+    if (dtype_is_integer(target_dtype))
+    {
+        int is_signed = dtype_is_signed(target_dtype);
+        long double limit = ldexpl(1.0L, (int)(8 * dtype_size(target_dtype)) - is_signed);
+        if (!isfinite(temp_val) || temp_val < (is_signed ? -limit : 0) || temp_val >= limit)
+            return new_val;
     }
-
+    new_val.dtype = target_dtype;
+    new_val.is_neg = temp_val < 0 && target_dtype != DTYPE_BOOL;
     switch (target_dtype)
     {
     case DTYPE_FLOAT32:
@@ -435,6 +419,11 @@ scalar_value_t cast_single_value(scalar_value_t value, dtype_t target_dtype)
         new_val.v.i8 = (int8_t)temp_val;
         new_val.is_neg = (new_val.v.i8 < 0);
         break;
+    case DTYPE_INT16: new_val.v.i16 = (int16_t)temp_val; break;
+    case DTYPE_UINT8: new_val.v.u8 = (uint8_t)temp_val; break;
+    case DTYPE_UINT16: new_val.v.u16 = (uint16_t)temp_val; break;
+    case DTYPE_UINT32: new_val.v.u32 = (uint32_t)temp_val; break;
+    case DTYPE_UINT64: new_val.v.u64 = (uint64_t)temp_val; break;
     case DTYPE_BOOL:
         new_val.v.b = (temp_val != 0);
         new_val.is_neg = 0;
@@ -449,12 +438,19 @@ scalar_value_t cast_single_value(scalar_value_t value, dtype_t target_dtype)
 
 dtype_t promote_scalar_for_arithmetic(dtype_t tensor_dtype, dtype_t scalar_dtype, operation_type_t op, int is_neg)
 {
+    if (!dtype_is_numeric_or_bool(tensor_dtype) || !dtype_is_numeric_or_bool(scalar_dtype))
+        return DTYPE_UNKNOWN;
+    if (dtype_is_integer(tensor_dtype) && dtype_is_integer(scalar_dtype) &&
+        dtype_is_signed(tensor_dtype) != dtype_is_signed(scalar_dtype) &&
+        (tensor_dtype == DTYPE_UINT64 || scalar_dtype == DTYPE_UINT64))
+        return DTYPE_UNKNOWN;
     if (op == OP_MAXIMUM || op == OP_MINIMUM)
         return tensor_dtype == scalar_dtype ? tensor_dtype : promote_types(tensor_dtype, scalar_dtype);
 
     if (op == OP_DIV || (op == OP_POW && is_neg == 1))
     {
-        if (tensor_dtype == DTYPE_FLOAT64 && scalar_dtype == DTYPE_FLOAT64)
+        if (tensor_dtype == DTYPE_FLOAT64 || tensor_dtype == DTYPE_INT64 ||
+            tensor_dtype == DTYPE_UINT64)
         {
             return DTYPE_FLOAT64;
         }
@@ -483,7 +479,7 @@ dtype_t promote_scalar_for_arithmetic(dtype_t tensor_dtype, dtype_t scalar_dtype
 
     if (dtype_is_integer(tensor_dtype) && dtype_is_floating(scalar_dtype))
     {
-        return DTYPE_FLOAT32;
+        return dtype_size(tensor_dtype) == 8 ? DTYPE_FLOAT64 : DTYPE_FLOAT32;
     }
 
     if (dtype_is_integer(tensor_dtype) && dtype_is_integer(scalar_dtype))
@@ -496,13 +492,15 @@ dtype_t promote_scalar_for_arithmetic(dtype_t tensor_dtype, dtype_t scalar_dtype
 
 dtype_t promote_types_for_arithmetic(dtype_t a, dtype_t b, operation_type_t op)
 {
+    dtype_t promoted = promote_types(a, b);
+    if (promoted == DTYPE_UNKNOWN)
+        return DTYPE_UNKNOWN;
     if (op == OP_MAXIMUM || op == OP_MINIMUM)
-        return promote_types(a, b);
+        return promoted;
 
     if (op == OP_DIV || op == OP_POW) /** @todo need to validate this policy for tensors */
     {
-        dtype_t p = promote_types(a, b);
-        if (p == DTYPE_FLOAT64)
+        if (promoted == DTYPE_FLOAT64 || promoted == DTYPE_INT64 || promoted == DTYPE_UINT64)
             return DTYPE_FLOAT64;
         return DTYPE_FLOAT32;
     }
@@ -512,19 +510,6 @@ dtype_t promote_types_for_arithmetic(dtype_t a, dtype_t b, operation_type_t op)
         if (a == DTYPE_BOOL && b == DTYPE_BOOL)
         {
             return DTYPE_INT32;
-        }
-    }
-
-    dtype_t promoted = promote_types(a, b);
-    if (dtype_is_integer(a) && dtype_is_integer(b))
-    {
-        if (dtype_is_signed(a) != dtype_is_signed(b))
-        {
-            if (promoted == DTYPE_INT64 || promoted == DTYPE_UINT64)
-            {
-                return DTYPE_INT64;
-            }
-            return DTYPE_INT64;
         }
     }
 
@@ -580,18 +565,17 @@ int can_cast_unsafe(dtype_t from, dtype_t to)
 
 int can_safely_cast_to(dtype_t from, dtype_t to)
 {
+    if (!dtype_is_numeric_or_bool(from) || !dtype_is_numeric_or_bool(to))
+        return 0;
     if (from == to)
         return 1;
-
-    if (from == DTYPE_BOOL)
-    {
-        return 1;
-    }
 
     if (from == DTYPE_FLOAT16 || from == DTYPE_BFLOAT16)
         return to == DTYPE_FLOAT32 || to == DTYPE_FLOAT64;
     if (to == DTYPE_FLOAT16 || to == DTYPE_BFLOAT16)
         return 0;
+    if (from == DTYPE_BOOL)
+        return 1;
 
     if (dtype_is_floating(from) && dtype_is_integer(to))
     {

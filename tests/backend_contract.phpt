@@ -69,8 +69,6 @@ final class CustomNumberTensor extends OperatorOverload implements Tensor
     {
         return new static(fmod(self::numberValue($left), self::numberValue($right)));
     }
-    public function __inc(): static { return new static($this->value + 1); }
-    public function __dec(): static { return new static($this->value - 1); }
     private static function numberValue(mixed $value): float
     {
         return $value instanceof self ? $value->value : (float)$value;

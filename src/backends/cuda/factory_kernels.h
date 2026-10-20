@@ -44,7 +44,8 @@ extern "C"
                               double start, double step, int exact_integer,
                               int64_t integer_start, int64_t integer_step);
     cudaError_t launch_linspace(void *output, dtype_t dtype, size_t total_elements,
-                                double start, double stop, int endpoint);
+                                double start, double stop, int endpoint, int exact_integer,
+                                int64_t integer_start, int64_t integer_stop);
     cudaError_t launch_tensor_transform(const void *input, void *output,
                                         dtype_t dtype,
                                         const tensor_transform_spec_t *spec,

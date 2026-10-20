@@ -598,14 +598,14 @@ static __global__ void matmul_small_kernel(float *a, float *b, float *c,
                                      size_t b_stride0, size_t b_stride1,
                                      size_t c_stride0, size_t c_stride1)
 {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t row = cuda_linear_index(blockIdx.y, blockDim.y, threadIdx.y);
+    size_t col = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (row < m && col < k) {
         float sum = 0;
         for (int i = 0; i < n; i++)
-            sum += a[(size_t)row * a_stride0 + (size_t)i * a_stride1] *
-                   b[(size_t)i * b_stride0 + (size_t)col * b_stride1];
-        c[(size_t)row * c_stride0 + (size_t)col * c_stride1] = sum;
+            sum += a[cuda_matrix_offset(row, a_stride0, i, a_stride1)] *
+                   b[cuda_matrix_offset(i, b_stride0, col, b_stride1)];
+        c[cuda_matrix_offset(row, c_stride0, col, c_stride1)] = sum;
     }
 }
 
@@ -617,8 +617,8 @@ static __global__ void matmul_nd_tiled_kernel(MatMulParamsND params)
     int tx = threadIdx.x;
     int ty = threadIdx.y;
     int batch_id = blockIdx.z;
-    int global_row = blockIdx.y * TILE_SIZE + ty;
-    int global_col = blockIdx.x * TILE_SIZE + tx;
+    size_t global_row = cuda_linear_index(blockIdx.y, TILE_SIZE, ty);
+    size_t global_col = cuda_linear_index(blockIdx.x, TILE_SIZE, tx);
 
     if (batch_id >= params.total_batches)
         return;
@@ -641,20 +641,20 @@ static __global__ void matmul_nd_tiled_kernel(MatMulParamsND params)
     }
 
     float sum = 0.0f;
-    int stride_a_row = params.strideA[params.ndA - 2];
-    int stride_a_col = params.strideA[params.ndA - 1];
-    int stride_b_row = params.strideB[params.ndB - 2];
-    int stride_b_col = params.strideB[params.ndB - 1];
+    size_t stride_a_row = params.strideA[params.ndA - 2];
+    size_t stride_a_col = params.strideA[params.ndA - 1];
+    size_t stride_b_row = params.strideB[params.ndB - 2];
+    size_t stride_b_col = params.strideB[params.ndB - 1];
 
-    for (int k_offset = 0; k_offset < params.K; k_offset += TILE_SIZE)
+    for (size_t k_offset = 0; k_offset < params.K; k_offset += TILE_SIZE)
     {
-        int a_col = k_offset + tx;
-        int b_row = k_offset + ty;
+        size_t a_col = k_offset + tx;
+        size_t b_row = k_offset + ty;
 
         tile_a[ty][tx] = (global_row < params.M && a_col < params.K)
-            ? params.A[batch_offset_a + global_row * stride_a_row + a_col * stride_a_col] : 0.0f;
+            ? params.A[batch_offset_a + cuda_matrix_offset(global_row, stride_a_row, a_col, stride_a_col)] : 0.0f;
         tile_b[ty][tx] = (b_row < params.K && global_col < params.N)
-            ? params.B[batch_offset_b + b_row * stride_b_row + global_col * stride_b_col] : 0.0f;
+            ? params.B[batch_offset_b + cuda_matrix_offset(b_row, stride_b_row, global_col, stride_b_col)] : 0.0f;
 
         __syncthreads();
 #pragma unroll
@@ -665,8 +665,8 @@ static __global__ void matmul_nd_tiled_kernel(MatMulParamsND params)
 
     if (global_row < params.M && global_col < params.N)
     {
-        size_t output_index = batch_offset_c + global_row * params.strideC[params.ndC - 2]
-                                           + global_col * params.strideC[params.ndC - 1];
+        size_t output_index = batch_offset_c + cuda_matrix_offset(
+            global_row, params.strideC[params.ndC - 2], global_col, params.strideC[params.ndC - 1]);
         params.C[output_index] = sum;
     }
 }
@@ -744,8 +744,8 @@ static __global__ void low_precision_matmul_nd_kernel(LowMatMulParams<T> params)
     int tx = threadIdx.x;
     int ty = threadIdx.y;
     int batch_id = blockIdx.z;
-    int global_row = blockIdx.y * TILE_SIZE + ty;
-    int global_col = blockIdx.x * TILE_SIZE + tx;
+    size_t global_row = cuda_linear_index(blockIdx.y, TILE_SIZE, ty);
+    size_t global_col = cuda_linear_index(blockIdx.x, TILE_SIZE, tx);
     if (batch_id >= params.total_batches) return;
 
     size_t batch_offset_a = 0, batch_offset_b = 0, batch_offset_c = 0;
@@ -766,16 +766,16 @@ static __global__ void low_precision_matmul_nd_kernel(LowMatMulParams<T> params)
     size_t b_row_stride = params.strideB[params.ndB - 2];
     size_t b_col_stride = params.strideB[params.ndB - 1];
     float sum = 0.0f;
-    for (int k_offset = 0; k_offset < params.K; k_offset += TILE_SIZE)
+    for (size_t k_offset = 0; k_offset < params.K; k_offset += TILE_SIZE)
     {
-        int a_col = k_offset + tx;
-        int b_row = k_offset + ty;
+        size_t a_col = k_offset + tx;
+        size_t b_row = k_offset + ty;
         tile_a[ty][tx] = global_row < params.M && a_col < params.K
-            ? low_precision_to_float(params.A[batch_offset_a + (size_t)global_row * a_row_stride +
-                                             (size_t)a_col * a_col_stride]) : 0.0f;
+            ? low_precision_to_float(params.A[batch_offset_a +
+                cuda_matrix_offset(global_row, a_row_stride, a_col, a_col_stride)]) : 0.0f;
         tile_b[ty][tx] = b_row < params.K && global_col < params.N
-            ? low_precision_to_float(params.B[batch_offset_b + (size_t)b_row * b_row_stride +
-                                             (size_t)global_col * b_col_stride]) : 0.0f;
+            ? low_precision_to_float(params.B[batch_offset_b +
+                cuda_matrix_offset(b_row, b_row_stride, global_col, b_col_stride)]) : 0.0f;
         __syncthreads();
 #pragma unroll
         for (int i = 0; i < TILE_SIZE; i++)
@@ -784,9 +784,8 @@ static __global__ void low_precision_matmul_nd_kernel(LowMatMulParams<T> params)
     }
     if (global_row < params.M && global_col < params.N)
     {
-        size_t output_index = batch_offset_c +
-            (size_t)global_row * params.strideC[params.ndC - 2] +
-            (size_t)global_col * params.strideC[params.ndC - 1];
+        size_t output_index = batch_offset_c + cuda_matrix_offset(
+            global_row, params.strideC[params.ndC - 2], global_col, params.strideC[params.ndC - 1]);
         params.C[output_index] = low_precision_from_float<T>(sum);
     }
 }

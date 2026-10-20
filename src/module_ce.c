@@ -7,6 +7,7 @@
 #include "module_arginfo.h"
 #include "kernel_types.h"
 #include "tensor.h"
+#include "memory_pool.h"
 #include "fusion.h"
 #include <nvrtc.h>
 #include <cuda.h>
@@ -49,7 +50,6 @@ static pthread_mutex_t g_launch_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static zend_object *module_create_object(zend_class_entry *class_type);
 static void module_free_object(zend_object *object);
-static zend_bool module_initialize_cuda_context(cuda_module_object *module);
 static void module_cleanup_cuda_resources(cuda_module_object *module);
 static double module_get_current_time_ms(void);
 static const char *module_dtype_to_string(dtype_t dtype);
@@ -92,54 +92,34 @@ static zend_bool module_get_shared_context(cuda_module_object *module);
 static void module_hash_launch_config(int grid[3], int block[3], size_t *hash);
 static void free_parameter_list(func_parameter_list_t *params);
 static void free_kernel_data(cuda_kernel_data *kernel);
-static void module_ensure_context_set(cuda_module_object *module);
 
 static func_parameter *create_parameter_from_array(HashTable *param_ht)
 {
-    zval *name_zv, *dtype_zv, *second_dtype_zv;
-
-    if (!(name_zv = zend_hash_str_find(param_ht, "name", 4)) ||
-        Z_TYPE_P(name_zv) != IS_STRING)
+    zval *name = zend_hash_str_find(param_ht, "name", sizeof("name") - 1);
+    zval *dtype = zend_hash_str_find(param_ht, "dtype", sizeof("dtype") - 1);
+    zval *second_dtype = zend_hash_str_find(param_ht, "second_dtype", sizeof("second_dtype") - 1);
+    zval *type = zend_hash_str_find(param_ht, "type", sizeof("type") - 1);
+    if (!name || Z_TYPE_P(name) != IS_STRING || Z_STRLEN_P(name) == 0 ||
+        Z_STRLEN_P(name) >= MAX_P_NAME_LEN ||
+        memchr(Z_STRVAL_P(name), '\0', Z_STRLEN_P(name)) ||
+        !dtype || Z_TYPE_P(dtype) != IS_LONG ||
+        !((Z_LVAL_P(dtype) >= 0 && Z_LVAL_P(dtype) < DTYPE_UNKNOWN) ||
+          Z_LVAL_P(dtype) == DTYPE_LIST) ||
+        !second_dtype || Z_TYPE_P(second_dtype) != IS_LONG ||
+        Z_LVAL_P(second_dtype) < 0 || Z_LVAL_P(second_dtype) > DTYPE_UNKNOWN ||
+        (Z_LVAL_P(dtype) == DTYPE_LIST && Z_LVAL_P(second_dtype) == DTYPE_UNKNOWN) ||
+        !type || Z_TYPE_P(type) != IS_LONG ||
+        Z_LVAL_P(type) < INPUT || Z_LVAL_P(type) > PARAMETER)
     {
+        CUDA_THROW_INVALID("Invalid serialized kernel parameter");
         return NULL;
     }
 
-    if (!(dtype_zv = zend_hash_str_find(param_ht, "dtype", 5)) ||
-        Z_TYPE_P(dtype_zv) != IS_LONG)
-    {
-        return NULL;
-    }
-
-    func_parameter *param = (func_parameter *)emalloc(sizeof(func_parameter));
-    if (!param)
-    {
-        return NULL;
-    }
-    memset(param, 0, sizeof(func_parameter));
-
-    size_t name_len = Z_STRLEN_P(name_zv);
-    if (name_len >= sizeof(param->name))
-    {
-        name_len = sizeof(param->name) - 1;
-    }
-
-    if (name_len > 0)
-    {
-        memcpy(param->name, Z_STRVAL_P(name_zv), name_len);
-        param->name[name_len] = '\0';
-    }
-
-    param->dtype = (dtype_t)Z_LVAL_P(dtype_zv);
-
-    if (param->dtype == DTYPE_LIST)
-    {
-        second_dtype_zv = zend_hash_str_find(param_ht, "second_dtype", 12);
-        if (second_dtype_zv && Z_TYPE_P(second_dtype_zv) == IS_LONG)
-        {
-            param->second_dtype = (dtype_t)Z_LVAL_P(second_dtype_zv);
-        }
-    }
-
+    func_parameter *param = ecalloc(1, sizeof(*param));
+    memcpy(param->name, Z_STRVAL_P(name), Z_STRLEN_P(name));
+    param->dtype = (dtype_t)Z_LVAL_P(dtype);
+    param->second_dtype = (dtype_t)Z_LVAL_P(second_dtype);
+    param->type = (parameter_type_t)Z_LVAL_P(type);
     return param;
 }
 
@@ -328,16 +308,16 @@ static zend_bool module_initialize_global_cuda(cuda_module_object *module)
     if (cu_result != CUDA_SUCCESS)
     {
         pthread_mutex_unlock(&g_cuda_global_init_mutex);
-        module_log_error("Failed to initialize CUDA driver: %s",
+        CUDA_THROW_RUNTIME("Failed to initialize CUDA driver: %s",
                          get_cuda_error_string(cu_result));
         return 0;
     }
 
-    cu_result = cuDeviceGet(&g_primary_device, 0);
+    cu_result = cuDeviceGet(&g_primary_device, tensor_mem_device());
     if (cu_result != CUDA_SUCCESS)
     {
         pthread_mutex_unlock(&g_cuda_global_init_mutex);
-        module_log_error("Failed to get CUDA device: %s",
+        CUDA_THROW_RUNTIME("Failed to get CUDA device: %s",
                          get_cuda_error_string(cu_result));
         return 0;
     }
@@ -346,6 +326,15 @@ static zend_bool module_initialize_global_cuda(cuda_module_object *module)
     pthread_mutex_unlock(&g_cuda_global_init_mutex);
 
     return 1;
+}
+
+static void module_release_shared_context_locked(void)
+{
+    if (!g_shared_context) return;
+    CUresult result = cuDevicePrimaryCtxRelease(g_primary_device);
+    if (result != CUDA_SUCCESS)
+        module_log_error("Failed to release primary CUDA context: %s", get_cuda_error_string(result));
+    g_shared_context = NULL;
 }
 
 static zend_bool module_get_shared_context(cuda_module_object *module)
@@ -360,28 +349,20 @@ static zend_bool module_get_shared_context(cuda_module_object *module)
             return 0;
         }
 
-        unsigned int ctx_flags = CU_CTX_SCHED_AUTO | CU_CTX_MAP_HOST | CU_CTX_LMEM_RESIZE_TO_MAX;
-        CUresult result = cuCtxCreate(&g_shared_context, ctx_flags, g_primary_device);
+        CUresult result = cuDevicePrimaryCtxRetain(&g_shared_context, g_primary_device);
         if (result != CUDA_SUCCESS)
         {
             pthread_mutex_unlock(&g_shared_context_mutex);
-            module_log_error("Failed to create shared CUDA context: %s", get_cuda_error_string(result));
+            CUDA_THROW_RUNTIME("Failed to retain primary CUDA context: %s", get_cuda_error_string(result));
             return 0;
         }
-    }
-
-    CUresult context_result = cuCtxSetCurrent(g_shared_context);
-    if (context_result != CUDA_SUCCESS)
-    {
-        if (g_shared_context_refcount == 0 && g_shared_context)
+        if (g_shared_context != tensor_mem_context())
         {
-            cuCtxDestroy(g_shared_context);
-            g_shared_context = NULL;
+            module_release_shared_context_locked();
+            pthread_mutex_unlock(&g_shared_context_mutex);
+            CUDA_THROW_RUNTIME("Compiled modules require the memory pool's primary CUDA context");
+            return 0;
         }
-        pthread_mutex_unlock(&g_shared_context_mutex);
-        module_log_error("Failed to set shared CUDA context on current thread: %s",
-                         get_cuda_error_string(context_result));
-        return 0;
     }
 
     g_shared_context_refcount++;
@@ -399,12 +380,12 @@ static zend_bool module_get_shared_context(cuda_module_object *module)
             g_shared_context_refcount--;
             if (g_shared_context_refcount == 0 && g_shared_context)
             {
-                cuCtxDestroy(g_shared_context);
-                g_shared_context = NULL;
+                module_release_shared_context_locked();
             }
             pthread_mutex_unlock(&g_shared_context_mutex);
             module->cu_context = NULL;
             module->uses_shared_context = 0;
+            CUDA_THROW_RUNTIME("Failed to create module stream: %s", get_cuda_error_string(stream_result));
             return 0;
         }
     }
@@ -548,68 +529,11 @@ static zend_bool module_ensure_ptx_loaded(cuda_module_object *module)
     return 1;
 }
 
-static void module_ensure_context_set(cuda_module_object *module)
-{
-    if (!module->cu_context)
-        return;
-
-    CUcontext current = NULL;
-    CUresult result = cuCtxGetCurrent(&current);
-    if (result != CUDA_SUCCESS || current != module->cu_context)
-    {
-        result = cuCtxSetCurrent(module->cu_context);
-        if (result != CUDA_SUCCESS)
-        {
-            module_check_cuda_error(module, result, "setting context");
-        }
-    }
-}
-
 static zend_bool module_ensure_cuda_initialized(cuda_module_object *module)
 {
-    if (module->cu_context)
-    {
-        module_ensure_context_set(module);
-        return EG(exception) == NULL;
-    }
-
-    if (module_get_shared_context(module))
-    {
-        module_initialize_stream_pool_progressive(module);
-        return 1;
-    }
-
-    if (!module_initialize_global_cuda(module))
-    {
-        CUDA_THROW_RUNTIME("Failed to initialize CUDA driver");
-        return 0;
-    }
-
-    CUresult cu_result = cuDevicePrimaryCtxRetain(&module->cu_context, g_primary_device);
-    if (cu_result != CUDA_SUCCESS)
-    {
-        CUDA_THROW_RUNTIME("Failed to retain primary context: %s", get_cuda_error_string(cu_result));
-        return 0;
-    }
-
-    cu_result = cuCtxSetCurrent(module->cu_context);
-    if (cu_result != CUDA_SUCCESS)
-    {
-        cuDevicePrimaryCtxRelease(g_primary_device);
-        module->cu_context = NULL;
-        CUDA_THROW_RUNTIME("Failed to set primary CUDA context: %s", get_cuda_error_string(cu_result));
-        return 0;
-    }
-
-    cu_result = cuStreamCreate(&module->cu_stream, CU_STREAM_NON_BLOCKING);
-    if (cu_result != CUDA_SUCCESS)
-    {
-        cuDevicePrimaryCtxRelease(g_primary_device);
-        module->cu_context = NULL;
-        CUDA_THROW_RUNTIME("Failed to create stream: %s", get_cuda_error_string(cu_result));
-        return 0;
-    }
-
+    if (!cuda_tensor_require_context()) return 0;
+    if (module->cu_context) return 1;
+    if (!module_get_shared_context(module)) return 0;
     module_initialize_stream_pool_progressive(module);
     return 1;
 }
@@ -844,6 +768,19 @@ static void free_kernel_data(cuda_kernel_data *kernel)
     efree(kernel);
 }
 
+static void module_free_kernel_functions(HashTable *functions)
+{
+    if (!functions) return;
+    cuda_kernel_data *kernel;
+    ZEND_HASH_FOREACH_PTR(functions, kernel)
+    {
+        free_kernel_data(kernel);
+    }
+    ZEND_HASH_FOREACH_END();
+    zend_hash_destroy(functions);
+    efree(functions);
+}
+
 static void module_return_stream_to_pool(cuda_module_object *module, CUstream stream)
 {
     if (!stream || !module->stream_pool)
@@ -871,54 +808,6 @@ static void module_return_stream_to_pool(cuda_module_object *module, CUstream st
     }
 
     pthread_mutex_unlock(&module->stream_pool->mutex);
-}
-
-static zend_bool module_initialize_cuda_context(cuda_module_object *module)
-{
-    CUresult cu_result;
-
-    if (!module_initialize_global_cuda(module))
-    {
-        CUDA_THROW_RUNTIME(
-                                "Failed to initialize CUDA driver");
-        return 0;
-    }
-
-    if (module->cu_context)
-    {
-        module_ensure_context_set(module);
-        return 1;
-    }
-
-    if (module_get_shared_context(module))
-    {
-        module_initialize_stream_pool_progressive(module);
-        return 1;
-    }
-
-    unsigned int ctx_flags = CU_CTX_SCHED_AUTO | CU_CTX_MAP_HOST;
-
-    cu_result = cuCtxCreate(&module->cu_context, ctx_flags, g_primary_device);
-    if (cu_result != CUDA_SUCCESS)
-    {
-        CUDA_THROW_RUNTIME(
-                                "Failed to create CUDA context: %s",
-                                get_cuda_error_string(cu_result));
-        return 0;
-    }
-
-    cu_result = cuStreamCreate(&module->cu_stream, CU_STREAM_DEFAULT);
-    if (cu_result != CUDA_SUCCESS)
-    {
-        module_check_cuda_error(module, cu_result, "creating default stream");
-        cuCtxDestroy(module->cu_context);
-        module->cu_context = NULL;
-        return 0;
-    }
-
-    module_initialize_stream_pool_progressive(module);
-
-    return 1;
 }
 
 static void module_cleanup_cuda_resources(cuda_module_object *module)
@@ -963,34 +852,12 @@ static void module_cleanup_cuda_resources(cuda_module_object *module)
 
     if (module->cu_context)
     {
-        if (module->uses_shared_context)
-        {
-            pthread_mutex_lock(&g_shared_context_mutex);
-            g_shared_context_refcount--;
-            if (g_shared_context_refcount == 0 && g_shared_context)
-            {
-                cu_result = cuCtxDestroy(g_shared_context);
-                if (cu_result != CUDA_SUCCESS && cu_result != CUDA_ERROR_INVALID_HANDLE)
-                {
-                    module_log_error("Failed to destroy shared CUDA context: %s",
-                                     get_cuda_error_string(cu_result));
-                }
-                g_shared_context = NULL;
-            }
-            pthread_mutex_unlock(&g_shared_context_mutex);
-            module->cu_context = NULL;
-            module->uses_shared_context = 0;
-        }
-        else
-        {
-            cu_result = cuCtxDestroy(module->cu_context);
-            if (cu_result != CUDA_SUCCESS && cu_result != CUDA_ERROR_INVALID_HANDLE)
-            {
-                module_log_error("Failed to destroy CUDA context: %s",
-                                 get_cuda_error_string(cu_result));
-            }
-            module->cu_context = NULL;
-        }
+        pthread_mutex_lock(&g_shared_context_mutex);
+        g_shared_context_refcount--;
+        if (g_shared_context_refcount == 0) module_release_shared_context_locked();
+        pthread_mutex_unlock(&g_shared_context_mutex);
+        module->cu_context = NULL;
+        module->uses_shared_context = 0;
     }
 }
 
@@ -2286,64 +2153,59 @@ ZEND_METHOD(CompiledModule, save)
 
 ZEND_METHOD(CompiledModule, __serialize)
 {
+    ZEND_PARSE_PARAMETERS_NONE();
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
-    if (!module)
-        RETURN_EMPTY_ARRAY();
+    if (!module->ptx_code || !module->ptx_size || !module->kernel_functions)
+    {
+        CUDA_THROW_RUNTIME("Cannot serialize an uninitialized compiled module");
+        RETURN_THROWS();
+    }
 
     array_init(return_value);
-
-    if (module->ptx_code)
-    {
-        add_assoc_stringl(return_value, "ptx", module->ptx_code, module->ptx_size);
-    }
+    add_assoc_string(return_value, "__compiled_module_v1", "1");
+    add_assoc_stringl(return_value, "ptx", module->ptx_code, module->ptx_size);
 
     zval kernels_zv;
     array_init(&kernels_zv);
 
-    if (module->kernel_functions)
+    zend_string *key;
+    cuda_kernel_data *kernel;
+    ZEND_HASH_FOREACH_STR_KEY_PTR(module->kernel_functions, key, kernel)
     {
-        zend_string *key;
-        cuda_kernel_data *kernel;
-
-        ZEND_HASH_FOREACH_STR_KEY_PTR(module->kernel_functions, key, kernel)
+        int count = kernel->parameters ? kernel->parameters->total : 0;
+        if (count < 0 || count > MAX_KERNEL_ARGS)
         {
-            zval kernel_data;
-            array_init(&kernel_data);
-
-            add_assoc_str(&kernel_data, "name", zend_string_copy(kernel->name));
-            add_assoc_long(&kernel_data, "params_count", kernel->parameters ? kernel->parameters->total : 0);
-
-            if (kernel->parameters && kernel->parameters->total > 0)
-            {
-                size_t p_size = sizeof(func_parameter);
-                size_t total_bytes = kernel->parameters->total * p_size;
-
-                zend_string *params_blob = zend_string_alloc(total_bytes, 0);
-                char *dest = ZSTR_VAL(params_blob);
-
-                for (int i = 0; i < kernel->parameters->total; i++)
-                {
-                    func_parameter *p = kernel->parameters->parameters[i];
-                    if (p)
-                    {
-                        memcpy(dest + (i * p_size), p, p_size);
-                    }
-                }
-
-                ZSTR_VAL(params_blob)[total_bytes] = '\0';
-                add_assoc_str(&kernel_data, "params_blob", params_blob);
-            }
-
-            zend_hash_update(Z_ARRVAL(kernels_zv), key, &kernel_data);
+            zval_ptr_dtor(&kernels_zv);
+            zval_ptr_dtor(return_value);
+            ZVAL_UNDEF(return_value);
+            CUDA_THROW_INVALID("Serialized kernels support at most %d parameters", MAX_KERNEL_ARGS);
+            RETURN_THROWS();
         }
-        ZEND_HASH_FOREACH_END();
+        zval kernel_data, parameters;
+        array_init(&kernel_data);
+        array_init_size(&parameters, count);
+        add_assoc_str(&kernel_data, "name", zend_string_copy(kernel->name));
+        for (int i = 0; i < count; i++)
+        {
+            func_parameter *p = kernel->parameters->parameters[i];
+            zval parameter;
+            array_init_size(&parameter, 4);
+            add_assoc_string(&parameter, "name", p->name);
+            add_assoc_long(&parameter, "dtype", p->dtype);
+            add_assoc_long(&parameter, "second_dtype", p->second_dtype);
+            add_assoc_long(&parameter, "type", p->type);
+            add_next_index_zval(&parameters, &parameter);
+        }
+        add_assoc_zval(&kernel_data, "parameters", &parameters);
+        zend_hash_update(Z_ARRVAL(kernels_zv), key, &kernel_data);
     }
-
+    ZEND_HASH_FOREACH_END();
     add_assoc_zval(return_value, "kernels", &kernels_zv);
 }
 
 ZEND_METHOD(CompiledModule, __unserialize)
 {
+    if (!fusion_check_mutation()) RETURN_THROWS();
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
     HashTable *data;
 
@@ -2351,76 +2213,91 @@ ZEND_METHOD(CompiledModule, __unserialize)
     Z_PARAM_ARRAY_HT(data)
     ZEND_PARSE_PARAMETERS_END();
 
-    module->from_serialize = 1;
+    zval *version = zend_hash_str_find(data, "__compiled_module_v1", sizeof("__compiled_module_v1") - 1);
     zval *ptx_zv = zend_hash_str_find(data, "ptx", sizeof("ptx") - 1);
-    if (ptx_zv && Z_TYPE_P(ptx_zv) == IS_STRING)
+    zval *kernels_zv = zend_hash_str_find(data, "kernels", sizeof("kernels") - 1);
+    if (!version || Z_TYPE_P(version) != IS_STRING ||
+        !zend_string_equals_literal(Z_STR_P(version), "1") ||
+        !ptx_zv || Z_TYPE_P(ptx_zv) != IS_STRING || Z_STRLEN_P(ptx_zv) < 10 ||
+        !kernels_zv || Z_TYPE_P(kernels_zv) != IS_ARRAY)
     {
-        module->ptx_code = estrndup(Z_STRVAL_P(ptx_zv), Z_STRLEN_P(ptx_zv));
-        module->ptx_size = Z_STRLEN_P(ptx_zv);
+        CUDA_THROW_INVALID("Invalid serialized CompiledModule version or payload; recompile legacy caches");
+        RETURN_THROWS();
+    }
+    size_t text_size = Z_STRLEN_P(ptx_zv);
+    if (Z_STRVAL_P(ptx_zv)[text_size - 1] == '\0') text_size--;
+    if (memchr(Z_STRVAL_P(ptx_zv), '\0', text_size) ||
+        !strstr(Z_STRVAL_P(ptx_zv), ".version"))
+    {
+        CUDA_THROW_INVALID("Invalid serialized PTX text");
+        RETURN_THROWS();
+    }
+    if (module->cu_context || module->init_data.init_in_progress ||
+        module->has_pending_operations)
+    {
+        CUDA_THROW_RUNTIME("Cannot restore an initialized or active CompiledModule; unserialize into a new object");
+        RETURN_THROWS();
     }
 
-    zval *kernels_zv = zend_hash_str_find(data, "kernels", sizeof("kernels") - 1);
-    if (kernels_zv && Z_TYPE_P(kernels_zv) == IS_ARRAY)
+    HashTable *kernels;
+    ALLOC_HASHTABLE(kernels);
+    zend_hash_init(kernels, zend_hash_num_elements(Z_ARRVAL_P(kernels_zv)), NULL, NULL, 0);
+    zend_string *key;
+    zval *entry;
+    ZEND_HASH_FOREACH_STR_KEY_VAL(Z_ARRVAL_P(kernels_zv), key, entry)
     {
-
-        ALLOC_HASHTABLE(module->kernel_functions);
-        zend_hash_init(module->kernel_functions, zend_hash_num_elements(Z_ARRVAL_P(kernels_zv)), NULL, NULL, 0);
-
-        zval *kernel_entry;
-        ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(kernels_zv), kernel_entry)
+        if (!key || ZSTR_LEN(key) == 0 || memchr(ZSTR_VAL(key), '\0', ZSTR_LEN(key)) ||
+            Z_TYPE_P(entry) != IS_ARRAY)
         {
-            if (Z_TYPE_P(kernel_entry) != IS_ARRAY)
-                continue;
-
-            cuda_kernel_data *k = ecalloc(1, sizeof(cuda_kernel_data));
-
-            zval *name_zv = zend_hash_str_find(Z_ARRVAL_P(kernel_entry), "name", sizeof("name") - 1);
-            if (!name_zv || Z_TYPE_P(name_zv) != IS_STRING)
+            CUDA_THROW_INVALID("Invalid serialized kernel entry");
+            goto restore_failed;
+        }
+        zval *name = zend_hash_str_find(Z_ARRVAL_P(entry), "name", sizeof("name") - 1);
+        zval *parameters = zend_hash_str_find(Z_ARRVAL_P(entry), "parameters", sizeof("parameters") - 1);
+        if (!name || Z_TYPE_P(name) != IS_STRING || !zend_string_equals(key, Z_STR_P(name)) ||
+            !parameters || Z_TYPE_P(parameters) != IS_ARRAY ||
+            !zend_array_is_list(Z_ARRVAL_P(parameters)) ||
+            zend_hash_num_elements(Z_ARRVAL_P(parameters)) > MAX_KERNEL_ARGS)
+        {
+            CUDA_THROW_INVALID("Invalid serialized kernel name or parameter list");
+            goto restore_failed;
+        }
+        cuda_kernel_data *kernel = ecalloc(1, sizeof(*kernel));
+        kernel->name = zend_string_copy(key);
+        kernel->parameters = ecalloc(1, sizeof(*kernel->parameters));
+        kernel->parameters->total = (int)zend_hash_num_elements(Z_ARRVAL_P(parameters));
+        if (kernel->parameters->total)
+            kernel->parameters->parameters = ecalloc(kernel->parameters->total, sizeof(func_parameter *));
+        zend_hash_add_ptr(kernels, key, kernel);
+        int index = 0;
+        zval *parameter;
+        ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(parameters), parameter)
+        {
+            if (Z_TYPE_P(parameter) != IS_ARRAY)
             {
-                efree(k);
-                continue;
+                CUDA_THROW_INVALID("Serialized kernel parameters must be arrays");
+                goto restore_failed;
             }
-
-            k->name = zend_string_copy(Z_STR_P(name_zv));
-
-            zval *blob_zv = zend_hash_str_find(Z_ARRVAL_P(kernel_entry), "params_blob", sizeof("params_blob") - 1);
-            zval *count_zv = zend_hash_str_find(Z_ARRVAL_P(kernel_entry), "params_count", sizeof("params_count") - 1);
-
-            uint32_t count = count_zv ? (uint32_t)zval_get_long(count_zv) : 0;
-            k->parameters = ecalloc(1, sizeof(func_parameter_list_t));
-            k->parameters->total = count;
-
-            if (count > 0)
-            {
-                size_t p_size = sizeof(func_parameter);
-                size_t expected_size = (size_t)count * p_size;
-
-                if (!blob_zv || Z_TYPE_P(blob_zv) != IS_STRING || Z_STRLEN_P(blob_zv) != expected_size)
-                {
-                    free_kernel_data(k);
-                    continue;
-                }
-
-                k->parameters->parameters = ecalloc(count, sizeof(func_parameter *));
-
-                char *src_ptr = Z_STRVAL_P(blob_zv);
-
-                for (uint32_t i = 0; i < count; i++)
-                {
-                    k->parameters->parameters[i] = ecalloc(1, p_size);
-                    memcpy(k->parameters->parameters[i], src_ptr + (i * p_size), p_size);
-                }
-            }
-
-            zend_hash_add_ptr(module->kernel_functions, k->name, k);
+            func_parameter *parsed = create_parameter_from_array(Z_ARRVAL_P(parameter));
+            if (!parsed) goto restore_failed;
+            kernel->parameters->parameters[index++] = parsed;
         }
         ZEND_HASH_FOREACH_END();
     }
+    ZEND_HASH_FOREACH_END();
 
-    ALLOC_HASHTABLE(module->loaded_modules);
-    zend_hash_init(module->loaded_modules, 4, NULL, NULL, 0);
-    ALLOC_HASHTABLE(module->async_operations);
-    zend_hash_init(module->async_operations, 4, NULL, NULL, 0);
+    char *ptx = estrndup(Z_STRVAL_P(ptx_zv), Z_STRLEN_P(ptx_zv));
+    if (module->ptx_code) efree(module->ptx_code);
+    module_free_kernel_functions(module->kernel_functions);
+    module->ptx_code = ptx;
+    module->ptx_size = Z_STRLEN_P(ptx_zv);
+    module->kernel_functions = kernels;
+    module->from_serialize = 1;
+    return;
+
+restore_failed:
+    module_free_kernel_functions(kernels);
+    RETURN_THROWS();
 }
 
 ZEND_METHOD(CompiledModule, getAsyncStatus)
@@ -2692,19 +2569,8 @@ static void module_free_object(zend_object *object)
         module->ptx_code = NULL;
     }
 
-    if (module->kernel_functions)
-    {
-        cuda_kernel_data *kernel;
-        ZEND_HASH_FOREACH_PTR(module->kernel_functions, kernel)
-        {
-            free_kernel_data(kernel);
-        }
-        ZEND_HASH_FOREACH_END();
-
-        zend_hash_destroy(module->kernel_functions);
-        efree(module->kernel_functions);
-        module->kernel_functions = NULL;
-    }
+    module_free_kernel_functions(module->kernel_functions);
+    module->kernel_functions = NULL;
 
     if (module->functions)
     {
@@ -2789,8 +2655,7 @@ void module_shutdown(void)
     pthread_mutex_lock(&g_shared_context_mutex);
     if (g_shared_context)
     {
-        cuCtxDestroy(g_shared_context);
-        g_shared_context = NULL;
+        module_release_shared_context_locked();
     }
     pthread_mutex_unlock(&g_shared_context_mutex);
 

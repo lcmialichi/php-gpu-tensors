@@ -1206,7 +1206,7 @@
                         },
                         {
                             "name": "value",
-                            "type": "int|float",
+                            "type": "int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1241,7 +1241,7 @@
                         },
                         {
                             "name": "value",
-                            "type": "int|float",
+                            "type": "int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1393,7 +1393,7 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "int|float|bool"
+                    "returnType": "string|int|float|bool"
                 },
                 "layerNorm": {
                     "static": false,
@@ -3348,7 +3348,7 @@
                         },
                         {
                             "name": "value",
-                            "type": "int|float",
+                            "type": "int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3368,7 +3368,7 @@
                     "returnType": "self"
                 },
                 "fullLike": {
-                    "static": false,
+                    "static": true,
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [
@@ -3383,7 +3383,7 @@
                         },
                         {
                             "name": "value",
-                            "type": "int|float",
+                            "type": "int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3573,7 +3573,7 @@
                     "abstract": false,
                     "returnsReference": false,
                     "parameters": [],
-                    "returnType": "int|float|bool"
+                    "returnType": "string|int|float|bool"
                 },
                 "layerNorm": {
                     "static": false,
@@ -4754,7 +4754,7 @@
             "methods": {
                 "__add": {
                     "static": false,
-                    "abstract": true,
+                    "abstract": false,
                     "returnsReference": false,
                     "parameters": [
                         {
@@ -4776,18 +4776,11 @@
                             "default": null
                         }
                     ],
-                    "returnType": "mixed"
-                },
-                "__dec": {
-                    "static": false,
-                    "abstract": true,
-                    "returnsReference": false,
-                    "parameters": [],
                     "returnType": "mixed"
                 },
                 "__div": {
                     "static": false,
-                    "abstract": true,
+                    "abstract": false,
                     "returnsReference": false,
                     "parameters": [
                         {
@@ -4811,16 +4804,9 @@
                     ],
                     "returnType": "mixed"
                 },
-                "__inc": {
-                    "static": false,
-                    "abstract": true,
-                    "returnsReference": false,
-                    "parameters": [],
-                    "returnType": "mixed"
-                },
                 "__mod": {
                     "static": false,
-                    "abstract": true,
+                    "abstract": false,
                     "returnsReference": false,
                     "parameters": [
                         {
@@ -4846,7 +4832,7 @@
                 },
                 "__mul": {
                     "static": false,
-                    "abstract": true,
+                    "abstract": false,
                     "returnsReference": false,
                     "parameters": [
                         {
@@ -4872,7 +4858,7 @@
                 },
                 "__pow": {
                     "static": false,
-                    "abstract": true,
+                    "abstract": false,
                     "returnsReference": false,
                     "parameters": [
                         {
@@ -4898,7 +4884,7 @@
                 },
                 "__sub": {
                     "static": false,
-                    "abstract": true,
+                    "abstract": false,
                     "returnsReference": false,
                     "parameters": [
                         {

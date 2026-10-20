@@ -22,7 +22,7 @@ __global__ void unary_kernel_low_precision(
     size_t total_size,
     UnaryParams params)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx >= total_size)
         return;
 
@@ -47,7 +47,7 @@ __global__ void unary_kernel_strided(
     size_t total_size,
     UnaryParams d_unary_params)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx >= total_size)
         return;
 

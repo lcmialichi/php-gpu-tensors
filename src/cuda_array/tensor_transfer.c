@@ -1,4 +1,5 @@
 #include "tensor_transfer.h"
+#include "tensor_scalar.h"
 #include "cuda_exceptions.h"
 #include "contiguous_array_ce.h"
 #include "factory_kernels.h"
@@ -109,12 +110,12 @@ DEFINE_PHP_LEAF(float64, double, ZVAL_DOUBLE, double)
 DEFINE_PHP_LEAF(int8, int8_t, ZVAL_LONG, zend_long)
 DEFINE_PHP_LEAF(int16, int16_t, ZVAL_LONG, zend_long)
 DEFINE_PHP_LEAF(int32, int32_t, ZVAL_LONG, zend_long)
-DEFINE_PHP_LEAF(int64, int64_t, ZVAL_LONG, zend_long)
+DEFINE_PHP_LEAF(int64, int64_t, tensor_int64_to_zval, int64_t)
 DEFINE_PHP_LEAF(uint8, uint8_t, ZVAL_LONG, zend_long)
 DEFINE_PHP_LEAF(uint16, uint16_t, ZVAL_LONG, zend_long)
-DEFINE_PHP_LEAF(uint32, uint32_t, ZVAL_LONG, zend_long)
-DEFINE_PHP_LEAF(uint64, uint64_t, ZVAL_LONG, zend_long)
-DEFINE_PHP_LEAF(boolean, bool, ZVAL_BOOL, bool)
+DEFINE_PHP_LEAF(uint32, uint32_t, tensor_uint64_to_zval, uint64_t)
+DEFINE_PHP_LEAF(uint64, uint64_t, tensor_uint64_to_zval, uint64_t)
+DEFINE_PHP_LEAF(boolean, uint8_t, ZVAL_BOOL, bool)
 
 static void php_leaf_float16(HashTable *array, const void *data, size_t offset, size_t stride, int size)
 {

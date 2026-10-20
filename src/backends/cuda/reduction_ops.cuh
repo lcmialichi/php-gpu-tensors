@@ -9,6 +9,7 @@
 #include <limits>
 #include <cub/cub.cuh>
 #include "backend_info.h"
+#include "launch_config.cuh"
 
 cudaError_t reduction_workspace(cudaStream_t stream, size_t bytes, void **storage);
 extern thread_local cudaError_t reduction_error;
@@ -230,7 +231,7 @@ template <typename InputT, typename AccumT, typename Op>
 __global__ void reduce_columns(const InputT *input, AccumT *output, ReductionParams params, size_t offset, size_t divisor)
 {
     __shared__ AccumT partial[8][32];
-    size_t index = (size_t)blockIdx.x * 32 + threadIdx.x;
+    size_t index = cuda_linear_index(blockIdx.x, 32, threadIdx.x);
     size_t base = offset, remaining = index;
     if (index < params.total_elements_out)
         for (int d = params.ndims - 1; d >= 0; d--)
@@ -266,7 +267,7 @@ __global__ void reduce_kernel(
         return;
 
     int tid = threadIdx.x;
-    int reduce_dim_size = d_reduce_params.reduce_dim_size;
+    size_t reduce_dim_size = d_reduce_params.reduce_dim_size;
     size_t axis_stride = d_reduce_params.d_strides[d_reduce_params.reduce_axis];
 
     size_t base_flat_index = input_base_offset;
@@ -282,7 +283,7 @@ __global__ void reduce_kernel(
 
     AccumT accumulator = ArgIdentity<AccumT, Op>::get_init_val();
 
-    for (int current_idx = tid; current_idx < reduce_dim_size; current_idx += blockDim.x)
+    for (size_t current_idx = tid; current_idx < reduce_dim_size; current_idx += blockDim.x)
     {
         accumulator = Op::apply(accumulator, static_cast<AccumT>(input[base_flat_index + (size_t)current_idx * axis_stride]));
     }
@@ -348,15 +349,15 @@ __global__ void arg_reduce_kernel(
     T best_val = ArgIdentity<T, Op>::get_init_val();
     int best_idx = 0;
     size_t axis_stride = d_reduce_params.d_strides[d_reduce_params.reduce_axis];
-    int dim_size = d_reduce_params.reduce_dim_size;
+    size_t dim_size = d_reduce_params.reduce_dim_size;
 
-    for (int i = tid; i < dim_size; i += blockDim.x) {
+    for (size_t i = tid; i < dim_size; i += blockDim.x) {
         T val = input[base_flat_index + (size_t)i * axis_stride];
         if (Op::apply(val, best_val)) {
             best_val = val;
-            best_idx = i;
+            best_idx = static_cast<int>(i);
         } else if (val == best_val && i < best_idx) {
-            best_idx = i;
+            best_idx = static_cast<int>(i);
         }
     }
 
@@ -450,7 +451,7 @@ void launch_reduce_op_kernel(InputT *input, AccumT *result,
     if (!ordered_float && axis < input_ndims - 1 && input_strides[input_ndims - 1] == 1 &&
         total_elements_out >= 32 && input_shape[axis] >= 8)
     {
-        reduce_columns<InputT, AccumT, Op><<< (total_elements_out + 31) / 32, dim3(32, 8), 0, stream >>>(
+        reduce_columns<InputT, AccumT, Op><<<cuda_grid_1d(total_elements_out, 32), dim3(32, 8), 0, stream>>>(
             input, result, h_params, input_base_offset, divisor);
         reduction_error = cudaGetLastError();
         reduction_counters.axis_calls++;
@@ -461,7 +462,7 @@ void launch_reduce_op_kernel(InputT *input, AccumT *result,
 
     size_t shared_mem_size = (threads / 32) * sizeof(AccumT);
 
-    reduce_kernel<InputT, AccumT, Op><<<total_elements_out, threads, shared_mem_size, stream>>>(
+    reduce_kernel<InputT, AccumT, Op><<<cuda_grid_blocks(total_elements_out), threads, shared_mem_size, stream>>>(
         input, result, input_base_offset, divisor, h_params);
     reduction_error = cudaGetLastError();
     reduction_counters.generic_reduce_calls++;
@@ -523,9 +524,7 @@ void launch_arg_reduce_kernel(T *input, int *result_idx,
     size_t indices_offset = ((vals_size + 3) & ~3);
     size_t shared_mem_size = indices_offset + (num_warps * sizeof(int));
 
-    int blocks = (int)total_elements_out;
-
-    arg_reduce_kernel<T, Op><<<blocks, threads, shared_mem_size, stream>>>(
+    arg_reduce_kernel<T, Op><<<cuda_grid_blocks(total_elements_out), threads, shared_mem_size, stream>>>(
         input, result_idx, input_base_offset, h_params);
     reduction_error = cudaGetLastError();
     reduction_counters.generic_reduce_calls++;

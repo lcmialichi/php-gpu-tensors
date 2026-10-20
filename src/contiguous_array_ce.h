@@ -29,7 +29,7 @@ typedef struct {
     zend_long max_idx;
     zval current;
     void *current_data_ptr;
-    void *extra_data;
+    void (*getter)(void *ptr, zval *rv);
     size_t stride_bytes;
     dtype_t dtype;
     uint8_t is_1d;
@@ -52,6 +52,7 @@ ZEND_METHOD(ContiguousArray, ones);
 ZEND_METHOD(ContiguousArray, full);
 ZEND_METHOD(ContiguousArray, zerosLike);
 ZEND_METHOD(ContiguousArray, onesLike);
+ZEND_METHOD(ContiguousArray, fullLike);
 ZEND_METHOD(ContiguousArray, get);
 ZEND_METHOD(ContiguousArray, getShape);
 ZEND_METHOD(ContiguousArray, getStrides);

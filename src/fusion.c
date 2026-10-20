@@ -227,6 +227,7 @@ static int fusion_output_roots(zval *output, tensor_t ***roots, size_t *count, H
 
 static int fusion_begin(void)
 {
+    if (!cuda_tensor_require_context()) return 0;
     if (fusion_active())
     {
         CUDA_THROW_RUNTIME("Nested Fusion captures are not supported");

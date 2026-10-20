@@ -74,7 +74,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_contiguous_array_fromFlatArray, 0
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "\"float32\"")
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_contiguous_array_fill, 0, 1, PhpTensors\\HostArray, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_contiguous_array_fill, 0, 2, PhpTensors\\HostArray, 0)
     ZEND_ARG_TYPE_INFO(0, shape, IS_ARRAY, 0)
     ZEND_ARG_TYPE_MASK(0, value, MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_BOOL, NULL)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "\"float32\"")
@@ -87,6 +87,12 @@ ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_contiguous_array_like, 0, 1, PhpTensors\\HostArray, 0)
     ZEND_ARG_OBJ_INFO(0, prototype, PhpTensors\\HostArray, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "null")
+ZEND_END_ARG_INFO()
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_contiguous_array_full_like, 0, 2, PhpTensors\\HostArray, 0)
+    ZEND_ARG_OBJ_INFO(0, prototype, PhpTensors\\HostArray, 0)
+    ZEND_ARG_TYPE_MASK(0, value, MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_BOOL, NULL)
     ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "null")
 ZEND_END_ARG_INFO()
 
@@ -112,6 +118,7 @@ static const zend_function_entry contiguous_array_methods[] = {
     ZEND_ME(ContiguousArray, full, arginfo_contiguous_array_fill, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(ContiguousArray, zerosLike, arginfo_contiguous_array_like, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(ContiguousArray, onesLike, arginfo_contiguous_array_like, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(ContiguousArray, fullLike, arginfo_contiguous_array_full_like, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_ME(ContiguousArray, isPinned, arginfo_contiguous_array_isPinned, ZEND_ACC_PUBLIC)
     ZEND_ME(ContiguousArray, get, arginfo_contiguous_array_get, ZEND_ACC_PUBLIC)
     ZEND_ME(ContiguousArray, at, arginfo_contiguous_array_at, ZEND_ACC_PUBLIC)

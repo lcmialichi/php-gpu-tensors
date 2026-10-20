@@ -4,28 +4,28 @@
 
 static __global__ void clip_kernel(float *a, float min_val, float max_val, float *result, int n)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx < n)
         result[idx] = fminf(fmaxf(a[idx], min_val), max_val);
 }
 
 static __global__ void relu_kernel(float *a, float *result, int n)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx < n)
         result[idx] = fmaxf(a[idx], 0.0f);
 }
 
 static __global__ void sigmoid_kernel(float *a, float *result, int n)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx < n)
         result[idx] = 1.0f / (1.0f + expf(-a[idx]));
 }
 
 static __global__ void tanh_kernel(float *a, float *result, int n)
 {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx < n)
         result[idx] = tanhf(a[idx]);
 }

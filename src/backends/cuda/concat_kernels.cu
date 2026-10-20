@@ -17,7 +17,7 @@ struct ConcatParams
 
 static __global__ void concat_kernel(ConcatParams params, unsigned char *output)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx >= params.total_elements)
         return;
 

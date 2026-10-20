@@ -5,6 +5,8 @@
 #include <curand.h>
 #include "data_types.h"
 #include "factory_kernels.h"
+#include "tensor_shape.h"
+#include "tensor_scalar.h"
 #include <stdbool.h>
 #include <limits.h>
 #include <stdint.h>
@@ -34,8 +36,14 @@ static int php_import_flush(php_import_sink *sink, size_t bytes)
     return 1;
 }
 
-#define COPY_NUMERIC_VALUE(c_type, value, destination) do { \
+#define COPY_NUMERIC_VALUE(c_type, value, destination, dtype_id) do { \
     ZVAL_DEREF(value); \
+    if ((dtype_id) >= DTYPE_INT8 && (dtype_id) <= DTYPE_UINT64) { \
+        scalar_value_t converted; \
+        if (tensor_scalar_from_zval(value, dtype_id, &converted) != SUCCESS) return 0; \
+        memcpy(destination, &converted.v, sizeof(c_type)); \
+        break; \
+    } \
     switch (Z_TYPE_P(value)) { \
         case IS_DOUBLE: *(destination) = (c_type)Z_DVAL_P(value); break; \
         case IS_LONG: *(destination) = (c_type)Z_LVAL_P(value); break; \
@@ -45,7 +53,7 @@ static int php_import_flush(php_import_sink *sink, size_t bytes)
     } \
 } while (0)
 
-#define DEFINE_FLATTENER(type_name, c_type) \
+#define DEFINE_FLATTENER(type_name, c_type, dtype_id) \
     static int flatten_php_array_to_##type_name(zval *data, c_type **buffer, \
                                                 const int *shape, int ndims, int dim, \
                                                 php_import_sink *sink, const void *limit) \
@@ -59,7 +67,7 @@ static int php_import_flush(php_import_sink *sink, size_t bytes)
             c_type *destination = *buffer; \
             if (HT_IS_PACKED(ht) && HT_IS_WITHOUT_HOLES(ht)) { \
                 PHP_CUDA_PACKED_FOREACH_VAL(ht, current) { \
-                    COPY_NUMERIC_VALUE(c_type, current, destination); \
+                    COPY_NUMERIC_VALUE(c_type, current, destination, dtype_id); \
                     destination++; \
                     if (UNEXPECTED(destination == limit)) { \
                         if (!php_import_flush(sink, (const char *)limit - (const char *)sink->data)) return 0; \
@@ -68,7 +76,7 @@ static int php_import_flush(php_import_sink *sink, size_t bytes)
                 } ZEND_HASH_FOREACH_END(); \
             } else { \
                 ZEND_HASH_FOREACH_VAL(ht, current) { \
-                    COPY_NUMERIC_VALUE(c_type, current, destination); \
+                    COPY_NUMERIC_VALUE(c_type, current, destination, dtype_id); \
                     destination++; \
                     if (UNEXPECTED(destination == limit)) { \
                         if (!php_import_flush(sink, (const char *)limit - (const char *)sink->data)) return 0; \
@@ -86,17 +94,17 @@ static int php_import_flush(php_import_sink *sink, size_t bytes)
         return 1; \
     }
 
-DEFINE_FLATTENER(float32, float)
-DEFINE_FLATTENER(float64, double)
-DEFINE_FLATTENER(int8, int8_t)
-DEFINE_FLATTENER(int16, int16_t)
-DEFINE_FLATTENER(int32, int32_t)
-DEFINE_FLATTENER(int64, int64_t)
-DEFINE_FLATTENER(uint8, uint8_t)
-DEFINE_FLATTENER(uint16, uint16_t)
-DEFINE_FLATTENER(uint32, uint32_t)
-DEFINE_FLATTENER(uint64, uint64_t)
-DEFINE_FLATTENER(_bool, bool)
+DEFINE_FLATTENER(float32, float, DTYPE_FLOAT32)
+DEFINE_FLATTENER(float64, double, DTYPE_FLOAT64)
+DEFINE_FLATTENER(int8, int8_t, DTYPE_INT8)
+DEFINE_FLATTENER(int16, int16_t, DTYPE_INT16)
+DEFINE_FLATTENER(int32, int32_t, DTYPE_INT32)
+DEFINE_FLATTENER(int64, int64_t, DTYPE_INT64)
+DEFINE_FLATTENER(uint8, uint8_t, DTYPE_UINT8)
+DEFINE_FLATTENER(uint16, uint16_t, DTYPE_UINT16)
+DEFINE_FLATTENER(uint32, uint32_t, DTYPE_UINT32)
+DEFINE_FLATTENER(uint64, uint64_t, DTYPE_UINT64)
+DEFINE_FLATTENER(_bool, bool, DTYPE_BOOL)
 
 #define DEFINE_LOW_PRECISION_FLATTENER(type_name, converter) \
     static int flatten_php_array_to_##type_name(zval *data, uint16_t **buffer, \
@@ -113,7 +121,7 @@ DEFINE_FLATTENER(_bool, bool)
             if (HT_IS_PACKED(ht) && HT_IS_WITHOUT_HOLES(ht)) { \
                 PHP_CUDA_PACKED_FOREACH_VAL(ht, current) { \
                     float number; \
-                    COPY_NUMERIC_VALUE(float, current, &number); \
+                    COPY_NUMERIC_VALUE(float, current, &number, DTYPE_FLOAT32); \
                     *destination++ = converter(number); \
                     if (UNEXPECTED(destination == (const uint16_t *)limit)) { \
                         if (!php_import_flush(sink, (const char *)limit - (const char *)sink->data)) return 0; \
@@ -123,7 +131,7 @@ DEFINE_FLATTENER(_bool, bool)
             } else { \
                 ZEND_HASH_FOREACH_VAL(ht, current) { \
                     float number; \
-                    COPY_NUMERIC_VALUE(float, current, &number); \
+                    COPY_NUMERIC_VALUE(float, current, &number, DTYPE_FLOAT32); \
                     *destination++ = converter(number); \
                     if (UNEXPECTED(destination == (const uint16_t *)limit)) { \
                         if (!php_import_flush(sink, (const char *)limit - (const char *)sink->data)) return 0; \
@@ -317,7 +325,7 @@ tensor_t *cuda_tensor_create_from_host_buffer(const int *shape, int ndims, dtype
     return tensor;
 }
 
-int cuda_tensor_get_scalar_value(tensor_t *t, float *result_val, int index)
+int cuda_tensor_get_scalar_value(tensor_t *t, zval *result, int index)
 {
     if (index < 0) index += t->shape[0];
     if (index < 0 || index >= t->shape[0])
@@ -325,14 +333,15 @@ int cuda_tensor_get_scalar_value(tensor_t *t, float *result_val, int index)
         CUDA_THROW_INVALID("Index out of bounds.");
         return FAILURE;
     }
+    unsigned char value[sizeof(uint64_t)];
+    if (!t->element_size || t->element_size > sizeof(value) ||
+        t->element_size != dtype_size(t->dtype))
+    {
+        CUDA_THROW_INVALID("Invalid scalar storage dtype");
+        return FAILURE;
+    }
     size_t byte_offset = (size_t)index * t->strides[0] * t->element_size;
     void *gpu_source_ptr = (char *)t->data + byte_offset;
-    union {
-        float f32; double f64;
-        int8_t i8; int16_t i16; int32_t i32; int64_t i64;
-        uint8_t u8; uint16_t u16; uint32_t u32; uint64_t u64;
-        bool boolean;
-    } value;
     cudaError_t status = cudaMemcpy(
         &value,
         gpu_source_ptr,
@@ -344,26 +353,7 @@ int cuda_tensor_get_scalar_value(tensor_t *t, float *result_val, int index)
         CUDA_THROW_RUNTIME("Failed to copy scalar data from GPU: %s", cudaGetErrorString(status));
         return FAILURE;
     }
-    switch (t->dtype)
-    {
-        case DTYPE_FLOAT32: *result_val = value.f32; break;
-        case DTYPE_FLOAT64: *result_val = (float)value.f64; break;
-        case DTYPE_FLOAT16: *result_val = float16_bits_to_float(value.u16); break;
-        case DTYPE_BFLOAT16: *result_val = bfloat16_bits_to_float(value.u16); break;
-        case DTYPE_INT8: *result_val = (float)value.i8; break;
-        case DTYPE_INT16: *result_val = (float)value.i16; break;
-        case DTYPE_INT32: *result_val = (float)value.i32; break;
-        case DTYPE_INT64: *result_val = (float)value.i64; break;
-        case DTYPE_UINT8: *result_val = (float)value.u8; break;
-        case DTYPE_UINT16: *result_val = (float)value.u16; break;
-        case DTYPE_UINT32: *result_val = (float)value.u32; break;
-        case DTYPE_UINT64: *result_val = (float)value.u64; break;
-        case DTYPE_BOOL: *result_val = value.boolean ? 1.0f : 0.0f; break;
-        default:
-            CUDA_THROW_INVALID("Unsupported scalar dtype");
-            return FAILURE;
-    }
-    return SUCCESS;
+    return tensor_scalar_to_zval(value, t->dtype, result);
 }
 
 tensor_t *cuda_tensor_create_with_value(int *shape, int ndims, scalar_value_t value, dtype_t dtype)
@@ -385,6 +375,13 @@ tensor_t *cuda_tensor_create_with_value(int *shape, int ndims, scalar_value_t va
     }
 
     launch_assign_scalar_val_kernel(tensor->data, tensor->dtype, scalar_value, tensor->total_size);
+    cudaError_t status = cudaGetLastError();
+    if (status != cudaSuccess)
+    {
+        cuda_tensor_destroy(tensor);
+        CUDA_THROW_RUNTIME("Scalar fill kernel failed: %s", cudaGetErrorString(status));
+        return NULL;
+    }
     return tensor;
 }
 
@@ -445,7 +442,8 @@ int set_rand_tensor_data(void *data,
     }
 
     if (dtype == DTYPE_BOOL)
-        launch_bernoulli_kernel(temp, data, size, 0.5f);
+        launch_bernoulli_kernel(temp, data, size,
+            min_value.v.b ? 1.0f : (max_value.v.b ? 0.5f : 0.0f));
     else
         launch_scale_range_kernel(temp, data, dtype, min_value, max_value, size);
 
@@ -479,22 +477,29 @@ tensor_t *cuda_tensor_create_rand(
         return NULL;
     }
 
-    tensor_t *tensor = cuda_tensor_create_empty_with_dtype(shape, ndims, dtype);
-    if (!tensor)
+    long double minimum, maximum;
+    if (!scalar_value_as_long_double(min_value, &minimum) ||
+        !scalar_value_as_long_double(max_value, &maximum) ||
+        !isfinite(minimum) || !isfinite(maximum) || minimum > maximum ||
+        (dtype == DTYPE_BOOL &&
+         ((minimum != 0 && minimum != 1) || (maximum != 0 && maximum != 1))))
     {
-        CUDA_THROW_OOM("Unable to create random tensor.");
-        return NULL;
-    }
-
-    if (can_cast_unsafe(min_value.dtype, dtype) != 1 || can_cast_unsafe(max_value.dtype, dtype) != 1)
-    {
-        CUDA_THROW_INVALID("Failed to cast min and max value to dtype: %s.", dtype_to_string(dtype));
-        cuda_tensor_destroy(tensor);
+        CUDA_THROW_INVALID("Random bounds must be finite and ordered; bool bounds must be 0 or 1");
         return NULL;
     }
 
     scalar_value_t casted_min = cast_single_value(min_value, dtype);
     scalar_value_t casted_max = cast_single_value(max_value, dtype);
+    if (casted_min.dtype == DTYPE_UNKNOWN || casted_max.dtype == DTYPE_UNKNOWN ||
+        !scalar_value_as_long_double(casted_min, &minimum) ||
+        !scalar_value_as_long_double(casted_max, &maximum) ||
+        !isfinite(minimum) || !isfinite(maximum))
+    {
+        CUDA_THROW_INVALID("Random bounds are outside the destination dtype range");
+        return NULL;
+    }
+    tensor_t *tensor = cuda_tensor_create_empty_with_dtype(shape, ndims, dtype);
+    if (!tensor) return NULL;
 
     if (!has_seed) seed = next_random_seed();
     if (set_rand_tensor_data(tensor->data, tensor->total_size, seed,
@@ -627,14 +632,16 @@ tensor_t *cuda_tensor_create_arange(int count, dtype_t dtype, double start,
 }
 
 tensor_t *cuda_tensor_create_linspace(int count, dtype_t dtype, double start,
-                                      double stop, int endpoint)
+                                      double stop, int endpoint, int exact_integer,
+                                      int64_t integer_start, int64_t integer_stop)
 {
     int shape[] = {count};
     tensor_t *tensor = cuda_tensor_create_empty_with_dtype(shape, 1, dtype);
     if (!tensor) return NULL;
 
     cudaError_t status = launch_linspace(tensor->data, dtype, tensor->total_size,
-                                         start, stop, endpoint);
+                                         start, stop, endpoint, exact_integer,
+                                         integer_start, integer_stop);
     if (status != cudaSuccess)
     {
         cuda_tensor_destroy(tensor);
@@ -678,11 +685,17 @@ tensor_t *cuda_tensor_create(const int shape[], int ndims, const void *data, dty
 
 static tensor_t *cuda_tensor_create_on_host_impl(const int shape[], int ndims, void *data, dtype_t dtype, int pinned)
 {
+    size_t elements, required_bytes;
+    size_t element_size = dtype_size(dtype);
+    if (!tensor_shape_metrics(shape, ndims, element_size, NULL, &elements, &required_bytes))
+    {
+        CUDA_THROW_INVALID("Host tensor shape, strides or byte size exceed supported limits");
+        return NULL;
+    }
+    if (pinned && !cuda_tensor_require_context()) return NULL;
     tensor_t *tensor = (tensor_t *)ecalloc(1, sizeof(tensor_t));
     if (!tensor)
         return NULL;
-
-    size_t element_size = dtype_size(dtype);
 
     tensor->dtype = dtype;
     tensor->ndims = ndims;
@@ -698,7 +711,7 @@ static tensor_t *cuda_tensor_create_on_host_impl(const int shape[], int ndims, v
         stride *= shape[i];
     }
 
-    tensor->total_size = stride;
+    tensor->total_size = elements;
     tensor->is_view = 0;
     tensor->offset = 0;
     tensor->slices = NULL;
@@ -711,8 +724,9 @@ static tensor_t *cuda_tensor_create_on_host_impl(const int shape[], int ndims, v
     tensor->host_pinned = pinned;
     tensor->is_contiguous_cached = -1;
 
-    size_t required_bytes = tensor->total_size * element_size;
     tensor->allocated_size = required_bytes;
+
+    if (!required_bytes) return tensor;
 
     if (pinned)
     {
@@ -766,13 +780,14 @@ tensor_t *cuda_tensor_create_int(const int shape[], int ndims, const int data[])
 
 tensor_t *cuda_tensor_create_scalar(float value, int *shape, int ndims)
 {
-    size_t total_size = 1;
-    for (int i = 0; i < ndims; i++)
+    size_t total_size, bytes;
+    if (!tensor_shape_metrics(shape, ndims, sizeof(float), NULL, &total_size, &bytes))
     {
-        total_size *= shape[i];
+        CUDA_THROW_INVALID("Scalar tensor shape exceeds supported limits");
+        return NULL;
     }
 
-    float *host_data = (float *)emalloc(total_size * sizeof(float));
+    float *host_data = (float *)emalloc(bytes);
     for (size_t i = 0; i < total_size; i++)
     {
         host_data[i] = value;

@@ -153,10 +153,27 @@ static int autograd_is_low_precision_type(dtype_t dtype)
     return dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16;
 }
 
-static int autograd_is_matmul_differentiable_type(dtype_t dtype)
+static int autograd_is_floating_type(dtype_t dtype)
 {
     return autograd_is_differentiable_type(dtype) ||
         autograd_is_low_precision_type(dtype);
+}
+
+int autograd_check_discrete_reduction(tensor_t *input, operation_type_t op)
+{
+    if (autograd_suppressed || !input || !input->requires_grad)
+        return 1;
+    const char *operation;
+    switch (op)
+    {
+        case OP_ARG_MAX: operation = "argMax"; break;
+        case OP_ARG_MIN: operation = "argMin"; break;
+        case OP_REDUCE_ALL: operation = "all"; break;
+        case OP_REDUCE_ANY: operation = "any"; break;
+        default: return 1;
+    }
+    CUDA_THROW_INVALID("%s() produces a non-differentiable tensor; call detach() first", operation);
+    return 0;
 }
 
 static void autograd_save_versions(autograd_node_t *node, tensor_t *result)
@@ -171,13 +188,7 @@ static int autograd_node_add(tensor_t *result, autograd_kind_t kind,
                              tensor_t *a, tensor_t *b, tensor_t *c,
                              operation_type_t op)
 {
-    int supported_type = result &&
-        (autograd_is_differentiable_type(result->dtype) ||
-         ((kind == AUTOGRAD_MATMUL || kind == AUTOGRAD_VIEW ||
-           kind == AUTOGRAD_BINARY || kind == AUTOGRAD_SCALAR ||
-           kind == AUTOGRAD_UNARY || kind == AUTOGRAD_INDEX_TRANSFORM ||
-           kind == AUTOGRAD_REPEAT_COUNTS || kind == AUTOGRAD_GATHER) &&
-          autograd_is_low_precision_type(result->dtype)));
+    int supported_type = result && autograd_is_floating_type(result->dtype);
     if (autograd_suppressed || !supported_type)
         return 1;
 
@@ -393,7 +404,7 @@ int autograd_record_concat(tensor_t *result, tensor_t **parents,
                            size_t parent_count, int axis)
 {
     if (!result || !parents || !parent_count || parent_count > MAX_CONCAT_TENSORS ||
-        autograd_suppressed || !autograd_is_differentiable_type(result->dtype))
+        autograd_suppressed || !autograd_is_floating_type(result->dtype))
         return 1;
 
     int requires_gradient = 0;
@@ -442,15 +453,14 @@ int autograd_record_cast(tensor_t *result, tensor_t *a)
 {
     if (autograd_suppressed)
         return 1;
-    if (a->requires_grad && autograd_is_differentiable_type(a->dtype) &&
-        !autograd_is_differentiable_type(result->dtype))
+    if (a->requires_grad && autograd_is_floating_type(a->dtype) &&
+        !autograd_is_floating_type(result->dtype))
     {
         CUDA_THROW_INVALID("Cannot cast a gradient-tracked tensor to a non-floating dtype; detach it first");
         return 0;
     }
-    if ((!autograd_is_differentiable_type(a->dtype) &&
-         !autograd_is_low_precision_type(a->dtype)) ||
-        !autograd_is_differentiable_type(result->dtype))
+    if (!autograd_is_floating_type(a->dtype) ||
+        !autograd_is_floating_type(result->dtype))
         return 1;
     return autograd_node_add(result, AUTOGRAD_CAST, a, NULL, NULL, OP_ADD);
 }
@@ -485,7 +495,7 @@ int autograd_set_requires_grad(tensor_t *tensor, int requires_grad)
         CUDA_THROW_INVALID("Cannot configure gradient tracking on an uninitialized tensor");
         return 0;
     }
-    if (requires_grad && !autograd_is_matmul_differentiable_type(tensor->dtype))
+    if (requires_grad && !autograd_is_floating_type(tensor->dtype))
     {
         CUDA_THROW_INVALID("Gradient tracking supports float32, float64, float16 and bfloat16 tensors");
         return 0;
@@ -568,7 +578,7 @@ static int autograd_visit(tensor_t *tensor, tensor_list_t *topology,
                 return 0;
             }
         }
-        if (!autograd_visit(node->a, topology, visited) ||
+        if ((node->kind != AUTOGRAD_WHERE && !autograd_visit(node->a, topology, visited)) ||
             !autograd_visit(node->b, topology, visited) ||
             !autograd_visit(node->c, topology, visited))
             return 0;
@@ -637,10 +647,12 @@ static tensor_t *gradient_get(const gradient_entry_t *entries,
 static tensor_t *gradient_scale(tensor_t *tensor, double value)
 {
     scalar_value_t scalar = {0};
-    scalar.dtype = tensor->dtype;
+    scalar.dtype = tensor->dtype == DTYPE_FLOAT64 ? DTYPE_FLOAT64 : DTYPE_FLOAT32;
     if (scalar.dtype == DTYPE_FLOAT64) scalar.v.f64 = value;
     else scalar.v.f32 = (float)value;
     scalar.is_neg = value < 0;
+    if (value == 0.0)
+        return cuda_tensor_create_with_value(tensor->shape, tensor->ndims, scalar, tensor->dtype);
     return cuda_scalar_op(tensor, scalar, OP_MUL);
 }
 
@@ -991,7 +1003,8 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                 }
                 else
                 {
-                    size_t offset = axis_offset * upstream->strides[node->parameter];
+                    size_t offset = parent->total_size
+                        ? axis_offset * upstream->strides[node->parameter] : 0;
                     part = cuda_tensor_create_view(
                         upstream, parent->shape, upstream->strides, parent->ndims,
                         offset, parent->total_size);
@@ -1612,7 +1625,7 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient, int retain_graph)
         CUDA_THROW_INVALID("backward() requires a tensor marked with requiresGrad()");
         return 0;
     }
-    if (!autograd_is_matmul_differentiable_type(tensor->dtype))
+    if (!autograd_is_floating_type(tensor->dtype))
     {
         CUDA_THROW_INVALID("backward() is only supported for float32, float64, float16 and bfloat16 tensors");
         return 0;

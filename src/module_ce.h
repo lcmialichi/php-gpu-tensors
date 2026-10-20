@@ -7,6 +7,7 @@
 extern zend_class_entry *cuda_module_ce;
 
 int module_init(void);
+void module_shutdown(void);
 
 ZEND_METHOD(CompiledModule, initialize);
 ZEND_METHOD(CompiledModule, hasKernel);

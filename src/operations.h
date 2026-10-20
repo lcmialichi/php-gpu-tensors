@@ -7,7 +7,7 @@
 
 int prepare_broadcast_operation(tensor_t *a, tensor_t *b,
                                 int *result_shape, int *result_dims,
-                                int *a_strides, int *b_strides,
+                                size_t *a_strides, size_t *b_strides,
                                 size_t *total_elements);
 
 int calculate_reduction_shape(tensor_t *input, int axis, int *result_shape, size_t *total_elements_out_ptr);

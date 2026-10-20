@@ -19,7 +19,7 @@ __global__ void scalar_kernel_low_precision(
     size_t total_size,
     int is_contiguous)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx >= total_size)
         return;
 
@@ -54,7 +54,7 @@ __global__ void scalar_kernel_strided(
     int ndims,
     size_t total_size)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx >= total_size)
         return;
 
@@ -84,7 +84,7 @@ __global__ void inv_scalar_kernel_strided(
     int ndims,
     size_t total_size)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx >= total_size)
         return;
 
@@ -110,7 +110,7 @@ __global__ void scalar_kernel_contiguous(
     T *__restrict__ result,
     size_t total_size)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx < total_size)
     {
         const T base_val = fetch_and_cast<T>(base, base_dtype, idx);
@@ -126,7 +126,7 @@ __global__ void scalar_kernel_contiguous_inv(
     T *__restrict__ result,
     size_t total_size)
 {
-    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
     if (idx < total_size)
     {
         const T base_val = fetch_and_cast<T>(base, base_dtype, idx);

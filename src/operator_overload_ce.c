@@ -1,16 +1,30 @@
 #include "php.h"
 #include "operator_overload_ce.h"
 #include "backend_contract.h"
+#include "operator_result.h"
+#include "zend_exceptions.h"
 #include "zend_interfaces.h"
 #include <string.h>
 
 static zend_object_handlers operator_overload_handlers;
 static zend_class_entry *operator_overload_ce;
 
+ZEND_FUNCTION(php_tensors_operator_unsupported) {
+    zval *left, *right;
+    ZEND_PARSE_PARAMETERS_START(2, 2)
+        Z_PARAM_ZVAL(left)
+        Z_PARAM_ZVAL(right)
+    ZEND_PARSE_PARAMETERS_END();
+    zend_throw_exception_ex(php_tensors_runtime_exception_ce, 0,
+        "%s::%s() is not implemented; override this hook to support the operator",
+        ZSTR_VAL(Z_OBJCE_P(ZEND_THIS)->name),
+        ZSTR_VAL(execute_data->func->common.function_name));
+    RETURN_THROWS();
+}
+
 static zend_result operator_overload_do_operation(zend_uchar opcode, zval *result,
                                                   zval *op1, zval *op2) {
     const char *method = NULL;
-    uint32_t param_count = 2;
 
     switch (opcode) {
         case ZEND_ADD: method = "__add"; break;
@@ -20,35 +34,22 @@ static zend_result operator_overload_do_operation(zend_uchar opcode, zval *resul
         case ZEND_POW: method = "__pow"; break;
         case ZEND_MOD: method = "__mod"; break;
 
-        case ZEND_PRE_INC:
-        case ZEND_POST_INC:
-            method = "__inc";
-            param_count = 0;
-            break;
-        case ZEND_PRE_DEC:
-        case ZEND_POST_DEC:
-            method = "__dec";
-            param_count = 0;
-            break;
-
         default: return FAILURE;
     }
 
     zval *obj_ptr = (Z_TYPE_P(op1) == IS_OBJECT &&
                      instanceof_function(Z_OBJCE_P(op1), operator_overload_ce))
         ? op1
-        : op2;
+        : (op2 && Z_TYPE_P(op2) == IS_OBJECT &&
+           instanceof_function(Z_OBJCE_P(op2), operator_overload_ce) ? op2 : NULL);
     if (!obj_ptr) return FAILURE;
 
-    if (param_count == 2) {
-        zend_call_method(Z_OBJ_P(obj_ptr), Z_OBJCE_P(obj_ptr), NULL, method,
-                         strlen(method), result, 2, op1, op2);
-    } else {
-        zend_call_method(Z_OBJ_P(obj_ptr), Z_OBJCE_P(obj_ptr), NULL, method,
-                         strlen(method), result, 0, NULL, NULL);
-    }
-
-    return (Z_TYPE_P(result) != IS_UNDEF) ? SUCCESS : FAILURE;
+    zval value;
+    ZVAL_UNDEF(&value);
+    zend_call_method(Z_OBJ_P(obj_ptr), Z_OBJCE_P(obj_ptr), NULL, method,
+                     strlen(method), &value, 2, op1, op2);
+    zend_result status = Z_TYPE(value) != IS_UNDEF ? SUCCESS : FAILURE;
+    return php_tensors_finish_operation(status, result, &value, op1, op2);
 }
 
 static zend_object *operator_overload_create_object(zend_class_entry *ce) {

@@ -86,7 +86,8 @@ foreach (['float32', 'float64', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uin
     $typed = new CudaArray([[1, 2], [3, 4]], $dtype);
     $expected = $dtype === 'bool' ? [true] : (str_starts_with($dtype, 'float') ? [4.0] : [4]);
     values($typed->slice('1, 1'), $expected, "scalar $dtype");
-    check($typed->slice('1, ::2')[0] === ($dtype === 'bool' ? 1.0 : 3.0), "dimension $dtype");
+    $first = $dtype === 'bool' ? true : (str_starts_with($dtype, 'float') ? 3.0 : 3);
+    check($typed->slice('1, ::2')[0] === $first, "dimension $dtype");
     $write = $typed->slice('1:2, 1:2');
     $write[0][0] = 1;
     values($typed->slice('1, 1'), $dtype === 'bool' ? [true] : (str_starts_with($dtype, 'float') ? [1.0] : [1]), "write $dtype");

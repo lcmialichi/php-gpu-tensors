@@ -9,35 +9,19 @@
 #include "cuda_exceptions.h"
 #include "fusion.h"
 #include "tensor_transfer.h"
+#include "tensor_shape.h"
 #include <math.h>
 
 static int cuda_is_initialized = 0;
 static tensor_t *handle_allocation_failure(tensor_t *tensor, const char *message, cudaError_t err_code);
+static int tensor_storage_range_valid(tensor_t *tensor, size_t element_offset,
+                                      size_t element_count);
 
-static void compute_strides_from_shape(int *shape, size_t *strides, int ndims)
+int cuda_tensor_require_context(void)
 {
-    if (ndims <= 0)
-        return;
-
-    size_t stride = 1;
-    for (int i = ndims - 1; i >= 0; i--)
-    {
-        strides[i] = stride;
-        stride *= (size_t)shape[i];
-    }
-}
-
-static int compute_total_size(const int *shape, int ndims, size_t *total)
-{
-    size_t size = 1;
-    for (int i = 0; i < ndims; i++)
-    {
-        if (shape[i] < 0 || (shape[i] != 0 && size > SIZE_MAX / (size_t)shape[i]))
-            return 0;
-        size *= (size_t)shape[i];
-    }
-    *total = size;
-    return 1;
+    if (tensor_mem_context_matches()) return 1;
+    CUDA_THROW_RUNTIME("CUDA operations require the owning device %d and its original context; changing devices or contexts is not supported", tensor_mem_device());
+    return 0;
 }
 
 int is_contiguous(tensor_t *tensor)
@@ -115,8 +99,13 @@ tensor_t *tensor_cast(tensor_t *tensor, dtype_t new_dtype)
 
 tensor_t *cuda_tensor_create_with_dtype(int *shape, int ndims, dtype_t dtype)
 {
-    if ((!shape && ndims > 0) || ndims < 0 || ndims > MAX_DIMS || dtype >= DTYPE_COUNT)
+    if (!cuda_tensor_require_context()) return NULL;
+    size_t total_elements, total_bytes;
+    size_t checked_strides[MAX_DIMS];
+    size_t element_size = dtype_size(dtype);
+    if (!tensor_shape_metrics(shape, ndims, element_size, checked_strides, &total_elements, &total_bytes))
     {
+        CUDA_THROW_INVALID("Tensor shape, strides or byte size exceed supported limits");
         return NULL;
     }
 
@@ -129,7 +118,7 @@ tensor_t *cuda_tensor_create_with_dtype(int *shape, int ndims, dtype_t dtype)
     memset(tensor, 0, sizeof(tensor_t));
 
     tensor->dtype = dtype;
-    tensor->element_size = dtype_size(dtype);
+    tensor->element_size = element_size;
     if (tensor->element_size == 0)
     {
         efree(tensor);
@@ -155,12 +144,8 @@ tensor_t *cuda_tensor_create_with_dtype(int *shape, int ndims, dtype_t dtype)
         {
             return handle_allocation_failure(tensor, "Failed to allocate strides array", cudaSuccess);
         }
-        if (!compute_total_size(shape, ndims, &tensor->total_size))
-        {
-            CUDA_THROW_INVALID("Invalid tensor shape");
-            return handle_allocation_failure(tensor, "Invalid tensor shape", cudaSuccess);
-        }
-        compute_strides_from_shape(shape, tensor->strides, ndims);
+        tensor->total_size = total_elements;
+        memcpy(tensor->strides, checked_strides, ndims * sizeof(size_t));
     }
     else
     {
@@ -169,9 +154,6 @@ tensor_t *cuda_tensor_create_with_dtype(int *shape, int ndims, dtype_t dtype)
         tensor->strides = NULL;
     }
 
-    if (tensor->total_size > SIZE_MAX / tensor->element_size)
-        return handle_allocation_failure(tensor, "Tensor size overflow", cudaSuccess);
-    size_t total_bytes = tensor->total_size * tensor->element_size;
     if (total_bytes > 0)
     {
         tensor->data = cuda_mem_alloc(total_bytes);
@@ -241,21 +223,6 @@ void tensor_update_from_dtype(tensor_t *tensor)
     tensor->is_contiguous_cached = -1;
 }
 
-tensor_t *cuda_tensor_create_view_with_dtype(tensor_t *base_tensor, dtype_t new_dtype,
-                                             int *shape, size_t *strides,
-                                             int dims, size_t offset, size_t total_size)
-{
-    if (!base_tensor)
-        return NULL;
-    tensor_t *view = cuda_tensor_create_view(base_tensor, shape, strides, dims, offset, total_size);
-    if (!view)
-        return NULL;
-    view->dtype = new_dtype;
-    view->element_size = dtype_size(new_dtype);
-
-    return view;
-}
-
 tensor_t *cuda_tensor_allocate_base(const int shape[], int ndims)
 {
     return cuda_tensor_create_with_dtype((int *)shape, ndims, DTYPE_FLOAT32);
@@ -264,6 +231,37 @@ tensor_t *cuda_tensor_allocate_base(const int shape[], int ndims)
 tensor_t *cuda_tensor_create_view(tensor_t *base_tensor, int *shape, size_t *strides,
                                   int dims, size_t offset, size_t total_size)
 {
+    size_t elements, bytes;
+    if (!base_tensor || (dims && !strides) ||
+        !tensor_shape_metrics(shape, dims, base_tensor->element_size, NULL, &elements, &bytes) ||
+        total_size != elements || offset > (size_t)PTRDIFF_MAX / base_tensor->element_size)
+    {
+        CUDA_THROW_INVALID("Invalid tensor view shape or offset");
+        return NULL;
+    }
+    size_t limit = (size_t)PTRDIFF_MAX / base_tensor->element_size;
+    size_t span = elements ? 1 : 0;
+    if (span > limit - offset)
+    {
+        CUDA_THROW_INVALID("Tensor view offset exceeds supported limits");
+        return NULL;
+    }
+    for (int d = 0; d < dims; d++)
+    {
+        size_t extent = elements ? (size_t)(shape[d] - 1) : 0;
+        if (strides[d] > (size_t)PTRDIFF_MAX ||
+            (extent && strides[d] > (limit - offset - span) / extent))
+        {
+            CUDA_THROW_INVALID("Tensor view strides exceed supported limits");
+            return NULL;
+        }
+        span += extent * strides[d];
+    }
+    if (!tensor_storage_range_valid(base_tensor, offset, span))
+    {
+        CUDA_THROW_INVALID("Tensor view footprint is outside its backing storage");
+        return NULL;
+    }
     size_t byte_offset = offset * base_tensor->element_size;
     tensor_t *view = (tensor_t *)emalloc(sizeof(tensor_t));
     memset(view, 0, sizeof(tensor_t));
@@ -456,9 +454,13 @@ tensor_t *cuda_tensor_create_sliced_view(tensor_t *base_tensor, slice_info_t *sl
         }
     }
 
-    size_t view_total = 1;
-    for (int i = 0; i < view_ndims; ++i)
-        view_total *= (size_t)view_shape[i];
+    size_t view_total, view_bytes;
+    if (!tensor_shape_metrics(view_shape, view_ndims, base_tensor->element_size,
+                              NULL, &view_total, &view_bytes))
+    {
+        CUDA_THROW_INVALID("Slice shape or strides exceed supported limits");
+        return NULL;
+    }
 
     tensor_t *view = cuda_tensor_create_view(base_tensor, view_shape, view_strides, view_ndims,
                                             view_total ? element_offset : 0, view_total);
@@ -481,8 +483,11 @@ static int tensor_storage_range_valid(tensor_t *tensor, size_t element_offset,
     tensor_t *root = tensor;
     while (root && root->base_tensor)
         root = root->base_tensor;
-    if (!tensor || !root || !tensor->data || !root->data || !tensor->element_size)
+    if (!tensor || !root || !tensor->element_size)
         return 0;
+    if (!tensor->data || !root->data)
+        return !tensor->data && !root->data && !root->allocated_size &&
+            !element_offset && !element_count;
 
     uintptr_t root_address = (uintptr_t)root->data;
     uintptr_t tensor_address = (uintptr_t)tensor->data;
@@ -514,53 +519,18 @@ int cuda_tensor_set_scalar(tensor_t *tensor, size_t element_offset, scalar_value
     size_t byte_offset = element_offset * tensor->element_size;
 
     void *gpu_destination = (char *)tensor->data + byte_offset;
-    long double scalar_value;
-    if (scalar.dtype == DTYPE_INT64) scalar_value = (long double)scalar.v.i64;
-    else if (scalar.dtype == DTYPE_FLOAT64) scalar_value = (long double)scalar.v.f64;
-    else
+    scalar_value_t value = cast_single_value(scalar, tensor->dtype);
+    if (value.dtype == DTYPE_UNKNOWN)
     {
-        CUDA_THROW_INVALID("Scalar assignment expects an integer or float");
+        CUDA_THROW_INVALID("Scalar value is invalid or outside the destination dtype range");
         return FAILURE;
     }
-    union {
-        float f32; double f64;
-        int8_t i8; int16_t i16; int32_t i32; int64_t i64;
-        uint8_t u8; uint16_t u16; uint32_t u32; uint64_t u64;
-        bool boolean;
-    } value;
-    if (dtype_is_integer(tensor->dtype))
-    {
-        int bits = (int)(tensor->element_size * 8);
-        int signed_type = dtype_is_signed(tensor->dtype);
-        long double limit = ldexpl(1.0L, bits - signed_type);
-        if (!isfinite(scalar_value) || scalar_value < (signed_type ? -limit : 0) || scalar_value >= limit)
-        {
-            CUDA_THROW_INVALID("Scalar value is outside the destination dtype range");
-            return FAILURE;
-        }
-    }
-    switch (tensor->dtype)
-    {
-        case DTYPE_FLOAT32: value.f32 = (float)scalar_value; break;
-        case DTYPE_FLOAT64: value.f64 = (double)scalar_value; break;
-        case DTYPE_INT8: value.i8 = (int8_t)scalar_value; break;
-        case DTYPE_INT16: value.i16 = (int16_t)scalar_value; break;
-        case DTYPE_INT32: value.i32 = (int32_t)scalar_value; break;
-        case DTYPE_INT64: value.i64 = (int64_t)scalar_value; break;
-        case DTYPE_UINT8: value.u8 = (uint8_t)scalar_value; break;
-        case DTYPE_UINT16: value.u16 = (uint16_t)scalar_value; break;
-        case DTYPE_UINT32: value.u32 = (uint32_t)scalar_value; break;
-        case DTYPE_UINT64: value.u64 = (uint64_t)scalar_value; break;
-        case DTYPE_BOOL: value.boolean = scalar_value != 0; break;
-        default:
-            CUDA_THROW_INVALID("Unsupported scalar dtype");
-            return FAILURE;
-    }
     autograd_mark_mutated(tensor);
-    cudaError_t err = cudaMemcpy(gpu_destination, &value, tensor->element_size, cudaMemcpyHostToDevice);
+    cudaError_t err = cudaMemcpy(gpu_destination, &value.v, tensor->element_size, cudaMemcpyHostToDevice);
 
     if (err != cudaSuccess)
     {
+        CUDA_THROW_RUNTIME("Scalar assignment failed: %s", cudaGetErrorString(err));
         return FAILURE;
     }
     return SUCCESS;
@@ -744,9 +714,13 @@ tensor_t *cuda_tensor_create_dim_view(tensor_t *base_tensor, slice_info_t *slice
         }
     }
 
-    size_t view_total = 1;
-    for (int i = 0; i < view_ndims; ++i)
-        view_total *= (size_t)view_shape[i];
+    size_t view_total, view_bytes;
+    if (!tensor_shape_metrics(view_shape, view_ndims, base_tensor->element_size,
+                              NULL, &view_total, &view_bytes))
+    {
+        CUDA_THROW_INVALID("Slice shape or strides exceed supported limits");
+        return NULL;
+    }
 
     tensor_t *view = cuda_tensor_create_view(base_tensor, view_shape, view_strides, view_ndims,
                                             view_total ? element_offset : 0, view_total);

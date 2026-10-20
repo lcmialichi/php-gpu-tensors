@@ -164,6 +164,40 @@ Create tensors from nested arrays or with `fromFlatArray()`, `fromBuffer()`,
 `toArray()` returns nested PHP arrays, `toBuffer()` returns packed bytes,
 `toHost()` copies to a `HostArray`, and `item()` reads a single value.
 
+`full()` and `fullLike()` accept numeric or boolean fills. Integer fills and
+PHP-array imports reject NaN, infinity, overflow and negative unsigned values;
+in-range fractions truncate toward zero. Boolean conversion uses nonzero = true.
+CUDA-build factories support all 13 storage dtypes; CPU-only builds support
+`float32` and `float64`.
+
+`astype()` uses dtype-based rules: integer narrowing, signed-to-unsigned and
+float-to-integer casts are rejected. Integer-to-float casts may lose precision.
+FP16/BF16 can widen to FP32/FP64 in eager execution and Fusion.
+
+`arange()` excludes `stop`; integer arguments preserve exact integer values.
+`linspace()` includes `stop` by default and preserves integer endpoints when
+an integer dtype is requested. Fractional integer results truncate toward zero.
+Generated values must fit the destination dtype.
+
+`rand()` requires finite, ordered bounds representable by the destination dtype,
+including for empty shapes. Boolean bounds must be 0 or 1. Integer random values
+stay within bounds, but use a 24-bit random fraction, not an unbiased full-width
+integer sampler.
+
+Scalar reads preserve PHP types: floats, integers and booleans. Integers outside
+PHP's `int` range export as exact decimal strings, consistently across indexing,
+`item()`, `toArray()` and CUDA-build `HostArray` reads. Use `toBuffer()` and
+`fromBuffer()` for lossless binary round trips. FP64 tensors remain FP64 when
+dividing by a scalar or raising to a negative scalar power.
+
+`serialize()` snapshots tensor values, shape and dtype, not gradients. Host
+subarrays are packed in logical order; copy a `CudaArray` view before serializing
+it. Invalid restore data leaves existing storage unchanged. Payloads use native
+byte order and build-specific formats, not a portable checkpoint format.
+`CompiledModule` uses versioned parameter fields instead of C structs: recompile
+legacy module caches and regenerate unversioned CPU payloads. Restore modules
+into new objects; initialized or active modules cannot be overwritten.
+
 ### Operations
 
 - **Math:** arithmetic operators and methods, elementwise functions,
@@ -175,7 +209,20 @@ Create tensors from nested arrays or with `fromFlatArray()`, `fromBuffer()`,
 - **Indexing:** `concat()`, `gather()` and `scatterAdd()`.
 - **Shape and dtype:** views, transforms, `astype()` and tensor metadata.
 
-Arithmetic broadcasts compatible shapes and promotes dtypes. FP16/BF16
+`eq()` and `ne()` use exact equality in eager and Fusion, without an implicit
+epsilon. Results are 0/1 masks in the promoted dtype; NaN is unequal to every
+value, and signed zeros compare equal.
+
+Arithmetic broadcasts compatible shapes and promotes dtypes. Mixed signed and
+unsigned tensors use the smallest exact common integer dtype: `int8 + uint8`
+produces `int16`. Signed integers, including PHP `int` scalars, cannot be mixed
+with `uint64`; use explicitly typed unsigned operands or convert to `float64`
+when rounding is acceptable. Ordinary integer scalar arithmetic retains the
+tensor dtype and rejects out-of-range scalar values. Division and power between
+tensors use FP64 for a 64-bit common integer dtype. Scalar operations producing
+floating results also use FP64 with 64-bit integer tensors.
+
+FP16/BF16
 operations use FP32 intermediates; reductions and `scatterAdd()` may return
 FP32. Unsupported dtype combinations or gradients raise exceptions. See the
 [API stubs](stubs/cuda.stub.php) for method signatures and options.
@@ -228,6 +275,19 @@ Gradients accumulate until `zeroGrad()`. Use `detach()` to stop gradient
 tracking. Non-scalar outputs need a matching seed; pass `retainGraph: true` to
 reuse the graph. Supported gradients depend on operation and dtype; unsupported
 cases raise exceptions. Inputs must enable gradients before Fusion capture.
+
+Discrete reductions (`argMax()`, `argMin()`, `all()`, `any()`) require an explicit
+`detach()` on tracked inputs, including during Fusion capture:
+`$input->detach()->argMax()`. Reduction axes must be integers or `null`; `null`
+reduces all elements.
+
+`where()` differentiates its value branches, not its condition. Using a tensor
+only as a condition does not consume its gradient history. The saved mask must
+remain unchanged until backward. Branch routing uses genuine zeros, rather
+than multiplying non-finite gradient seeds by zero.
+
+FP16/BF16 concat, slice and copy preserve gradient paths in eager and Fusion;
+their gradients use FP32, including repeated inputs and empty tensors.
 
 `Optimizer` provides functional SGD and AdamW. Each `step()` returns updated
 parameters and explicit state; `weightDecayMask` can exclude parameters.
@@ -411,6 +471,22 @@ Use `--profile` for Fusion stats, `--predict-index=N` for a sample prediction,
 See [API stubs](stubs/cuda.stub.php) for signatures and the
 [examples guide](examples/README.md) for runnable code.
 
+CUDA builds own one device and its primary context per PHP process. Set
+`CUDA_VISIBLE_DEVICES` before starting PHP to choose a GPU; its visible device
+ID is usually `0`. `cuda_set_device()` accepts only the owning device, and
+`cuda_device_reset()` throws rather than invalidating tensors, modules or graphs.
+Start a new PHP process to reset CUDA. Compiled modules, eager operations and
+Fusion share the same primary context.
+GPU validation currently covers CLI only; fork/FPM and concurrent ZTS execution
+remain unvalidated. A successful ZTS build is not proof of CUDA thread safety.
+
+Shapes have at most 10 axes, with dimensions from `0` to `INT_MAX`. Factories
+check element counts, strides and byte sizes before allocating; empty axes are
+valid but do not bypass overflow checks. `getSize()` returns a full PHP integer.
+Flattening and global arg reductions reject sizes above `INT_MAX`, because they
+require a single representable axis. Oversized indices and axes throw instead
+of being truncated.
+
 ### Backend contracts and custom backends
 
 Choose a backend by constructing its tensor class:
@@ -427,23 +503,33 @@ $gpu = new CudaArray([1, 2, 3]);
 do not move data implicitly. Use `toGpu()` and `toHost()` for synchronous copies
 that preserve shape and dtype.
 
+`clone $tensor` creates independent storage on the same backend and preserves
+host pinning. It copies values, not autograd history; use `$gpu->copy()` for a
+differentiable copy. Repeating `__construct()` replaces storage only on success;
+failure leaves the tensor intact. Uninitialized storage access throws, and
+active host iterators retain their original storage during replacement.
+
 `HostArray` supports CPU `+`, `-`, `*` and `/` for same-shape, same-dtype
 float32/float64 tensors and numeric scalars. Broadcasting is not supported.
 CPU-only builds need no CUDA installation; `toGpu()` and `CudaArray` operations
 throw if CUDA is unavailable. In CUDA builds, `HostArray` also stores
 `CudaArray::toHost()` results and supports the CUDA storage dtypes.
+Scalar access (`get()`, `at()`, `$host[$i]`) and iteration support these storage
+dtypes, including FP16/BF16; low-precision values are returned as PHP floats.
 
 Custom backends can implement `BackendInterface`, but it does not automatically
 dispatch tensor operations. To overload PHP operators, extend
 `OperatorOverload` and implement `Tensor`. The base class already implements
 `OperatorOverloadable` and routes operators to `__add`, `__sub`, `__mul`,
-`__div`, `__pow`, `__mod`, `__inc` and `__dec`. Implement each method for your
-tensor; throw an exception for operations you do not support. The example below
-implements vector arithmetic with another vector or a scalar:
+`__div`, `__pow` and `__mod`. Override only the hooks you support; the defaults
+throw `PhpTensors\RuntimeException`. Use `mixed` parameters and a `mixed` or
+narrower return type. PHP routes `++` through `__add($value, 1)` and `--` through
+`__sub($value, 1)`; the unused `__inc`/`__dec` hooks have been removed.
+The example below supports vector addition and multiplication; other operators
+use the default exception:
 
 ```php
 use PhpTensors\OperatorOverload;
-use PhpTensors\OperatorOverloadable;
 use PhpTensors\Tensor;
 
 final class VectorTensor extends OperatorOverload implements Tensor
@@ -483,29 +569,16 @@ final class VectorTensor extends OperatorOverload implements Tensor
         for ($i = 0; $i < $length; $i++) {
             $a = $leftValues === null ? $left : $leftValues[$i];
             $b = $rightValues === null ? $right : $rightValues[$i];
-            if (($operator === '/' || $operator === '%') && $b == 0) {
-                throw new \DivisionByZeroError();
-            }
             $result[] = match ($operator) {
                 '+' => $a + $b,
-                '-' => $a - $b,
                 '*' => $a * $b,
-                '/' => $a / $b,
-                '**' => $a ** $b,
-                '%' => fmod($a, $b),
             };
         }
         return new self($result);
     }
 
     public function __add(mixed $left, mixed $right): mixed { return self::apply($left, $right, '+'); }
-    public function __sub(mixed $left, mixed $right): mixed { return self::apply($left, $right, '-'); }
     public function __mul(mixed $left, mixed $right): mixed { return self::apply($left, $right, '*'); }
-    public function __div(mixed $left, mixed $right): mixed { return self::apply($left, $right, '/'); }
-    public function __pow(mixed $left, mixed $right): mixed { return self::apply($left, $right, '**'); }
-    public function __mod(mixed $left, mixed $right): mixed { return self::apply($left, $right, '%'); }
-    public function __inc(): mixed { return self::apply($this, 1, '+'); }
-    public function __dec(): mixed { return self::apply($this, 1, '-'); }
 }
 
 $vector = new VectorTensor([1, 2, 3]);
@@ -513,12 +586,30 @@ $sum = $vector + new VectorTensor([10, 20, 30]);
 $scaled = 2 * $vector; // Reversed scalar operands are passed in their original order.
 
 print_r($sum->toArray()); // [11, 22, 33]
-var_dump($scaled instanceof OperatorOverloadable); // true
+print_r($scaled->toArray()); // [2, 4, 6]
 ```
 
 The operator methods receive both operands in their original order, including
 expressions such as `2 * $vector`. Native `HostArray` and `CudaArray` implement
 `OperatorOverloadable` directly and use native handlers.
+
+Compound assignments compute a new value and rebind the variable; they do not
+modify the original tensor's storage. PHP references (`&`) follow the rebinding,
+while other object aliases keep the previous value:
+
+```php
+use PhpTensors\HostArray;
+
+$a = new HostArray([1, 2, 3]);
+$old = $a;
+$reference =& $a;
+$a += 2; // $a and $reference: [3, 4, 5]; $old: [1, 2, 3]
+```
+
+Custom hooks should return a value without mutating their operands. A failed
+computation preserves the binding and its original exception; mutations made
+inside user hooks cannot be rolled back. Compound GPU assignments remain
+unsupported inside Fusion capture.
 
 ```php
 use PhpTensors\CudaArray;
@@ -534,6 +625,9 @@ CUDA autograd and Fusion support documented subsets of operations and dtypes.
 Unsupported combinations fail explicitly; see the API stubs and Fusion
 diagnostics for details.
 
+Built-in CUDA offset/grid arithmetic preserves 64-bit values. Unsupported grid
+sizes fail explicitly; device and memory-pool limits still apply.
+
 ## Validation status
 
 Build and CPU tests do not substitute for GPU runtime tests. The source has been
@@ -541,7 +635,8 @@ validated on the following configurations:
 
 | PHP / mode | GPU and configuration | Validation |
 | --- | --- | --- |
-| 8.1, Docker development image | GPU-enabled CUDA 12.6.3 environment | Current source: build succeeded; API snapshot matched; 67/67 PHPT tests passed |
+| 8.1, Docker development image | GPU-enabled CUDA 12.6.3 environment | Current source: build and API snapshot passed; full suite: 88 PHPTs passed, one expected CPU-only skip; seven native checks passed, including scalar conversions and GPU integer/index/grid boundaries |
+| 8.4 and 8.5 ZTS | CPU-only Docker builds | Current source: builds succeeded; API snapshot matched; 8/8 selected PHPTs per version passed |
 | 8.3 NTS | GeForce MX570 A, cuDNN 8.9.7 | Beta.5: all 44 GPU PHPT tests passed, including CNN inference |
 | 8.3 and 8.5 NTS | GeForce MX570 A, without cuDNN | Beta.5: 43 GPU PHPT tests passed per runtime; optional cuDNN test skipped |
 | 8.3 NTS | GeForce MX570 A, without cuBLAS/cuDNN | Beta.5: 43 GPU PHPT tests passed; optional cuDNN test skipped |

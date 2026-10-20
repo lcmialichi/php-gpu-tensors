@@ -47,7 +47,11 @@ typedef struct
         int32_t i32;
         int64_t i64;
         int8_t i8;
+        int16_t i16;
+        uint8_t u8;
         uint16_t u16;
+        uint32_t u32;
+        uint64_t u64;
         bool b;
     } v;
     dtype_t dtype;
@@ -73,12 +77,8 @@ typedef struct
             (__input__).v.f64 = Z_DVAL_P((__zval__));    \
             (__input__).is_neg = (__input__).v.f64 < 0;  \
             break;                                       \
-        case IS_TRUE:                                    \
-            (__input__).v.b = true;                      \
-            (__input__).is_neg = 0;                      \
-            break;                                       \
-        case IS_FALSE:                                   \
-            (__input__).v.b = false;                     \
+        case DTYPE_BOOL:                                 \
+            (__input__).v.b = Z_TYPE_P(__zval__) == IS_TRUE; \
             (__input__).is_neg = 0;                      \
             break;                                       \
         default:                                         \
@@ -98,6 +98,7 @@ dtype_t promote_types_for_arithmetic(dtype_t a, dtype_t b, operation_type_t op);
 extern const dtype_info_t dtype_infos[DTYPE_COUNT];
 
 scalar_value_t cast_single_value(scalar_value_t value, dtype_t target_dtype);
+int scalar_value_as_long_double(scalar_value_t value, long double *result);
 #ifdef __cplusplus
 extern "C" {
 #endif

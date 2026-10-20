@@ -17,6 +17,15 @@ function check(bool $condition): void
 
 $left = new HostArray([[1, 2], [3, 4]], 'float64');
 $right = HostArray::fromFlatArray([10, 20, 30, 40], [2, 2], 'float64');
+check(HostArray::fullLike($left, true)->toArray() === [[1.0, 1.0], [1.0, 1.0]]);
+check(HostArray::fullLike($left, 3.5, 'float32')->dtype() === 'float32');
+check(HostArray::fullLike($left, 3.5, 'float32')->toArray() === [[3.5, 3.5], [3.5, 3.5]]);
+check(HostArray::fullLike(HostArray::zeros([0], 'float64'), 7)->toArray() === []);
+try {
+    HostArray::fullLike($left, new stdClass());
+    throw new RuntimeException('Nonnumeric fullLike fill was accepted');
+} catch (PhpTensors\InvalidArgumentException $expected) {
+}
 check($left->getBackend() === 'cpu');
 check($left instanceof \PhpTensors\OperatorOverloadable);
 check($left->getShape() === [2, 2]);

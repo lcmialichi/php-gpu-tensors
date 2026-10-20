@@ -85,7 +85,7 @@ static __global__ void nn_pool_fallback_kernel(
     if (end_y > in_height) end_y = in_height;
     if (end_x > in_width) end_x = in_width;
     float value = average ? 0.0f : -INFINITY;
-    int count = 0;
+    size_t count = 0;
     int has_nan = 0;
     for (int64_t y = start_y; y < end_y; y++)
     {

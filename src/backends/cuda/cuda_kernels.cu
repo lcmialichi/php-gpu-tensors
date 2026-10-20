@@ -12,14 +12,14 @@ extern "C"
 {
     __global__ void fill_kernel(float *data, float value, size_t size)
     {
-        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
         if (idx < size)
             data[idx] = value;
     }
 
     __global__ void scale_kernel(float *data, size_t size, float min_value, float max_value)
     {
-        int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        size_t idx = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
 
         if (idx < size)
         {

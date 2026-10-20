@@ -11,6 +11,8 @@
 #define MAX_DIMS 10
 #define MAX_CONCAT_TENSORS 10
 
+int cuda_tensor_require_context(void);
+
 struct _operation_t;
 struct fusion_node;
 struct autograd_node;

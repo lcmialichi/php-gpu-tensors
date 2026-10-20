@@ -2,16 +2,14 @@
 #include "operations.h"
 #include "php.h"
 #include "cuda.h"
+#include "tensor_shape.h"
 
 static int calculate_broadcast_shape(int *a_shape, int a_dims, int *b_shape, int b_dims, int *result_shape, int *result_dims);
-static void calculate_tensor_strides(tensor_t *tensor,
-                                     int *result_shape,
-                                     int result_dims,
-                                     int *tensor_strides);
+static void calculate_tensor_strides(tensor_t *tensor, size_t *tensor_strides);
 
 int prepare_broadcast_operation(tensor_t *a, tensor_t *b,
                                 int *result_shape, int *result_dims,
-                                int *a_strides, int *b_strides,
+                                size_t *a_strides, size_t *b_strides,
                                 size_t *total_elements)
 {
     if (!calculate_broadcast_shape(a->shape, a->ndims, b->shape, b->ndims,
@@ -20,19 +18,22 @@ int prepare_broadcast_operation(tensor_t *a, tensor_t *b,
         return 0;
     }
 
-    *total_elements = 1;
-    for (int i = 0; i < *result_dims; i++)
+    size_t bytes;
+    if (!tensor_shape_metrics(result_shape, *result_dims, 1, NULL, total_elements, &bytes))
     {
-        *total_elements *= result_shape[i];
+        CUDA_THROW_INVALID("Broadcast shape or strides exceed supported limits");
+        return 0;
     }
 
-    calculate_tensor_strides(a, result_shape, *result_dims, a_strides);
-    calculate_tensor_strides(b, result_shape, *result_dims, b_strides);
+    calculate_tensor_strides(a, a_strides);
+    calculate_tensor_strides(b, b_strides);
     return 1;
 }
 
 int prepare_matmul_result_shape(int a_ndims, int *a_shape, int b_ndims, int *b_shape, int *result_ndims, int *result_shape)
 {
+    if (a_ndims < 2 || a_ndims > MAX_DIMS || b_ndims < 2 || b_ndims > MAX_DIMS)
+        return 0;
     int max_ndims = (a_ndims > b_ndims) ? a_ndims : b_ndims;
     int a_inner = a_shape[a_ndims - 1];
     int b_inner = b_shape[b_ndims - 2];
@@ -83,26 +84,27 @@ int calculate_reduction_shape(tensor_t *input, int axis, int *result_shape, size
         return 0;
     }
 
-    size_t total_elements = 1;
     int j = 0;
     for (int i = 0; i < input->ndims; i++)
     {
         if (i != axis)
         {
             result_shape[j++] = input->shape[i];
-            total_elements *= input->shape[i];
         }
     }
-
-    *total_elements_out_ptr = total_elements;
 
     if (j == 0)
     {
         j = 1;
         result_shape[0] = 1;
-        *total_elements_out_ptr = 1;
     }
 
+    size_t bytes;
+    if (!tensor_shape_metrics(result_shape, j, 1, NULL, total_elements_out_ptr, &bytes))
+    {
+        CUDA_THROW_INVALID("Reduction output shape or strides exceed supported limits");
+        return 0;
+    }
     return j;
 }
 
@@ -139,20 +141,7 @@ static int calculate_broadcast_shape(int *a_shape, int a_dims, int *b_shape, int
     return 1;
 }
 
-int calculate_broadcast_stride(int *result_shape, int result_dims, int dim_idx)
-{
-    int stride = 1;
-    for (int i = result_dims - 1; i > dim_idx; i--)
-    {
-        stride *= result_shape[i];
-    }
-    return stride;
-}
-
-static void calculate_tensor_strides(tensor_t *tensor,
-                                     int *result_shape,
-                                     int result_dims,
-                                     int *tensor_strides)
+static void calculate_tensor_strides(tensor_t *tensor, size_t *tensor_strides)
 {
     for (int i = tensor->ndims - 1; i >= 0; i--)
     {
@@ -162,7 +151,7 @@ static void calculate_tensor_strides(tensor_t *tensor,
         }
         else
         {
-            tensor_strides[i] = (int)tensor->strides[i];
+            tensor_strides[i] = tensor->strides[i];
         }
     }
 }

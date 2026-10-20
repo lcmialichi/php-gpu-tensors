@@ -140,7 +140,7 @@ static cudaError_t launch_moments_typed(
     params.standard_deviation = standard_deviation;
     memcpy(params.shape, input_shape, input_ndims * sizeof(int));
     memcpy(params.strides, input_strides, input_ndims * sizeof(size_t));
-    moments_axis_kernel<<<output_size, REDUCTION_BLOCK_SIZE, 0, stream>>>(
+    moments_axis_kernel<<<cuda_grid_blocks(output_size), REDUCTION_BLOCK_SIZE, 0, stream>>>(
         input, output, params);
     return cudaGetLastError();
 }
@@ -376,8 +376,8 @@ __global__ static void cumulative_segment_extract(
     const CumulativeSegmentValue<T> *__restrict__ input,
     T *__restrict__ output, size_t total_items)
 {
-    for (size_t index = blockIdx.x * blockDim.x + threadIdx.x;
-         index < total_items; index += blockDim.x * gridDim.x)
+    for (size_t index = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
+         index < total_items; index += cuda_grid_stride(gridDim.x, blockDim.x))
         output[index] = input[index].value;
 }
 
@@ -521,8 +521,8 @@ __global__ static void cumulative_reorder_kernel(
     const T *__restrict__ input, T *__restrict__ output,
     CumulativeReorderParams params, size_t total_items)
 {
-    for (size_t index = blockIdx.x * blockDim.x + threadIdx.x;
-         index < total_items; index += blockDim.x * gridDim.x)
+    for (size_t index = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
+         index < total_items; index += cuda_grid_stride(gridDim.x, blockDim.x))
     {
         size_t remaining = index;
         size_t coordinates[MAX_DIMS] = {};
@@ -699,9 +699,9 @@ __global__ static void cumulative_product_gradient_extract(
     CumulativeGradientOutputParams params)
 {
     size_t total_items = params.total_items;
-    for (size_t reversed_index = blockIdx.x * blockDim.x + threadIdx.x;
+    for (size_t reversed_index = cuda_linear_index(blockIdx.x, blockDim.x, threadIdx.x);
          reversed_index < total_items;
-         reversed_index += blockDim.x * gridDim.x)
+         reversed_index += cuda_grid_stride(gridDim.x, blockDim.x))
     {
         size_t logical_index;
         size_t coordinate;

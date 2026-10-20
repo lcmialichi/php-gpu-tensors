@@ -15,7 +15,7 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_host_array_unsupported_void, 0, 
     ZEND_ARG_VARIADIC_INFO(0, arguments)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_host_array_unsupported_scalar, 0, 0, MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_BOOL)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_MASK_EX(arginfo_host_array_unsupported_scalar, 0, 0, MAY_BE_LONG | MAY_BE_DOUBLE | MAY_BE_BOOL | MAY_BE_STRING)
     ZEND_ARG_VARIADIC_INFO(0, arguments)
 ZEND_END_ARG_INFO()
 
@@ -95,7 +95,6 @@ ZEND_FUNCTION(php_tensors_host_array_unsupported);
     HOST_ARRAY_UNSUPPORTED_METHOD(unsqueeze, arginfo_host_array_unsupported_tensor, ZEND_ACC_PUBLIC) \
     HOST_ARRAY_UNSUPPORTED_METHOD(broadcastTo, arginfo_host_array_unsupported_tensor, ZEND_ACC_PUBLIC) \
     HOST_ARRAY_UNSUPPORTED_METHOD(flatten, arginfo_host_array_unsupported_tensor, ZEND_ACC_PUBLIC) \
-    HOST_ARRAY_UNSUPPORTED_METHOD(fullLike, arginfo_host_array_unsupported_tensor, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC) \
     HOST_ARRAY_UNSUPPORTED_METHOD(eye, arginfo_host_array_unsupported_tensor, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC) \
     HOST_ARRAY_UNSUPPORTED_METHOD(identity, arginfo_host_array_unsupported_tensor, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC) \
     HOST_ARRAY_UNSUPPORTED_METHOD(arange, arginfo_host_array_unsupported_tensor, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC) \

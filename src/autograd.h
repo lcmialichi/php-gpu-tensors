@@ -58,6 +58,7 @@ int autograd_record_binary(tensor_t *result, tensor_t *a, tensor_t *b, operation
 int autograd_record_scalar(tensor_t *result, tensor_t *a, scalar_value_t scalar, operation_type_t op, int inverse);
 int autograd_record_unary(tensor_t *result, tensor_t *a, operation_type_t op);
 int autograd_record_reduce(tensor_t *result, tensor_t *a, operation_type_t op, int axis);
+int autograd_check_discrete_reduction(tensor_t *input, operation_type_t op);
 int autograd_record_scan(tensor_t *result, tensor_t *a, operation_type_t op, int axis);
 int autograd_record_repeat_counts(tensor_t *result, tensor_t *a,
                                   const int *prefix_counts, size_t count,
