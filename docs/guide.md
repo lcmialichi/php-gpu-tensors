@@ -85,8 +85,8 @@ build modes support PHP NTS and ZTS.
 ### Build from source
 
 ```bash
-git clone https://github.com/lcmialichi/php-cuda-ext.git
-cd php-cuda-ext
+git clone https://github.com/lcmialichi/php-gpu-tensors.git
+cd php-gpu-tensors
 ./compile.sh --cpu-only
 ./run-tests.sh --cpu-only
 php -n -d extension=./phptensors_build-8.3/modules/phptensors.so -r \
@@ -894,14 +894,14 @@ not by running the remote workflow.
 
 Reports for other PHP, driver, CUDA or GPU versions are welcome. Include those
 versions and the result of `./run-tests.sh --require-gpu` in an
-[issue](https://github.com/lcmialichi/php-cuda-ext/issues).
+[issue](https://github.com/lcmialichi/php-gpu-tensors/issues).
 
 ## Contribute
 
 Contributions can be code, tests, documentation, examples or reports from other
-PHP/CUDA/GPU combinations. See [open issues](https://github.com/lcmialichi/php-cuda-ext/issues),
-[bug reports](https://github.com/lcmialichi/php-cuda-ext/issues/new?template=bug_report.yml),
-[feature requests](https://github.com/lcmialichi/php-cuda-ext/issues/new?template=feature_request.yml),
+PHP/CUDA/GPU combinations. See [open issues](https://github.com/lcmialichi/php-gpu-tensors/issues),
+[bug reports](https://github.com/lcmialichi/php-gpu-tensors/issues/new?template=bug_report.yml),
+[feature requests](https://github.com/lcmialichi/php-gpu-tensors/issues/new?template=feature_request.yml),
 the [contribution guide](../CONTRIBUTING.md) and [roadmap](../ROADMAP.md).
 Documentation, examples and host-side tests can be worked on without an NVIDIA
 GPU.

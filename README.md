@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-    <a href="https://github.com/lcmialichi/php-cuda-ext/actions/workflows/ci.yml"><img alt="Build and CPU/API tests" src="https://github.com/lcmialichi/php-cuda-ext/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="https://github.com/lcmialichi/php-gpu-tensors/actions/workflows/ci.yml"><img alt="Build and CPU/API tests" src="https://github.com/lcmialichi/php-gpu-tensors/actions/workflows/ci.yml/badge.svg"></a>
     <a href="https://packagist.org/packages/lcmialichi/php-gpu-tensors"><img alt="Latest package version, including beta releases" src="https://img.shields.io/packagist/v/lcmialichi/php-gpu-tensors?include_prereleases&label=package"></a>
     <img alt="PHP 8.1 through 8.5, NTS and ZTS builds" src="https://img.shields.io/badge/PHP-8.1--8.5-777BB4">
-    <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/lcmialichi/php-cuda-ext"></a>
+    <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/lcmialichi/php-gpu-tensors"></a>
 </p>
 
 PHP Tensors is a **native PHP extension** for numerical computing, GPU tensor
@@ -49,8 +49,8 @@ You need Linux, PHP development headers, `phpize`, `php-config`, a C/C++
 compiler, `make` and `autoconf`. No CUDA installation is needed for this path.
 
 ```bash
-git clone https://github.com/lcmialichi/php-cuda-ext.git
-cd php-cuda-ext
+git clone https://github.com/lcmialichi/php-gpu-tensors.git
+cd php-gpu-tensors
 ./compile.sh --cpu-only
 ./run-tests.sh --cpu-only
 
@@ -219,7 +219,7 @@ and open release gates in [TODO.md](TODO.md).
 ## Help build it
 
 Found a use case? Try an [example](examples/README.md), share your PHP/GPU
-configuration, or [open an issue](https://github.com/lcmialichi/php-cuda-ext/issues).
+configuration, or [open an issue](https://github.com/lcmialichi/php-gpu-tensors/issues).
 Tests, documentation, CPU-only work and reproducible benchmarks are valuable
 contributions; owning an NVIDIA GPU is not required to contribute.
 
