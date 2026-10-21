@@ -9,8 +9,8 @@ BUILD_DIR=${BUILD_DIR:-"./${EXT_NAME}_build-${PHP_VERSION}"}
 CPU_ONLY=0
 if [ "${1:-}" = "--cpu-only" ]; then
    CPU_ONLY=1
-elif [ "${1:-}" != "" ] && [ "$1" != "--require-gpu" ]; then
-   echo "Usage: $0 [--require-gpu|--cpu-only]" >&2
+elif [ "${1:-}" != "" ] && [ "$1" != "--require-gpu" ] && [ "$1" != "--cuda-api-only" ]; then
+   echo "Usage: $0 [--require-gpu|--cpu-only|--cuda-api-only]" >&2
    exit 2
 fi
 
@@ -21,8 +21,15 @@ fi
 
 cd "$BUILD_DIR"
 "$PHP_BIN" -n tests/check_api_surface.php
+"$PHP_BIN" -n tests/generate_arginfo.php --check
 if [ "$CPU_ONLY" -eq 1 ]; then
-   make test TESTS="tests/backend_contract.phpt tests/cpu_backend.phpt tests/host_array_contract.phpt tests/host_array_storage.phpt tests/host_array_lifecycle.phpt tests/host_array_operator_aliasing.phpt tests/host_array_serialization.phpt tests/namespaces.phpt tests/operator_overload_aliasing.phpt tests/tensor_shape_boundaries.phpt" TEST_PHP_ARGS="-q"
+   "$PHP_BIN" -n -d extension="$PWD/modules/phptensors.so" tests/check_native_api.php --cpu-only
+   make test TESTS="tests/native_api_contract.phpt tests/backend_contract.phpt tests/cpu_backend.phpt tests/host_array_contract.phpt tests/host_array_storage.phpt tests/host_array_copy_cast.phpt tests/host_array_broadcast.phpt tests/host_array_views.phpt tests/host_array_math.phpt tests/host_array_reductions.phpt tests/host_array_lifecycle.phpt tests/host_array_operator_aliasing.phpt tests/host_array_serialization.phpt tests/namespaces.phpt tests/operator_overload_aliasing.phpt tests/operator_overload_protocol.phpt tests/tensor_shape_boundaries.phpt" TEST_PHP_ARGS="-q"
+   exit 0
+fi
+"$PHP_BIN" -n -d extension="$PWD/modules/phptensors.so" tests/check_native_api.php --cuda
+if [ "${1:-}" = "--cuda-api-only" ]; then
+   make test TESTS="tests/native_api_contract.phpt tests/native_api_cuda_parsers.phpt tests/operator_overload_protocol.phpt tests/operator_overload_aliasing.phpt tests/host_array_operator_aliasing.phpt" TEST_PHP_ARGS="-q"
    exit 0
 fi
 if [ "${1:-}" = "--require-gpu" ]; then

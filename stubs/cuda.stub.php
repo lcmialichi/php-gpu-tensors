@@ -9,6 +9,7 @@ class UnexpectedValueException extends Exception {}
 class OutOfMemoryException extends RuntimeException {}
 class CompilationException extends RuntimeException {}
 
+/** Marker only; userland arithmetic dispatch requires extending OperatorOverload. */
 interface OperatorOverloadable {}
 
 interface Tensor
@@ -98,7 +99,7 @@ namespace PhpTensors;
  * Compile CUDA C++ source into PTX with NVRTC.
  * Construct only after worker fork; CUDA belongs to the first calling process/thread.
  */
-class Compiler
+final class Compiler
 {
     /** Configure source and target architecture (e.g. sm_86); null selects the device. */
     public function __construct(string $source, ?string $target = null, int $optimization = 2, bool $debug = false, bool $fast_math = true) {}
@@ -120,7 +121,7 @@ class Compiler
 }
 
 /** PTX module supporting synchronous and queued stream launches. */
-class CompiledModule
+final class CompiledModule
 {
     /** Load PTX into a CUDA context. @throws RuntimeException */
     public function initialize(): bool {}
@@ -131,7 +132,7 @@ class CompiledModule
     /** Queue a kernel and return its operation ID. @throws RuntimeException */
     public function launchAsync(string $name, ?array $config = [], ?array $args = []): int {}
     /** Queue a batch and return statuses after synchronization. @throws RuntimeException */
-    public function launchAsyncBatch(?array $operations): bool|array {}
+    public function launchAsyncBatch(array $operations): bool|array {}
     /** Synchronize one operation ID or all outstanding operations. */
     public function sync(?int $op_id = null): bool {}
     /** Query completion without blocking. */
@@ -189,7 +190,7 @@ final class HostArray implements Tensor, OperatorOverloadable, \IteratorAggregat
     public static function fullLike(self $prototype, float|int|bool $value, ?string $dtype = null): self {}
     /** Import row-major packed bytes. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32', bool $pinned = false): self {}
-    /** Whether storage is page-locked; always false for CPU tensors. */
+    /** Whether storage is page-locked; always false in CPU-only builds. */
     public function isPinned(): bool {}
     /** Backend identifier for this tensor. */
     public function getBackend(): string {}
@@ -218,23 +219,23 @@ final class HostArray implements Tensor, OperatorOverloadable, \IteratorAggregat
     public function getElementSize(): int {}
     /** Length of the first dimension. */
     public function count(): int {}
-    /** Add another same-shaped CPU tensor or scalar. */
+    /** Add a broadcast-compatible floating CPU tensor or scalar. */
     public function add(HostArray|int|float|bool $other): self {}
-    /** Subtract another same-shaped CPU tensor or scalar. */
+    /** Subtract a broadcast-compatible floating CPU tensor or scalar. */
     public function subtract(HostArray|int|float|bool $other): self {}
-    /** Multiply by another same-shaped CPU tensor or scalar. */
+    /** Multiply by a broadcast-compatible floating CPU tensor or scalar. */
     public function multiply(HostArray|int|float|bool $other): self {}
-    /** Divide by another same-shaped CPU tensor or non-zero scalar. */
+    /** Divide floating CPU tensors/scalars with broadcasting and IEEE NaN/Inf. */
     public function divide(HostArray|int|float|bool $other): self {}
     /** Unsupported on the CPU backend until implemented. */
     public static function fromFile(string $path, array $shape, ?string $dtype = 'float32'): self {}
     /** Unsupported on the CPU backend until implemented. */
     public static function fromNpy(string $path): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Select exact x/y storage using numeric truth and broadcasting; x/y dtypes must match. */
     public static function where(self $condition, self $x, self $y): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function __invoke(int|array|null ...$slices): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Retained view; exclusive-stop ranges, positive steps and negative indices match CUDA slice(). */
     public function slice(int|string|array|null ...$selectors): self {}
     /** Shape, dtype, and element count for debugging. */
     public function __debugInfo(): array {}
@@ -246,11 +247,11 @@ final class HostArray implements Tensor, OperatorOverloadable, \IteratorAggregat
     public function minimum(self|int|float|bool $other): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function clamp(float|int|null $min = null, float|int|null $max = null): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Batched matrix multiplication for matching float32/float16/bfloat16 tensors of rank >= 2. */
     public function matmul(self $other): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Zero-copy axis permutation; null reverses all axes. */
     public function transpose(?array $axis = null): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Independent dense copy of logical contents, preserving dtype and pinning. */
     public function copy(): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function swapaxes(int $axis1, int $axis2): self {}
@@ -267,70 +268,70 @@ final class HostArray implements Tensor, OperatorOverloadable, \IteratorAggregat
     /** Unsupported on the CPU backend until implemented. */
     public function roll(int|array $shift, int|array|null $axis = null): self {}
     /** Unsupported on the CPU backend until implemented. */
-    public function power(self|float|int $other): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    public function power(self|float|int|bool $other): self {}
+    /** Floating-point unary math; all four floating storage dtypes are supported. */
     public function sqrt(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function exp(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function expm1(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function exp2(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving IEEE singularities and dtype. */
     public function log(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving IEEE singularities and dtype. */
     public function log1p(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving IEEE singularities and dtype. */
     public function log2(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving IEEE singularities and dtype. */
     public function log10(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function sin(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function cos(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function tan(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function asin(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function acos(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function atan(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function sinh(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function cosh(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point unary math, preserving dtype. */
     public function tanh(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Floating-point absolute value; follows CUDA's signed-zero convention. */
     public function abs(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Negate floating-point values. */
     public function neg(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Round floating-point values toward negative infinity. */
     public function floor(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Round floating-point values toward positive infinity. */
     public function ceil(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Round floating-point values; halfway values go away from zero. */
     public function round(): self {}
-    /** Unsupported on the CPU backend until implemented. */
-    public function gt(float|self $other): self {}
-    /** Unsupported on the CPU backend until implemented. */
-    public function lt(float|self $other): self {}
-    /** Unsupported on the CPU backend until implemented. */
-    public function eq(float|self $other): self {}
-    /** Unsupported on the CPU backend until implemented. */
-    public function ne(float|self $other): self {}
-    /** Unsupported on the CPU backend until implemented. */
-    public function ge(float|self $other): self {}
-    /** Unsupported on the CPU backend until implemented. */
-    public function le(float|self $other): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Broadcast comparison returning numeric zero/one masks in the promoted dtype. */
+    public function gt(self|int|float|bool $other): self {}
+    /** Broadcast comparison returning numeric zero/one masks in the promoted dtype. */
+    public function lt(self|int|float|bool $other): self {}
+    /** Broadcast comparison returning numeric zero/one masks in the promoted dtype. */
+    public function eq(self|int|float|bool $other): self {}
+    /** Broadcast comparison returning numeric zero/one masks in the promoted dtype. */
+    public function ne(self|int|float|bool $other): self {}
+    /** Broadcast comparison returning numeric zero/one masks in the promoted dtype. */
+    public function ge(self|int|float|bool $other): self {}
+    /** Broadcast comparison returning numeric zero/one masks in the promoted dtype. */
+    public function le(self|int|float|bool $other): self {}
+    /** Global/axis sum; low precision accumulates in FP32, integer output wraps at its dtype width. */
     public function sum(?int $axis = null): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Global/axis mean; integer/bool inputs produce FP64, low precision produces FP32. */
     public function mean(?int $axis = null): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Global/axis maximum; empty reduction groups are rejected. */
     public function max(?int $axis = null): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Global/axis minimum; empty reduction groups are rejected. */
     public function min(?int $axis = null): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function prod(?int $axis = null): self {}
@@ -358,13 +359,13 @@ final class HostArray implements Tensor, OperatorOverloadable, \IteratorAggregat
     public function gather(self $indices, int $axis = 0): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function scatterAdd(self $indices, self $updates, int $axis = 0): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Retained dense view with explicit nonnegative dimensions; non-contiguous inputs need copy(). */
     public function reshape(array $shape): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function squeeze(?int $axis = null): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function unsqueeze(int $axis): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Retained zero-stride view with CUDA-compatible trailing-axis broadcasting. */
     public function broadcastTo(array $shape): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function flatten(): self {}
@@ -380,7 +381,7 @@ final class HostArray implements Tensor, OperatorOverloadable, \IteratorAggregat
     public static function rand(array $shape, float|int $min = 0, float|int $max = 1, ?string $dtype = 'float32', ?int $seed = null): self {}
     /** Unsupported on the CPU backend until implemented. */
     public static function randn(array $shape, ?string $dtype = 'float32', ?int $seed = null): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** CUDA-compatible safe dtype cast; matching dtype shares storage, otherwise materializes dense storage. */
     public function astype(string $dtype): self {}
     /** Unsupported on the CPU backend until implemented. */
     public function requiresGrad(bool $requiresGrad = true): self {}
@@ -392,7 +393,7 @@ final class HostArray implements Tensor, OperatorOverloadable, \IteratorAggregat
     public function zeroGrad(): void {}
     /** Unsupported on the CPU backend until implemented. */
     public function detach(): self {}
-    /** Unsupported on the CPU backend until implemented. */
+    /** Return the sole logical element; large unsigned integers use exact decimal strings. */
     public function item(): int|float|bool|string {}
     /** Copy CPU storage into a GPU tensor; requires a CUDA-enabled build. */
     public function toGpu(): CudaArray {}
@@ -413,7 +414,7 @@ namespace PhpTensors;
  * GPU-resident n-dimensional tensor; [] uses native dimension handlers.
  * Lazily initializes CUDA storage in the worker; post-CUDA fork and other threads are rejected.
  */
-class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
+final class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
 {
     /** Import row-major little-endian packed bytes matching shape and dtype. */
     public static function fromBuffer(string $bytes, array $shape, ?string $dtype = 'float32'): CudaArray {}
@@ -508,7 +509,7 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
      */
     public function roll(int|array $shift, int|array|null $axis = null): CudaArray {}
     /** Elementwise exponentiation. A scalar zero exponent has a zero input gradient. */
-    public function power(CudaArray|float|int $other): CudaArray {}
+    public function power(CudaArray|float|int|bool $other): CudaArray {}
     /** Elementwise square root. */
     public function sqrt(): CudaArray {}
     /** Elementwise exponential. */
@@ -554,17 +555,17 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     /** Elementwise rounding. */
     public function round(): CudaArray {}
     /** Elementwise greater-than comparison. */
-    public function gt(float|CudaArray $other): CudaArray {}
+    public function gt(CudaArray|int|float|bool $other): CudaArray {}
     /** Elementwise less-than comparison. */
-    public function lt(float|CudaArray $other): CudaArray {}
+    public function lt(CudaArray|int|float|bool $other): CudaArray {}
     /** Elementwise equality comparison. */
-    public function eq(float|CudaArray $other): CudaArray {}
+    public function eq(CudaArray|int|float|bool $other): CudaArray {}
     /** Elementwise inequality comparison. */
-    public function ne(float|CudaArray $other): CudaArray {}
+    public function ne(CudaArray|int|float|bool $other): CudaArray {}
     /** Elementwise greater-than-or-equal comparison. */
-    public function ge(float|CudaArray $other): CudaArray {}
+    public function ge(CudaArray|int|float|bool $other): CudaArray {}
     /** Elementwise less-than-or-equal comparison. */
-    public function le(float|CudaArray $other): CudaArray {}
+    public function le(CudaArray|int|float|bool $other): CudaArray {}
     /** Sum across an axis; omit axis to reduce all elements. */
     public function sum(?int $axis = null): CudaArray {}
     /** Mean across an axis; omit axis to reduce all elements. */
@@ -729,6 +730,9 @@ final class Optimizer
  * Abstract base that marks a class as operator-overloadable and dispatches PHP
  * arithmetic operators to the corresponding optional hooks. Unimplemented hooks
  * throw RuntimeException. ++ and -- use __add and __sub with a right operand of 1.
+ * Unary + and - use __mul with a right operand of 1 and -1 respectively.
+ * Hooks receive original operand order; the left subclass handles mixed classes.
+ * Return fresh values to preserve aliases; userland side effects are not rolled back.
  */
 abstract class OperatorOverload implements OperatorOverloadable
 {

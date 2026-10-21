@@ -967,8 +967,8 @@ ZEND_METHOD(Compiler, kernel)
     ZEND_PARSE_PARAMETERS_START(1, 3)
         Z_PARAM_STR(kernel_name)
         Z_PARAM_OPTIONAL
-        Z_PARAM_ARRAY(parameters_zv)
-        Z_PARAM_ARRAY(headers_zv)
+        Z_PARAM_ARRAY_OR_NULL(parameters_zv)
+        Z_PARAM_ARRAY_OR_NULL(headers_zv)
     ZEND_PARSE_PARAMETERS_END();
 
     compiler = Z_CUDA_COMPILER_P(ZEND_THIS);

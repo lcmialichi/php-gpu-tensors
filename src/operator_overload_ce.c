@@ -59,6 +59,12 @@ static zend_object *operator_overload_create_object(zend_class_entry *ce) {
     return obj;
 }
 
+static zend_object *operator_overload_clone_object(zend_object *object) {
+    zend_object *clone = operator_overload_create_object(object->ce);
+    zend_objects_clone_members(clone, object);
+    return clone;
+}
+
 void register_operator_overload_class(void) {
     zend_class_entry ce;
     INIT_CLASS_ENTRY(ce, "PhpTensors\\OperatorOverload", operator_overload_methods);
@@ -71,4 +77,5 @@ void register_operator_overload_class(void) {
     memcpy(&operator_overload_handlers, zend_get_std_object_handlers(),
            sizeof(zend_object_handlers));
     operator_overload_handlers.do_operation = operator_overload_do_operation;
+    operator_overload_handlers.clone_obj = operator_overload_clone_object;
 }

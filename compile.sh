@@ -114,7 +114,7 @@ cp config.m4 "$BUILD_DIR"
 if [ -n "$CUDA_HOME" ]; then
     cp Makefile.frag "$BUILD_DIR"
 fi
-cp -R src/ tests/ "$BUILD_DIR"
+cp -R src/ tests/ stubs/ "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 echo ""

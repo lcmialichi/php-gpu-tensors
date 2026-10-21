@@ -6,7 +6,11 @@ phptensors.cuda.memory_pool_size=16M
 <?php
 if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
 if (!class_exists('PhpTensors\\NN', false)) die('skip CUDA backend not built');
-if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
+try {
+    if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
+} catch (PhpTensors\RuntimeException $error) {
+    die('skip CUDA device query unavailable: ' . $error->getMessage());
+}
 ?>
 --FILE--
 <?php
@@ -43,6 +47,20 @@ try {
 } catch (PhpTensors\RuntimeException $error) {
 }
 check($value === $old && $value->toArray() === [2.0, 4.0], 'Rejected Fusion mutation changed input');
+foreach ([
+    function (&$value) { return $value++; },
+    function (&$value) { return ++$value; },
+    function (&$value) { return $value--; },
+    function (&$value) { return --$value; },
+] as $change) {
+    try {
+        Fusion::run(function () use (&$value, $change) {
+            return $change($value);
+        });
+        throw new RuntimeException('Fusion capture accepted increment/decrement');
+    } catch (PhpTensors\RuntimeException $error) {}
+    check($value === $old && $value->toArray() === [2.0, 4.0], 'Rejected Fusion increment/decrement changed input');
+}
 echo "CUDA aliases, references and gradients survive functional rebinding\n";
 
 $large = CudaArray::ones([131072]);
@@ -74,6 +92,18 @@ try {
 } catch (PhpTensors\OutOfMemoryException $error) {
 }
 check($large === $original && $reference === $original, 'Allocation failure lost the operand');
+foreach ([
+    function (&$value) { return $value++; },
+    function (&$value) { return ++$value; },
+    function (&$value) { return $value--; },
+    function (&$value) { return --$value; },
+] as $change) {
+    try {
+        $change($large);
+        throw new RuntimeException('Exhausted pool accepted increment/decrement');
+    } catch (PhpTensors\OutOfMemoryException $error) {}
+    check($large === $original && $reference === $original, 'Increment/decrement allocation failure lost the operand');
+}
 unset($retained);
 $large += 1;
 check($large[131071] === 102.0 && $original[131071] === 101.0, 'GPU assignment did not recover');

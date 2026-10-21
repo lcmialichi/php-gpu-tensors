@@ -1,4 +1,5 @@
 #include "optimizer.h"
+#include "api_arginfo.h"
 
 #include "cuda_array_ce.h"
 #include "cuda_exceptions.h"
@@ -7,39 +8,6 @@
 #include <string.h>
 
 static zend_class_entry *optimizer_ce;
-
-ZEND_BEGIN_ARG_INFO_EX(optimizer_private_args, 0, 0, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(optimizer_adamw_args, 0, 0, PhpTensors\\Optimizer, 0)
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, learningRate, IS_DOUBLE, 0, "0.001")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, beta1, IS_DOUBLE, 0, "0.9")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, beta2, IS_DOUBLE, 0, "0.999")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, epsilon, IS_DOUBLE, 0, "1.0e-8")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, weightDecay, IS_DOUBLE, 0, "0.01")
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(optimizer_sgd_args, 0, 0, PhpTensors\\Optimizer, 0)
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, learningRate, IS_DOUBLE, 0, "0.01")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, momentum, IS_DOUBLE, 0, "0.0")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, weightDecay, IS_DOUBLE, 0, "0.0")
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(optimizer_parameters_args, 0, 1, IS_ARRAY, 0)
-ZEND_ARG_TYPE_INFO(0, parameters, IS_ARRAY, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(optimizer_zero_grad_args, 0, 1, IS_VOID, 0)
-ZEND_ARG_TYPE_INFO(0, parameters, IS_ARRAY, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(optimizer_step_args, 0, 3, IS_ARRAY, 0)
-ZEND_ARG_TYPE_INFO(0, parameters, IS_ARRAY, 0)
-ZEND_ARG_TYPE_INFO(0, gradients, IS_ARRAY, 0)
-ZEND_ARG_TYPE_INFO(0, state, IS_ARRAY, 0)
-ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, learningRate, PhpTensors\\CudaArray, 1, "null")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, weightDecayMask, IS_ARRAY, 1, "null")
-ZEND_END_ARG_INFO()
 
 static zend_result optimizer_invoke(zval *object, const char *method, zval *arguments,
                                     uint32_t argument_count, zval *result)
@@ -836,12 +804,12 @@ ZEND_METHOD(Optimizer, step)
 }
 
 static const zend_function_entry optimizer_methods[] = {
-    ZEND_ME(Optimizer, __construct, optimizer_private_args, ZEND_ACC_PRIVATE)
-    ZEND_ME(Optimizer, adamW, optimizer_adamw_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
-    ZEND_ME(Optimizer, sgd, optimizer_sgd_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
-    ZEND_ME(Optimizer, initState, optimizer_parameters_args, ZEND_ACC_PUBLIC)
-    ZEND_ME(Optimizer, zeroGrad, optimizer_zero_grad_args, ZEND_ACC_PUBLIC)
-    ZEND_ME(Optimizer, step, optimizer_step_args, ZEND_ACC_PUBLIC)
+    ZEND_ME(Optimizer, __construct, arginfo_api_PhpTensors_Optimizer___construct, ZEND_ACC_PRIVATE)
+    ZEND_ME(Optimizer, adamW, arginfo_api_PhpTensors_Optimizer_adamW, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(Optimizer, sgd, arginfo_api_PhpTensors_Optimizer_sgd, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(Optimizer, initState, arginfo_api_PhpTensors_Optimizer_initState, ZEND_ACC_PUBLIC)
+    ZEND_ME(Optimizer, zeroGrad, arginfo_api_PhpTensors_Optimizer_zeroGrad, ZEND_ACC_PUBLIC)
+    ZEND_ME(Optimizer, step, arginfo_api_PhpTensors_Optimizer_step, ZEND_ACC_PUBLIC)
     ZEND_FE_END
 };
 

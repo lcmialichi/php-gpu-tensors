@@ -1,4 +1,5 @@
 #include "nn.h"
+#include "api_arginfo.h"
 #include "nn_backend.h"
 #include "cuda_array_ce.h"
 #include "ca_private.h"
@@ -8,27 +9,6 @@
 #include <limits.h>
 #include <stdint.h>
 
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_conv_args, 0, 2, PhpTensors\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, weights, PhpTensors\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO_WITH_DEFAULT_VALUE(0, bias, PhpTensors\\CudaArray, 1, "null")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, stride, IS_ARRAY, 0, "[1, 1]")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, padding, IS_ARRAY, 0, "[0, 0]")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dilation, IS_ARRAY, 0, "[1, 1]")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, groups, IS_LONG, 0, "1")
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_pool_args, 0, 2, PhpTensors\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\CudaArray, 0)
-ZEND_ARG_TYPE_INFO(0, window, IS_ARRAY, 0)
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, stride, IS_ARRAY, 0, "[2, 2]")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, padding, IS_ARRAY, 0, "[0, 0]")
-ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, mode, IS_STRING, 0, "\"max\"")
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(nn_softmax_args, 0, 1, PhpTensors\\CudaArray, 0)
-ZEND_ARG_OBJ_INFO(0, input, PhpTensors\\CudaArray, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_INFO_EX(nn_private_args, 0, 0, 0)
-ZEND_END_ARG_INFO()
 
 static tensor_t *nn_input(zval *value, int ndims)
 {
@@ -196,10 +176,10 @@ ZEND_METHOD(NN, softmax)
     nn_result(INTERNAL_FUNCTION_PARAM_PASSTHRU, result, cuda_nn_softmax(input->data, result->data, input->shape));
 }
 static const zend_function_entry nn_methods[] = {
-    ZEND_ME(NN, __construct, nn_private_args, ZEND_ACC_PRIVATE)
-    ZEND_ME(NN, conv2d, nn_conv_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
-    ZEND_ME(NN, pool2d, nn_pool_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
-    ZEND_ME(NN, softmax, nn_softmax_args, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(NN, __construct, arginfo_api_PhpTensors_NN___construct, ZEND_ACC_PRIVATE)
+    ZEND_ME(NN, conv2d, arginfo_api_PhpTensors_NN_conv2d, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(NN, pool2d, arginfo_api_PhpTensors_NN_pool2d, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(NN, softmax, arginfo_api_PhpTensors_NN_softmax, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_FE_END
 };
 int cuda_nn_init(void)

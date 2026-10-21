@@ -9,7 +9,7 @@
         "PhpTensors\\CompiledModule": {
             "parent": null,
             "abstract": false,
-            "final": false,
+            "final": true,
             "methods": {
                 "__serialize": {
                     "static": false,
@@ -248,7 +248,7 @@
                     "parameters": [
                         {
                             "name": "operations",
-                            "type": "?array",
+                            "type": "array",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -323,7 +323,7 @@
         "PhpTensors\\Compiler": {
             "parent": null,
             "abstract": false,
-            "final": false,
+            "final": true,
             "methods": {
                 "__construct": {
                     "static": false,
@@ -482,7 +482,7 @@
         "PhpTensors\\CudaArray": {
             "parent": null,
             "abstract": false,
-            "final": false,
+            "final": true,
             "methods": {
                 "__construct": {
                     "static": false,
@@ -962,7 +962,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1293,7 +1293,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1352,7 +1352,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1446,7 +1446,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1544,7 +1544,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1706,7 +1706,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -1782,7 +1782,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|int|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3095,7 +3095,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3435,7 +3435,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3532,7 +3532,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3633,7 +3633,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3731,7 +3731,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3893,7 +3893,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,
@@ -3969,7 +3969,7 @@
                     "parameters": [
                         {
                             "name": "other",
-                            "type": "self|int|float",
+                            "type": "self|int|float|bool",
                             "byReference": false,
                             "variadic": false,
                             "optional": false,

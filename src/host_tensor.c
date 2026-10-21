@@ -76,6 +76,35 @@ tensor_t *cuda_tensor_create_on_host_pinned(const int shape[], int ndims, void *
     return tensor_host_create(shape, ndims, data, dtype, 1);
 }
 
+tensor_t *tensor_host_create_view(tensor_t *base, void *data, const int *shape,
+                                  const size_t *strides, int ndims)
+{
+    size_t elements, bytes;
+    if (!tensor_shape_metrics(shape, ndims, base->element_size,
+                              NULL, &elements, &bytes))
+    {
+        CUDA_THROW_INVALID("Host view shape or byte size exceed supported limits");
+        return NULL;
+    }
+    tensor_t *view = ecalloc(1, sizeof(tensor_t));
+    view->shape = emalloc(ndims * sizeof(int));
+    view->strides = emalloc(ndims * sizeof(size_t));
+    memcpy(view->shape, shape, ndims * sizeof(int));
+    memcpy(view->strides, strides, ndims * sizeof(size_t));
+    view->ndims = ndims;
+    view->dtype = base->dtype;
+    view->element_size = base->element_size;
+    view->total_size = elements;
+    view->data = data;
+    view->host_pinned = base->host_pinned;
+    view->is_view = 1;
+    view->is_contiguous_cached = -1;
+    view->ref_count = 1;
+    view->base_tensor = base;
+    base->ref_count++;
+    return view;
+}
+
 void tensor_host_destroy(tensor_t *tensor)
 {
 #ifdef HAVE_CUDA

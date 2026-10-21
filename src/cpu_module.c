@@ -3,6 +3,7 @@
 #endif
 
 #include "php.h"
+#include "api_arginfo.h"
 #include "backend_contract.h"
 #include "contiguous_array_ce.h"
 #include "cuda.h"
@@ -15,13 +16,6 @@ ZEND_DECLARE_MODULE_GLOBALS(cuda);
 
 static zend_class_entry *unavailable_cuda_array_ce;
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_unavailable_cuda_array_construct, 0, 0, 0)
-    ZEND_ARG_VARIADIC_INFO(0, arguments)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_unavailable_cuda_array_call, 0, 2, IS_MIXED, 0)
-    ZEND_ARG_TYPE_INFO(0, name, IS_STRING, 0)
-    ZEND_ARG_TYPE_INFO(0, arguments, IS_ARRAY, 0)
-ZEND_END_ARG_INFO()
 
 static void throw_cuda_unavailable(void)
 {
@@ -65,9 +59,9 @@ ZEND_METHOD(PhpTensorsUnavailableCudaArray, __callStatic)
 }
 
 static const zend_function_entry unavailable_cuda_array_methods[] = {
-    ZEND_ME(PhpTensorsUnavailableCudaArray, __construct, arginfo_unavailable_cuda_array_construct, ZEND_ACC_PUBLIC)
-    ZEND_ME(PhpTensorsUnavailableCudaArray, __call, arginfo_unavailable_cuda_array_call, ZEND_ACC_PUBLIC)
-    ZEND_ME(PhpTensorsUnavailableCudaArray, __callStatic, arginfo_unavailable_cuda_array_call, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(PhpTensorsUnavailableCudaArray, __construct, arginfo_api_PhpTensorsTestFixtures_UnavailableCudaArray___construct, ZEND_ACC_PUBLIC)
+    ZEND_ME(PhpTensorsUnavailableCudaArray, __call, arginfo_api_PhpTensorsTestFixtures_UnavailableCudaArray___call, ZEND_ACC_PUBLIC)
+    ZEND_ME(PhpTensorsUnavailableCudaArray, __callStatic, arginfo_api_PhpTensorsTestFixtures_UnavailableCudaArray___callStatic, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_FE_END
 };
 

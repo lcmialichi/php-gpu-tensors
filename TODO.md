@@ -419,17 +419,53 @@ coverage and unsupported cases instead.
   Validation: the [shared matrix](tests/host_array_contract.phpt) passes in CUDA
   PHP 8.1 and CPU PHP 8.4/8.5 ZTS, including the same versioned binary fixture,
   exact int64/uint64 boundaries, retained iterators and transactional legacy reads.
-  CPU suites pass 10/10 per version; four host regressions per CPU version also
+  CPU suites pass 15/15 per version; eight host regressions per CPU version also
   pass with system malloc. The CUDA build passes the matrix with no visible GPU.
 
-- [ ] **CPU-02 — Implement the declared minimum CPU numerical core.**
-  Current arithmetic supports same-shape/same-dtype operations; most other methods
-  are throwing placeholders ([unsupported methods](src/host_array_unsupported.h)).
-  Recommended minimum: copy/cast, broadcasting, reshape/transpose/slice views,
-  comparisons/where, basic unary functions, sum/mean/min/max and matrix multiply.
+- [x] **CPU-02 — Implement the declared minimum CPU numerical core.**
+  **Implementation closed; real-GPU acceptance remains tracked separately below.**
+  The declared minimum is implemented: copy/cast, broadcasting, retained
+  reshape/transpose/slice views, scalar `item()`, comparisons/where, 22 floating
+  unary functions, sum/mean/min/max and batched FP32/FP16/BF16 matmul.
+  Slice parsing/layout and broadcast/matmul shape selection are shared with CUDA.
+  Arithmetic supports all four floating dtypes and now uses the user-approved IEEE
+  zero-divisor behavior instead of the legacy CPU exception. Integer reductions
+  preserve dtype-width wrap and exact 64-bit extrema; selection copies storage bytes.
+  Views support logical exports, retained iterators, rank-zero/empty results and
+  explicit `copy()` before reshaping non-contiguous layouts.
+  Validation: [cast matrix](tests/host_array_copy_cast.phpt),
+  [broadcast/operators](tests/host_array_broadcast.phpt),
+  [views](tests/host_array_views.phpt), [math](tests/host_array_math.phpt) and
+  [reductions](tests/host_array_reductions.phpt). CPU PHP 8.4/8.5 ZTS pass 15/15
+  each, plus eight host regressions each with system malloc. A separate PHP 8.4
+  UBSan build passes all eight without undefined-behavior reports. CUDA 12.3.2 /
+  PHP 8.3 compiles and passes ten shared host tests with the SDK linker stub
+  (host-only execution), plus the native shape check. The three new core host
+  regressions also pass with system malloc in that CUDA build.
+  Remaining methods beyond the documented minimum still throw explicitly
+  ([unsupported methods](src/host_array_unsupported.h)).
+  **Accept:** the selected minimum is implemented and covered by the CPU suites;
+  unsupported operations fail explicitly. CPU autograd/Fusion remain deferred.
+  Closing implementation does not waive the CPU-02-GPU acceptance gate.
+
+- [ ] **CPU-02-GPU — Validate the completed CPU core against real CUDA execution.**
+  The expanded [CPU/CUDA parity matrix](tests/host_array_core_cuda.phpt) covers all
+  dtype pairs for six comparisons, views, reductions, unary math, IEEE division
+  and batched matmul. It is not yet executed: Docker GPU startup is blocked by
+  missing `libnvidia-ml.so.1`; SDK stubs are not a substitute for real GPU results.
+  Both that matrix and the [foundation matrix](tests/host_array_numeric_cuda.phpt)
+  now skip explicitly when CUDA device discovery fails; neither skip is a pass.
+  Keep this release-validation gate open until both matrices and the affected
+  GPU/Fusion regressions pass on a functioning NVIDIA container runtime.
   **Accept:** each selected operation matches the documented CUDA contract within
   dtype-specific tolerances, including scalar-left operators and non-contiguous
-  layouts. Explicitly defer CPU autograd/Fusion rather than imply full parity.
+  layouts. Revalidate the shared slice parser through the affected CUDA/Fusion
+  view regressions and the CUDA path in
+  [runtime shape boundaries](tests/tensor_shape_boundaries.phpt), which fails at
+  device memory-pool initialization without a driver. Also rerun the expanded
+  [CUDA operator regression](tests/cuda_array_operator_aliasing.phpt) for preserved
+  Fusion/OOM exceptions from all four increment/decrement forms. Record real-GPU
+  results separately from host-only SDK-stub runs.
 
 - [x] **CPU-03 — Use dtype-native CPU storage and measure it.**
   Shared storage allocates `elements * dtype_size`, not a double array with
@@ -446,16 +482,62 @@ coverage and unsupported cases instead.
   including result allocation; round-trip bytes matched. These local measurements
   are reproducible evidence, not portable speed guarantees. No SIMD/BLAS was added.
 
-- [ ] **API-01 — Compare native API reflection with stubs.**
-  Evidence: the current "frozen API" check reflects loaded PHP stubs rather than
-  native declarations ([checker](tests/check_api_surface.php)).
-  Existing arginfo/parser differences include nullability, required argument counts,
-  arithmetic unions and return types.
+- [x] **API-01 — Compare native API reflection with stubs.**
+  The [native checker](tests/check_native_api.php) loads the real extension and
+  reflects stubs in a separate `php -n` process. Explicit CPU/CUDA profiles compare
+  all exposed classes/interfaces and functions, inheritance, flags, required
+  counts, parameter names/types/defaults/references/variadics and return types.
+  CPU's CUDA availability guard has a separate internal
+  [test fixture](tests/fixtures/cpu_cuda_array.stub.php), outside public stubs and
+  the `PhpTensors` namespace, rather than exposing a synthetic public class or
+  pretending the complete CUDA API exists in that build.
+  [Generated arginfo](src/api_arginfo.h) now comes from the stubs through the
+  [generator](tests/generate_arginfo.php); all native registrations use it.
+  The frozen snapshot remains a separate public-change check, not a replacement
+  for native reflection. All runner modes check both contracts and generation
+  freshness. CI includes a CUDA build/metadata job with SDK-only host execution;
+  release drafting depends on that job as well as the CPU matrix.
+  Corrected native types, returns, required counts and named arguments. Stubs now
+  expose the already-native final classes and integer/boolean scalar unions;
+  batches require arrays. Nullable CUDA dtypes, compiler kernel arrays,
+  concatenation axis and module operation IDs also agree with their parsers.
+  Validation: CPU PHP 8.4/8.5 ZTS match all 12 classes/interfaces and pass 16/16
+  selected PHPTs each. CUDA PHP 8.3 matches all 19 classes/interfaces and passes
+  both [signature/named-call](tests/native_api_contract.phpt) and
+  [driver-free parser](tests/native_api_cuda_parsers.phpt) regressions.
+  A deliberately renamed parameter in a rebuilt native module was rejected with
+  exit 1 and its exact reflection path; canonical metadata and binary were restored.
+  This is API evidence, not real-GPU numerical acceptance; CPU-02-GPU stays open.
   **Accept:** isolated native/stub reflection for CPU and CUDA profiles, covering
   interfaces, flags, types, defaults and named arguments. A deliberately changed
   native signature must fail CI. Prefer one authoritative signature definition.
 
-- [ ] **API-02 — Test the complete custom operator protocol.**
+- [x] **API-02 — Test the complete custom operator protocol.**
+  Added a [complete protocol matrix](tests/operator_overload_protocol.phpt) for
+  six binary/compound operators, both scalar orders, distinct subclasses, native
+  host/custom boundaries, exact callback exceptions and lack of retry after
+  rejection. Marker-only objects do not gain executable handlers. Unsupported
+  bitwise/shift opcodes, standard string conversion/comparison/truthiness, unary
+  signs, pre/post increment/decrement, cloning and arbitrary hook side effects
+  have explicit coverage and README contracts. Existing
+  [ownership tests](tests/operator_overload_aliasing.phpt) retain falsy/identity/
+  reference results, typed properties, destructor exceptions and leak checks.
+  The new matrix exposed two defects: increment/decrement replaced pending hook
+  exceptions with PHP TypeError, and the standard clone lost custom handlers.
+  The [shared result helper](src/operator_result.h) now marks exceptions as
+  handled without committing an invalid result; CUDA failure exits use it too.
+  A [custom clone handler](src/operator_overload_ce.c) preserves arithmetic
+  dispatch and normal PHP member/user-clone semantics; failed clones are released.
+  [Host increment errors](tests/host_array_operator_aliasing.phpt) preserve the
+  original exception and binding in both profiles. The expanded
+  [CUDA counterpart](tests/cuda_array_operator_aliasing.phpt) covers Fusion/OOM
+  cases but explicitly skips without a driver; real-GPU execution remains in
+  CPU-02-GPU, not counted as passed here.
+  Validation: four targeted PHPTs pass on each PHP 8.4/8.5 ZTS CPU build; the
+  CUDA PHP 8.3 API-only runner passes all five host tests. Three operator
+  regressions pass with system malloc in each of those three configurations.
+  Generated arginfo, frozen API and native/stub contracts remain unchanged.
+  Both CI runner selections include the new protocol regression.
   **Accept:** document marker interface versus executable base; cover all supported
   operators, operand order, mixed classes, unsupported opcodes, exception propagation,
   pre/post increment/decrement and aliasing. Inheriting `OperatorOverload` already

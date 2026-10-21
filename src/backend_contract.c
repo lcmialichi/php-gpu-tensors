@@ -1,4 +1,5 @@
 #include "php.h"
+#include "api_arginfo.h"
 #include "backend_contract.h"
 #include "zend_exceptions.h"
 
@@ -12,51 +13,21 @@ zend_class_entry *php_tensors_unexpected_value_exception_ce;
 zend_class_entry *php_tensors_out_of_memory_exception_ce;
 zend_class_entry *php_tensors_compilation_exception_ce;
 
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_tensor_get_backend, 0, 0, IS_STRING, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_tensor_get_shape, 0, 0, IS_ARRAY, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_tensor_get_size, 0, 0, IS_LONG, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_tensor_dtype, 0, 0, IS_STRING, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_tensor_to_array, 0, 0, IS_ARRAY, 0)
-ZEND_END_ARG_INFO()
-
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_backend_get_name, 0, 0, IS_STRING, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_backend_is_available, 0, 0, _IS_BOOL, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_backend_supports, 0, 1, _IS_BOOL, 0)
-    ZEND_ARG_TYPE_INFO(0, operation, IS_STRING, 0)
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, context, IS_ARRAY, 0, "[]")
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_backend_create_tensor, 0, 2, PhpTensors\\Tensor, 0)
-    ZEND_ARG_TYPE_INFO(0, values, IS_ARRAY, 0)
-    ZEND_ARG_TYPE_INFO(0, shape, IS_ARRAY, 0)
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, dtype, IS_STRING, 1, "\"float32\"")
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_backend_execute, 0, 2, PhpTensors\\Tensor, 0)
-    ZEND_ARG_TYPE_INFO(0, operation, IS_STRING, 0)
-    ZEND_ARG_TYPE_INFO(0, inputs, IS_ARRAY, 0)
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, arguments, IS_ARRAY, 0, "[]")
-ZEND_END_ARG_INFO()
-
 static const zend_function_entry tensor_interface_methods[] = {
-    ZEND_ABSTRACT_ME(Tensor, getBackend, arginfo_tensor_get_backend)
-    ZEND_ABSTRACT_ME(Tensor, getShape, arginfo_tensor_get_shape)
-    ZEND_ABSTRACT_ME(Tensor, getSize, arginfo_tensor_get_size)
-    ZEND_ABSTRACT_ME(Tensor, dtype, arginfo_tensor_dtype)
-    ZEND_ABSTRACT_ME(Tensor, toArray, arginfo_tensor_to_array)
+    ZEND_ABSTRACT_ME(Tensor, getBackend, arginfo_api_PhpTensors_Tensor_getBackend)
+    ZEND_ABSTRACT_ME(Tensor, getShape, arginfo_api_PhpTensors_Tensor_getShape)
+    ZEND_ABSTRACT_ME(Tensor, getSize, arginfo_api_PhpTensors_Tensor_getSize)
+    ZEND_ABSTRACT_ME(Tensor, dtype, arginfo_api_PhpTensors_Tensor_dtype)
+    ZEND_ABSTRACT_ME(Tensor, toArray, arginfo_api_PhpTensors_Tensor_toArray)
     ZEND_FE_END
 };
 
 static const zend_function_entry backend_interface_methods[] = {
-    ZEND_ABSTRACT_ME(Backend, getName, arginfo_backend_get_name)
-    ZEND_ABSTRACT_ME(Backend, isAvailable, arginfo_backend_is_available)
-    ZEND_ABSTRACT_ME(Backend, supports, arginfo_backend_supports)
-    ZEND_ABSTRACT_ME(Backend, createTensor, arginfo_backend_create_tensor)
-    ZEND_ABSTRACT_ME(Backend, execute, arginfo_backend_execute)
+    ZEND_ABSTRACT_ME(Backend, getName, arginfo_api_PhpTensors_BackendInterface_getName)
+    ZEND_ABSTRACT_ME(Backend, isAvailable, arginfo_api_PhpTensors_BackendInterface_isAvailable)
+    ZEND_ABSTRACT_ME(Backend, supports, arginfo_api_PhpTensors_BackendInterface_supports)
+    ZEND_ABSTRACT_ME(Backend, createTensor, arginfo_api_PhpTensors_BackendInterface_createTensor)
+    ZEND_ABSTRACT_ME(Backend, execute, arginfo_api_PhpTensors_BackendInterface_execute)
     ZEND_FE_END
 };
 

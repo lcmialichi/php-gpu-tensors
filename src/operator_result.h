@@ -9,6 +9,12 @@ static zend_always_inline zend_result php_tensors_finish_operation(
     if (status != SUCCESS || EG(exception)) {
         zval_ptr_dtor(value);
         ZVAL_UNDEF(value);
+        if (EG(exception)) {
+            if (result != op1 && result != op2)
+                ZVAL_UNDEF(result);
+            /* Handled exceptions must not trigger PHP's increment/cast fallback. */
+            return SUCCESS;
+        }
         return FAILURE;
     }
     if (Z_ISREF_P(value)) {

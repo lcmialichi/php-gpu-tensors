@@ -1,4 +1,5 @@
 #include "fusion_internal.h"
+#include "api_arginfo.h"
 #include "autograd.h"
 #include "cuda_array_ce.h"
 #include "reduction_ops.h"
@@ -871,59 +872,29 @@ static HashTable *fusion_execution_gc(zend_object *object, zval **table, int *co
     return zend_std_get_properties(object);
 }
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_fusion_construct, 0, 0, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_run, 0, 1, IS_MIXED, 0)
-    ZEND_ARG_TYPE_INFO(0, callback, IS_CALLABLE, 0)
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, enabled, _IS_BOOL, 0, "true")
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_fusion_compile, 0, 2, PhpTensors\\FusionGraph, 0)
-    ZEND_ARG_TYPE_INFO(0, callback, IS_CALLABLE, 0)
-    ZEND_ARG_TYPE_INFO(0, inputs, IS_ARRAY, 0)
-    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, cudaGraph, _IS_BOOL, 0, "false")
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_fusion_graph_async, 0, 0, PhpTensors\\FusionExecution, 0)
-    ZEND_ARG_VARIADIC_OBJ_INFO(0, inputs, PhpTensors\\CudaArray, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_wait, 0, 0, IS_MIXED, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_finished, 0, 0, _IS_BOOL, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_clear, 0, 0, IS_VOID, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_profiling, 0, 1, IS_VOID, 0)
-    ZEND_ARG_TYPE_INFO(0, enabled, _IS_BOOL, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_graph_run, 0, 0, IS_MIXED, 0)
-    ZEND_ARG_VARIADIC_OBJ_INFO(0, inputs, PhpTensors\\CudaArray, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_stats, 0, 0, IS_ARRAY, 0)
-ZEND_END_ARG_INFO()
-ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_fusion_source, 0, 0, IS_STRING, 0)
-ZEND_END_ARG_INFO()
 
 static const zend_function_entry fusion_methods[] = {
-    ZEND_ME(Fusion, __construct, arginfo_fusion_construct, ZEND_ACC_PRIVATE)
-    ZEND_ME(Fusion, run, arginfo_fusion_run, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
-    ZEND_ME(Fusion, compile, arginfo_fusion_compile, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
-    ZEND_ME(Fusion, getCacheStats, arginfo_fusion_stats, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
-    ZEND_ME(Fusion, clearCache, arginfo_fusion_clear, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(Fusion, __construct, arginfo_api_PhpTensors_Fusion___construct, ZEND_ACC_PRIVATE)
+    ZEND_ME(Fusion, run, arginfo_api_PhpTensors_Fusion_run, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(Fusion, compile, arginfo_api_PhpTensors_Fusion_compile, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(Fusion, getCacheStats, arginfo_api_PhpTensors_Fusion_getCacheStats, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
+    ZEND_ME(Fusion, clearCache, arginfo_api_PhpTensors_Fusion_clearCache, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     ZEND_FE_END
 };
 static const zend_function_entry fusion_graph_methods[] = {
-    ZEND_ME(FusionGraph, __construct, arginfo_fusion_construct, ZEND_ACC_PRIVATE)
-    ZEND_ME(FusionGraph, run, arginfo_fusion_graph_run, ZEND_ACC_PUBLIC)
-    ZEND_ME(FusionGraph, runAsync, arginfo_fusion_graph_async, ZEND_ACC_PUBLIC)
-    ZEND_ME(FusionGraph, getStats, arginfo_fusion_stats, ZEND_ACC_PUBLIC)
-    ZEND_ME(FusionGraph, setProfiling, arginfo_fusion_profiling, ZEND_ACC_PUBLIC)
-    ZEND_ME(FusionGraph, getPlan, arginfo_fusion_stats, ZEND_ACC_PUBLIC)
-    ZEND_ME(FusionGraph, getSource, arginfo_fusion_source, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionGraph, __construct, arginfo_api_PhpTensors_FusionGraph___construct, ZEND_ACC_PRIVATE)
+    ZEND_ME(FusionGraph, run, arginfo_api_PhpTensors_FusionGraph_run, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionGraph, runAsync, arginfo_api_PhpTensors_FusionGraph_runAsync, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionGraph, getStats, arginfo_api_PhpTensors_FusionGraph_getStats, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionGraph, setProfiling, arginfo_api_PhpTensors_FusionGraph_setProfiling, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionGraph, getPlan, arginfo_api_PhpTensors_FusionGraph_getPlan, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionGraph, getSource, arginfo_api_PhpTensors_FusionGraph_getSource, ZEND_ACC_PUBLIC)
     ZEND_FE_END
 };
 static const zend_function_entry fusion_execution_methods[] = {
-    ZEND_ME(FusionExecution, __construct, arginfo_fusion_construct, ZEND_ACC_PRIVATE)
-    ZEND_ME(FusionExecution, wait, arginfo_fusion_wait, ZEND_ACC_PUBLIC)
-    ZEND_ME(FusionExecution, isFinished, arginfo_fusion_finished, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionExecution, __construct, arginfo_api_PhpTensors_FusionExecution___construct, ZEND_ACC_PRIVATE)
+    ZEND_ME(FusionExecution, wait, arginfo_api_PhpTensors_FusionExecution_wait, ZEND_ACC_PUBLIC)
+    ZEND_ME(FusionExecution, isFinished, arginfo_api_PhpTensors_FusionExecution_isFinished, ZEND_ACC_PUBLIC)
     ZEND_FE_END
 };
 

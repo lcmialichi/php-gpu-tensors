@@ -1801,11 +1801,13 @@ ZEND_METHOD(CompiledModule, sync)
 {
     if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id = -1;
+    zend_bool op_id_is_null = 1;
 
     ZEND_PARSE_PARAMETERS_START(0, 1)
     Z_PARAM_OPTIONAL
-    Z_PARAM_LONG(op_id)
+    Z_PARAM_LONG_OR_NULL(op_id, op_id_is_null)
     ZEND_PARSE_PARAMETERS_END();
+    if (op_id_is_null) op_id = -1;
 
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
     CUresult cu_result;
@@ -1885,11 +1887,13 @@ ZEND_METHOD(CompiledModule, isFinished)
 {
     if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id = -1;
+    zend_bool op_id_is_null = 1;
 
     ZEND_PARSE_PARAMETERS_START(0, 1)
     Z_PARAM_OPTIONAL
-    Z_PARAM_LONG(op_id)
+    Z_PARAM_LONG_OR_NULL(op_id, op_id_is_null)
     ZEND_PARSE_PARAMETERS_END();
+    if (op_id_is_null) op_id = -1;
 
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
 
@@ -1966,13 +1970,15 @@ ZEND_METHOD(CompiledModule, wait)
 {
     if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id = -1;
+    zend_bool op_id_is_null = 1;
     zend_long timeout_ms = -1;
 
     ZEND_PARSE_PARAMETERS_START(0, 2)
     Z_PARAM_OPTIONAL
-    Z_PARAM_LONG(op_id)
+    Z_PARAM_LONG_OR_NULL(op_id, op_id_is_null)
     Z_PARAM_LONG(timeout_ms)
     ZEND_PARSE_PARAMETERS_END();
+    if (op_id_is_null) op_id = -1;
 
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
     module_cleanup_timeout_operations(module);
@@ -2307,11 +2313,13 @@ ZEND_METHOD(CompiledModule, getAsyncStatus)
 {
     if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id = -1;
+    zend_bool op_id_is_null = 1;
 
     ZEND_PARSE_PARAMETERS_START(0, 1)
     Z_PARAM_OPTIONAL
-    Z_PARAM_LONG(op_id)
+    Z_PARAM_LONG_OR_NULL(op_id, op_id_is_null)
     ZEND_PARSE_PARAMETERS_END();
+    if (op_id_is_null) op_id = -1;
 
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
 

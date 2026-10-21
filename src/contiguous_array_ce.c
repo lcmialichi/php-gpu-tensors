@@ -22,6 +22,9 @@
 #include "zend_exceptions.h"
 #include "operator_result.h"
 #include "tensor_scalar.h"
+#include "tensor_shape.h"
+#include "tensor_slice.h"
+#include <math.h>
 
 static zend_object_handlers contiguous_array_handlers;
 zend_class_entry *contiguous_array_ce;
@@ -653,6 +656,692 @@ ZEND_METHOD(ContiguousArray, toGpu)
 #endif
 }
 
+static void contiguous_array_return_view(zval *result, contiguous_array_object *source,
+                                         const int *shape, const size_t *strides, int ndims,
+                                         size_t offset)
+{
+    tensor_t *view = tensor_host_create_view(source->tensor,
+        source->cached_data_ptr ? source->cached_data_ptr + offset * source->element_size : NULL,
+        shape, strides, ndims);
+    if (!view) return;
+    ZVAL_OBJ(result, contiguous_array_from_tensor(view));
+    contiguous_array_object *obj = contiguous_array_from_obj(Z_OBJ_P(result));
+    obj->is_contiguous = contiguous_array_has_contiguous_layout(obj);
+    obj->read_only = source->read_only;
+}
+
+ZEND_METHOD(ContiguousArray, reshape)
+{
+    zval *shape_value;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY(shape_value)
+    ZEND_PARSE_PARAMETERS_END();
+    contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    int shape[MAX_DIMS];
+    size_t elements, bytes, strides[MAX_DIMS];
+    int ndims = tensor_import_shape(shape_value, shape, &elements);
+    if (!ndims) RETURN_THROWS();
+    if (elements != obj->total_elements)
+    {
+        CUDA_THROW_INVALID("Cannot reshape tensor of size %zu into size %zu", obj->total_elements, elements);
+        RETURN_THROWS();
+    }
+    if (!contiguous_array_has_contiguous_layout(obj))
+    {
+        CUDA_THROW_RUNTIME("Reshape of a non-contiguous HostArray requires copy() first");
+        RETURN_THROWS();
+    }
+    if (!tensor_shape_metrics(shape, ndims, obj->element_size, strides, &elements, &bytes))
+    {
+        CUDA_THROW_INVALID("Reshape storage exceeds supported limits");
+        RETURN_THROWS();
+    }
+    contiguous_array_return_view(return_value, obj, shape, strides, ndims, 0);
+}
+
+ZEND_METHOD(ContiguousArray, transpose)
+{
+    zval *axes = NULL;
+    ZEND_PARSE_PARAMETERS_START(0, 1)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ARRAY_OR_NULL(axes)
+    ZEND_PARSE_PARAMETERS_END();
+    contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    int permutation[MAX_DIMS], shape[MAX_DIMS], seen[MAX_DIMS] = {0};
+    size_t strides[MAX_DIMS];
+    if (axes && zend_hash_num_elements(Z_ARRVAL_P(axes)) != (uint32_t)obj->ndims)
+    {
+        CUDA_THROW_INVALID("transpose expects %d dimensions", obj->ndims);
+        RETURN_THROWS();
+    }
+    int index = 0;
+    if (axes)
+    {
+        zval *value;
+        ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(axes), value)
+        {
+            ZVAL_DEREF(value);
+            if (Z_TYPE_P(value) != IS_LONG || Z_LVAL_P(value) < 0 ||
+                Z_LVAL_P(value) >= obj->ndims || seen[Z_LVAL_P(value)])
+            {
+                CUDA_THROW_INVALID("transpose expects a permutation of the input axes");
+                RETURN_THROWS();
+            }
+            permutation[index++] = (int)Z_LVAL_P(value);
+            seen[Z_LVAL_P(value)] = 1;
+        }
+        ZEND_HASH_FOREACH_END();
+    }
+    else
+        for (int i = 0; i < obj->ndims; i++) permutation[i] = obj->ndims - 1 - i;
+    for (int i = 0; i < obj->ndims; i++)
+    {
+        shape[i] = obj->shape[permutation[i]];
+        strides[i] = obj->strides[permutation[i]];
+    }
+    contiguous_array_return_view(return_value, obj, shape, strides, obj->ndims, 0);
+}
+
+ZEND_METHOD(ContiguousArray, slice)
+{
+    zval *selectors;
+    int count;
+    ZEND_PARSE_PARAMETERS_START(0, -1)
+        Z_PARAM_VARIADIC('*', selectors, count)
+    ZEND_PARSE_PARAMETERS_END();
+    contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    tensor_slice_layout layout;
+    if (tensor_slice_prepare(obj->shape, obj->strides, obj->ndims, obj->element_size,
+                             selectors, count, &layout) != SUCCESS)
+        RETURN_THROWS();
+    contiguous_array_return_view(return_value, obj, layout.shape, layout.strides,
+                                 layout.ndims, layout.offset);
+}
+
+ZEND_METHOD(ContiguousArray, item)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    if (obj->total_elements != 1)
+    {
+        CUDA_THROW_INVALID("item() requires exactly one element");
+        RETURN_THROWS();
+    }
+    if (tensor_scalar_to_zval(obj->cached_data_ptr, obj->dtype, return_value) != SUCCESS)
+        RETURN_THROWS();
+}
+
+static scalar_value_t contiguous_array_scalar_at(const contiguous_array_object *obj, size_t offset)
+{
+    scalar_value_t value = {.dtype = obj->dtype};
+    const char *data = obj->cached_data_ptr + offset * obj->element_size;
+    if (obj->dtype == DTYPE_BOOL) value.v.b = *(const uint8_t *)data != 0;
+    else memcpy(&value.v, data, obj->element_size);
+    return value;
+}
+
+static double contiguous_array_number_at(const contiguous_array_object *obj, size_t offset)
+{
+    const char *data = obj->cached_data_ptr + offset * obj->element_size;
+    switch (obj->dtype)
+    {
+        case DTYPE_FLOAT32: return *(const float *)data;
+        case DTYPE_FLOAT64: return *(const double *)data;
+        case DTYPE_FLOAT16: return float16_bits_to_float(*(const uint16_t *)data);
+        case DTYPE_BFLOAT16: return bfloat16_bits_to_float(*(const uint16_t *)data);
+        default: break;
+    }
+    long double value;
+    scalar_value_as_long_double(contiguous_array_scalar_at(obj, offset), &value);
+    return (double)value;
+}
+
+static int contiguous_array_store_scalar(tensor_t *tensor, size_t index, scalar_value_t value)
+{
+    scalar_value_t converted = cast_single_value(value, tensor->dtype);
+    if (converted.dtype == DTYPE_UNKNOWN)
+    {
+        CUDA_THROW_INVALID("Result at index %zu cannot be represented as %s",
+                           index, dtype_to_string(tensor->dtype));
+        return FAILURE;
+    }
+    memcpy((char *)tensor->data + index * tensor->element_size, &converted.v, tensor->element_size);
+    return SUCCESS;
+}
+
+ZEND_METHOD(ContiguousArray, copy)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    zend_object *copy = contiguous_array_clone_object(Z_OBJ_P(ZEND_THIS));
+    if (EG(exception))
+    {
+        OBJ_RELEASE(copy);
+        RETURN_THROWS();
+    }
+    RETURN_OBJ(copy);
+}
+
+ZEND_METHOD(ContiguousArray, astype)
+{
+    zend_string *dtype_name;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STR(dtype_name)
+    ZEND_PARSE_PARAMETERS_END();
+    contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    dtype_t dtype = dtype_from_string(ZSTR_VAL(dtype_name));
+    if (memchr(ZSTR_VAL(dtype_name), '\0', ZSTR_LEN(dtype_name)) ||
+        !can_safely_cast_to(obj->dtype, dtype))
+    {
+        CUDA_THROW_INVALID("Cannot safely cast from %s to %s",
+                           dtype_to_string(obj->dtype), ZSTR_VAL(dtype_name));
+        RETURN_THROWS();
+    }
+    if (dtype == obj->dtype)
+    {
+        object_init_ex(return_value, contiguous_array_ce);
+        contiguous_array_share_storage(contiguous_array_from_obj(Z_OBJ_P(return_value)), obj);
+        return;
+    }
+    tensor_t *tensor = obj->tensor->host_pinned
+        ? cuda_tensor_create_on_host_pinned(obj->shape, obj->ndims, NULL, dtype)
+        : cuda_tensor_create_on_host(obj->shape, obj->ndims, NULL, dtype);
+    if (!tensor) RETURN_THROWS();
+    int contiguous = contiguous_array_has_contiguous_layout(obj);
+    for (size_t i = 0; i < obj->total_elements; i++)
+    {
+        size_t offset = contiguous ? i : contiguous_array_element_offset(obj, i);
+        scalar_value_t input = contiguous_array_scalar_at(obj, offset);
+        scalar_value_t converted = cast_single_value(input, dtype);
+        if (converted.dtype == DTYPE_UNKNOWN)
+        {
+            tensor_host_destroy(tensor);
+            CUDA_THROW_INVALID("Host value at index %zu cannot be cast to %s",
+                               i, dtype_to_string(dtype));
+            RETURN_THROWS();
+        }
+        memcpy((char *)tensor->data + i * tensor->element_size,
+               &converted.v, tensor->element_size);
+    }
+    ZVAL_OBJ(return_value, contiguous_array_from_tensor(tensor));
+}
+
+ZEND_METHOD(ContiguousArray, broadcastTo)
+{
+    zval *shape_array;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ARRAY(shape_array)
+    ZEND_PARSE_PARAMETERS_END();
+    contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    int shape[MAX_DIMS];
+    size_t elements;
+    int ndims = tensor_import_shape(shape_array, shape, &elements);
+    if (!ndims) RETURN_THROWS();
+    if (ndims < obj->ndims)
+    {
+        CUDA_THROW_INVALID("broadcastTo target rank must be at least the input rank");
+        RETURN_THROWS();
+    }
+    size_t strides[MAX_DIMS] = {0};
+    int input_offset = ndims - obj->ndims;
+    for (int axis = input_offset; axis < ndims; axis++)
+    {
+        int input_axis = axis - input_offset;
+        int extent = obj->shape[input_axis];
+        if (extent != shape[axis] && extent != 1)
+        {
+            CUDA_THROW_INVALID("Cannot broadcast dimension %d from %d to %d",
+                               input_axis, extent, shape[axis]);
+            RETURN_THROWS();
+        }
+        strides[axis] = extent == 1 && shape[axis] != 1 ? 0 : obj->strides[input_axis];
+    }
+    tensor_t *view = tensor_host_create_view(obj->tensor, obj->cached_data_ptr,
+                                             shape, strides, ndims);
+    if (!view) RETURN_THROWS();
+    ZVAL_OBJ(return_value, contiguous_array_from_tensor(view));
+    contiguous_array_object *result = contiguous_array_from_obj(Z_OBJ_P(return_value));
+    result->is_contiguous = contiguous_array_has_contiguous_layout(result);
+    result->read_only = 1;
+}
+
+static size_t contiguous_array_broadcast_offset(const contiguous_array_object *obj,
+                                                size_t index, const int *shape, int ndims)
+{
+    size_t offset = 0;
+    int rank_offset = ndims - obj->ndims;
+    for (int axis = ndims - 1; axis >= 0; axis--)
+    {
+        size_t coordinate = index % (size_t)shape[axis];
+        index /= (size_t)shape[axis];
+        int input_axis = axis - rank_offset;
+        if (input_axis >= 0 && obj->shape[input_axis] != 1)
+            offset += coordinate * obj->strides[input_axis];
+    }
+    return offset;
+}
+
+static int contiguous_array_compare_values(scalar_value_t a, scalar_value_t b,
+                                           dtype_t dtype, operation_type_t op)
+{
+    a = cast_single_value(a, dtype);
+    b = cast_single_value(b, dtype);
+#define HOST_COMPARE(x, y) \
+    (op == OP_GT ? (x) > (y) : op == OP_LT ? (x) < (y) : \
+     op == OP_EQ ? (x) == (y) : op == OP_NE ? (x) != (y) : \
+     op == OP_GE ? (x) >= (y) : (x) <= (y))
+    if (dtype_is_integer(dtype) || dtype == DTYPE_BOOL)
+    {
+        if (dtype_is_signed(dtype))
+        {
+            a = cast_single_value(a, DTYPE_INT64);
+            b = cast_single_value(b, DTYPE_INT64);
+            return HOST_COMPARE(a.v.i64, b.v.i64);
+        }
+        a = cast_single_value(a, DTYPE_UINT64);
+        b = cast_single_value(b, DTYPE_UINT64);
+        return HOST_COMPARE(a.v.u64, b.v.u64);
+    }
+    long double x, y;
+    scalar_value_as_long_double(a, &x);
+    scalar_value_as_long_double(b, &y);
+    return HOST_COMPARE(x, y);
+#undef HOST_COMPARE
+}
+
+static void contiguous_array_comparison(INTERNAL_FUNCTION_PARAMETERS, operation_type_t op)
+{
+    zval *other;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_ZVAL(other)
+    ZEND_PARSE_PARAMETERS_END();
+    ZVAL_DEREF(other);
+    contiguous_array_object *left = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!left) RETURN_THROWS();
+    contiguous_array_object *right = NULL;
+    scalar_value_t scalar = {0};
+    int shape[MAX_DIMS], ndims = left->ndims;
+    dtype_t dtype;
+    if (Z_TYPE_P(other) == IS_OBJECT && instanceof_function(Z_OBJCE_P(other), contiguous_array_ce))
+    {
+        right = contiguous_array_fetch_valid_object(Z_OBJ_P(other));
+        if (!right) RETURN_THROWS();
+        if (!tensor_broadcast_shape(left->shape, left->ndims, right->shape, right->ndims, shape, &ndims))
+        {
+            CUDA_THROW_INVALID("Comparison requires broadcast-compatible shapes");
+            RETURN_THROWS();
+        }
+        dtype = promote_types_for_arithmetic(left->dtype, right->dtype, op);
+        if (dtype == DTYPE_UNKNOWN || !can_safely_cast_to(left->dtype, dtype) ||
+            !can_safely_cast_to(right->dtype, dtype))
+        {
+            CUDA_THROW_INVALID("Comparison operands cannot be safely promoted; cast them explicitly");
+            RETURN_THROWS();
+        }
+    }
+    else
+    {
+        SCALAR_FROM_ZVAL(other, scalar);
+        dtype = promote_scalar_for_arithmetic(left->dtype, scalar.dtype, op, scalar.is_neg);
+        scalar = cast_single_value(scalar, dtype);
+        if (scalar.dtype == DTYPE_UNKNOWN)
+        {
+            CUDA_THROW_INVALID("Comparison expects a representable numeric scalar or HostArray");
+            RETURN_THROWS();
+        }
+        memcpy(shape, left->shape, ndims * sizeof(int));
+    }
+    tensor_t *result = cuda_tensor_create_on_host(shape, ndims, NULL, dtype);
+    if (!result) RETURN_THROWS();
+    for (size_t i = 0; i < result->total_size; i++)
+    {
+        scalar_value_t a = contiguous_array_scalar_at(left,
+            contiguous_array_broadcast_offset(left, i, shape, ndims));
+        scalar_value_t b = right ? contiguous_array_scalar_at(right,
+            contiguous_array_broadcast_offset(right, i, shape, ndims)) : scalar;
+        scalar_value_t mask = {.dtype = DTYPE_BOOL};
+        mask.v.b = contiguous_array_compare_values(a, b, dtype, op);
+        if (contiguous_array_store_scalar(result, i, mask) != SUCCESS)
+        {
+            tensor_host_destroy(result);
+            RETURN_THROWS();
+        }
+    }
+    ZVAL_OBJ(return_value, contiguous_array_from_tensor(result));
+}
+
+#define HOST_COMPARISON(name, op) \
+    ZEND_METHOD(ContiguousArray, name) { contiguous_array_comparison(INTERNAL_FUNCTION_PARAM_PASSTHRU, op); }
+HOST_COMPARISON(gt, OP_GT)
+HOST_COMPARISON(lt, OP_LT)
+HOST_COMPARISON(eq, OP_EQ)
+HOST_COMPARISON(ne, OP_NE)
+HOST_COMPARISON(ge, OP_GE)
+HOST_COMPARISON(le, OP_LE)
+#undef HOST_COMPARISON
+
+ZEND_METHOD(ContiguousArray, where)
+{
+    zval *values[3];
+    ZEND_PARSE_PARAMETERS_START(3, 3)
+        Z_PARAM_OBJECT_OF_CLASS(values[0], contiguous_array_ce)
+        Z_PARAM_OBJECT_OF_CLASS(values[1], contiguous_array_ce)
+        Z_PARAM_OBJECT_OF_CLASS(values[2], contiguous_array_ce)
+    ZEND_PARSE_PARAMETERS_END();
+    contiguous_array_object *inputs[3];
+    for (int i = 0; i < 3; i++)
+    {
+        inputs[i] = contiguous_array_fetch_valid_object(Z_OBJ_P(values[i]));
+        if (!inputs[i]) RETURN_THROWS();
+        if (!inputs[i]->ndims)
+        {
+            CUDA_THROW_INVALID("where requires operands with at least one dimension");
+            RETURN_THROWS();
+        }
+    }
+    if (inputs[1]->dtype != inputs[2]->dtype)
+    {
+        CUDA_THROW_INVALID("where requires x and y to have the same dtype");
+        RETURN_THROWS();
+    }
+    int intermediate[MAX_DIMS], shape[MAX_DIMS], intermediate_dims, ndims;
+    if (!tensor_broadcast_shape(inputs[1]->shape, inputs[1]->ndims,
+                                inputs[2]->shape, inputs[2]->ndims, intermediate, &intermediate_dims) ||
+        !tensor_broadcast_shape(inputs[0]->shape, inputs[0]->ndims,
+                                intermediate, intermediate_dims, shape, &ndims))
+    {
+        CUDA_THROW_INVALID("where operands have incompatible shapes");
+        RETURN_THROWS();
+    }
+    tensor_t *result = cuda_tensor_create_on_host(shape, ndims, NULL, inputs[1]->dtype);
+    if (!result) RETURN_THROWS();
+    for (size_t i = 0; i < result->total_size; i++)
+    {
+        size_t condition_offset = contiguous_array_broadcast_offset(inputs[0], i, shape, ndims);
+        contiguous_array_object *selected =
+            contiguous_array_number_at(inputs[0], condition_offset) != 0 ? inputs[1] : inputs[2];
+        size_t offset = contiguous_array_broadcast_offset(selected, i, shape, ndims);
+        memcpy((char *)result->data + i * result->element_size,
+               selected->cached_data_ptr + offset * selected->element_size, result->element_size);
+    }
+    ZVAL_OBJ(return_value, contiguous_array_from_tensor(result));
+}
+
+static double host_abs(double value) { return value < 0 ? -value : value; }
+static float host_absf(float value) { return value < 0 ? -value : value; }
+static double host_neg(double value) { return -value; }
+static float host_negf(float value) { return -value; }
+
+static void contiguous_array_unary(INTERNAL_FUNCTION_PARAMETERS,
+                                   double (*op)(double), float (*opf)(float))
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    if (!dtype_is_floating(obj->dtype))
+    {
+        CUDA_THROW_INVALID("HostArray unary math requires floating-point storage; cast explicitly");
+        RETURN_THROWS();
+    }
+    tensor_t *result = cuda_tensor_create_on_host(obj->shape, obj->ndims, NULL, obj->dtype);
+    if (!result) RETURN_THROWS();
+    for (size_t i = 0; i < result->total_size; i++)
+    {
+        double value = contiguous_array_number_at(obj, contiguous_array_element_offset(obj, i));
+        scalar_value_t output = {.dtype = DTYPE_FLOAT64};
+        output.v.f64 = obj->dtype == DTYPE_FLOAT64 ? op(value) : opf((float)value);
+        if (contiguous_array_store_scalar(result, i, output) != SUCCESS)
+        {
+            tensor_host_destroy(result);
+            RETURN_THROWS();
+        }
+    }
+    ZVAL_OBJ(return_value, contiguous_array_from_tensor(result));
+}
+
+#define HOST_UNARY(name, fn, fnf) \
+    ZEND_METHOD(ContiguousArray, name) { contiguous_array_unary(INTERNAL_FUNCTION_PARAM_PASSTHRU, fn, fnf); }
+HOST_UNARY(sqrt, sqrt, sqrtf)
+HOST_UNARY(exp, exp, expf)
+HOST_UNARY(expm1, expm1, expm1f)
+HOST_UNARY(exp2, exp2, exp2f)
+HOST_UNARY(log, log, logf)
+HOST_UNARY(log1p, log1p, log1pf)
+HOST_UNARY(log2, log2, log2f)
+HOST_UNARY(log10, log10, log10f)
+HOST_UNARY(sin, sin, sinf)
+HOST_UNARY(cos, cos, cosf)
+HOST_UNARY(tan, tan, tanf)
+HOST_UNARY(asin, asin, asinf)
+HOST_UNARY(acos, acos, acosf)
+HOST_UNARY(atan, atan, atanf)
+HOST_UNARY(sinh, sinh, sinhf)
+HOST_UNARY(cosh, cosh, coshf)
+HOST_UNARY(tanh, tanh, tanhf)
+HOST_UNARY(abs, host_abs, host_absf)
+HOST_UNARY(neg, host_neg, host_negf)
+HOST_UNARY(floor, floor, floorf)
+HOST_UNARY(ceil, ceil, ceilf)
+HOST_UNARY(round, round, roundf)
+#undef HOST_UNARY
+
+static uint64_t contiguous_array_integer_bits(scalar_value_t value)
+{
+    switch (value.dtype)
+    {
+        case DTYPE_INT8: return (uint64_t)value.v.i8;
+        case DTYPE_INT16: return (uint64_t)value.v.i16;
+        case DTYPE_INT32: return (uint64_t)value.v.i32;
+        case DTYPE_INT64: return (uint64_t)value.v.i64;
+        case DTYPE_UINT8: return value.v.u8;
+        case DTYPE_UINT16: return value.v.u16;
+        case DTYPE_UINT32: return value.v.u32;
+        case DTYPE_UINT64: return value.v.u64;
+        default: ZEND_ASSERT(value.dtype == DTYPE_BOOL); return value.v.b;
+    }
+}
+
+static void contiguous_array_store_integer_bits(tensor_t *result, size_t index, uint64_t bits)
+{
+    scalar_value_t value = {0};
+    if (result->dtype == DTYPE_BOOL) value.v.b = bits != 0;
+    else switch (result->element_size)
+    {
+        case 1: value.v.u8 = (uint8_t)bits; break;
+        case 2: value.v.u16 = (uint16_t)bits; break;
+        case 4: value.v.u32 = (uint32_t)bits; break;
+        case 8: value.v.u64 = bits; break;
+    }
+    memcpy((char *)result->data + index * result->element_size, &value.v, result->element_size);
+}
+
+static void contiguous_array_reduce(INTERNAL_FUNCTION_PARAMETERS, operation_type_t op)
+{
+    zval *axis_value = NULL;
+    ZEND_PARSE_PARAMETERS_START(0, 1)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_ZVAL(axis_value)
+    ZEND_PARSE_PARAMETERS_END();
+    contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!obj) RETURN_THROWS();
+    int axis = -1;
+    if (axis_value)
+    {
+        ZVAL_DEREF(axis_value);
+        if (Z_TYPE_P(axis_value) != IS_NULL)
+        {
+            if (Z_TYPE_P(axis_value) != IS_LONG ||
+                Z_LVAL_P(axis_value) < -obj->ndims || Z_LVAL_P(axis_value) >= obj->ndims)
+            {
+                CUDA_THROW_INVALID("Reduction axis must be an integer within the input rank");
+                RETURN_THROWS();
+            }
+            axis = (int)Z_LVAL_P(axis_value);
+            if (axis < 0) axis += obj->ndims;
+        }
+    }
+    int shape[MAX_DIMS], ndims = 0;
+    if (axis >= 0)
+        for (int d = 0; d < obj->ndims; d++) if (d != axis) shape[ndims++] = obj->shape[d];
+    if (!ndims) shape[ndims++] = 1;
+    size_t count = axis < 0 ? obj->total_elements : (size_t)obj->shape[axis];
+    dtype_t dtype = obj->dtype;
+    if (dtype == DTYPE_FLOAT16 || dtype == DTYPE_BFLOAT16) dtype = DTYPE_FLOAT32;
+    if (op == OP_REDUCE_MEAN && !dtype_is_floating(dtype)) dtype = DTYPE_FLOAT64;
+    size_t elements, bytes;
+    if (!tensor_shape_metrics(shape, ndims, dtype_size(dtype), NULL, &elements, &bytes))
+    {
+        CUDA_THROW_INVALID("Reduction output exceeds supported limits");
+        RETURN_THROWS();
+    }
+    if (elements && !count && (op == OP_REDUCE_MIN || op == OP_REDUCE_MAX))
+    {
+        CUDA_THROW_INVALID("Min/max reduction has no identity for an empty axis");
+        RETURN_THROWS();
+    }
+    tensor_t *result = cuda_tensor_create_on_host(shape, ndims, NULL, dtype);
+    if (!result) RETURN_THROWS();
+    for (size_t out = 0; out < elements; out++)
+    {
+        size_t base = 0, remaining = out;
+        if (axis >= 0)
+            for (int d = obj->ndims - 1; d >= 0; d--)
+                if (d != axis)
+                {
+                    base += (remaining % (size_t)obj->shape[d]) * obj->strides[d];
+                    remaining /= (size_t)obj->shape[d];
+                }
+        double sum = 0;
+        uint64_t bits = 0;
+        int have_best = 0;
+        scalar_value_t best = {.dtype = DTYPE_FLOAT64};
+        best.v.f64 = op == OP_REDUCE_MAX ? -INFINITY : INFINITY;
+        for (size_t i = 0; i < count; i++)
+        {
+            size_t offset = axis < 0 ? contiguous_array_element_offset(obj, i)
+                : base + i * obj->strides[axis];
+            scalar_value_t value = contiguous_array_scalar_at(obj, offset);
+            if (op == OP_REDUCE_SUM && !dtype_is_floating(dtype))
+            {
+                uint64_t input = contiguous_array_integer_bits(value);
+                bits = dtype == DTYPE_BOOL ? (bits || input) : bits + input;
+            }
+            else if (op == OP_REDUCE_SUM || op == OP_REDUCE_MEAN)
+            {
+                double number = contiguous_array_number_at(obj, offset);
+                sum = dtype == DTYPE_FLOAT32 ? (float)((float)sum + (float)number) : sum + number;
+            }
+            else
+            {
+                if (dtype_is_floating(dtype) && isnan(contiguous_array_number_at(obj, offset)))
+                    continue;
+                if (!have_best || contiguous_array_compare_values(value, best, dtype,
+                    op == OP_REDUCE_MAX ? OP_GT : OP_LT))
+                {
+                    best = value;
+                    have_best = 1;
+                }
+            }
+        }
+        if (op == OP_REDUCE_SUM && !dtype_is_floating(dtype))
+        {
+            contiguous_array_store_integer_bits(result, out, bits);
+            continue;
+        }
+        scalar_value_t value = best;
+        if (op == OP_REDUCE_SUM || op == OP_REDUCE_MEAN)
+        {
+            value.dtype = DTYPE_FLOAT64;
+            value.v.f64 = op != OP_REDUCE_MEAN ? sum : !count ? NAN :
+                dtype == DTYPE_FLOAT32 ? (float)((float)sum / (float)count) : sum / (double)count;
+        }
+        if (contiguous_array_store_scalar(result, out, value) != SUCCESS)
+        {
+            tensor_host_destroy(result);
+            RETURN_THROWS();
+        }
+    }
+    ZVAL_OBJ(return_value, contiguous_array_from_tensor(result));
+}
+
+#define HOST_REDUCTION(name, op) \
+    ZEND_METHOD(ContiguousArray, name) { contiguous_array_reduce(INTERNAL_FUNCTION_PARAM_PASSTHRU, op); }
+HOST_REDUCTION(sum, OP_REDUCE_SUM)
+HOST_REDUCTION(mean, OP_REDUCE_MEAN)
+HOST_REDUCTION(min, OP_REDUCE_MIN)
+HOST_REDUCTION(max, OP_REDUCE_MAX)
+#undef HOST_REDUCTION
+
+static size_t contiguous_array_batch_offset(const contiguous_array_object *obj, size_t batch,
+                                            const int *shape, int ndims)
+{
+    size_t offset = 0;
+    for (int d = ndims - 3; d >= 0; d--)
+    {
+        size_t coordinate = batch % (size_t)shape[d];
+        batch /= (size_t)shape[d];
+        int input_axis = d - (ndims - obj->ndims);
+        if (input_axis >= 0 && obj->shape[input_axis] != 1)
+            offset += coordinate * obj->strides[input_axis];
+    }
+    return offset;
+}
+
+ZEND_METHOD(ContiguousArray, matmul)
+{
+    zval *other;
+    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_OBJECT_OF_CLASS(other, contiguous_array_ce)
+    ZEND_PARSE_PARAMETERS_END();
+    contiguous_array_object *a = contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS));
+    if (!a) RETURN_THROWS();
+    contiguous_array_object *b = contiguous_array_fetch_valid_object(Z_OBJ_P(other));
+    if (!b) RETURN_THROWS();
+    if (a->dtype != b->dtype || (a->dtype != DTYPE_FLOAT32 &&
+        a->dtype != DTYPE_FLOAT16 && a->dtype != DTYPE_BFLOAT16))
+    {
+        CUDA_THROW_INVALID("matmul requires matching float32, float16 or bfloat16 operands");
+        RETURN_THROWS();
+    }
+    int shape[MAX_DIMS], ndims;
+    if (!tensor_matmul_shape(a->shape, a->ndims, b->shape, b->ndims, shape, &ndims))
+    {
+        CUDA_THROW_INVALID("matmul requires rank >= 2, matching inner dimensions and broadcast-compatible batches");
+        RETURN_THROWS();
+    }
+    tensor_t *result = cuda_tensor_create_on_host(shape, ndims, NULL, a->dtype);
+    if (!result) RETURN_THROWS();
+    size_t rows = (size_t)shape[ndims - 2], columns = (size_t)shape[ndims - 1];
+    for (size_t i = 0; i < result->total_size; i++)
+    {
+        size_t batch = i / columns / rows;
+        size_t offset_a = contiguous_array_batch_offset(a, batch, shape, ndims) +
+            (i / columns % rows) * a->strides[a->ndims - 2];
+        size_t offset_b = contiguous_array_batch_offset(b, batch, shape, ndims) +
+            (i % columns) * b->strides[b->ndims - 1];
+        float sum = 0;
+        for (int k = 0; k < a->shape[a->ndims - 1]; k++)
+        {
+            float x = (float)contiguous_array_number_at(a, offset_a + (size_t)k * a->strides[a->ndims - 1]);
+            float y = (float)contiguous_array_number_at(b, offset_b + (size_t)k * b->strides[b->ndims - 2]);
+            sum = fmaf(x, y, sum);
+        }
+        scalar_value_t value = {.dtype = DTYPE_FLOAT32};
+        value.v.f32 = sum;
+        if (contiguous_array_store_scalar(result, i, value) != SUCCESS)
+        {
+            tensor_host_destroy(result);
+            RETURN_THROWS();
+        }
+    }
+    ZVAL_OBJ(return_value, contiguous_array_from_tensor(result));
+}
+
 static zend_result contiguous_array_binary_apply(zval *return_value, zval *tensor_value,
                                                  zval *other, char operation,
                                                  zend_bool reverse)
@@ -665,15 +1354,6 @@ static zend_result contiguous_array_binary_apply(zval *return_value, zval *tenso
         instanceof_function(Z_OBJCE_P(other), contiguous_array_ce)) {
         right = contiguous_array_fetch_valid_object(Z_OBJ_P(other));
         if (!right) return FAILURE;
-        if (left->ndims != right->ndims ||
-            memcmp(left->shape, right->shape, left->ndims * sizeof(int)) != 0) {
-            CUDA_THROW_INVALID("HostArray arithmetic requires identical shapes");
-            return FAILURE;
-        }
-        if (left->dtype != right->dtype) {
-            CUDA_THROW_INVALID("HostArray arithmetic requires identical dtypes");
-            return FAILURE;
-        }
     } else if (Z_TYPE_P(other) == IS_LONG || Z_TYPE_P(other) == IS_DOUBLE ||
                Z_TYPE_P(other) == IS_TRUE || Z_TYPE_P(other) == IS_FALSE) {
         scalar = zval_get_double(other);
@@ -682,61 +1362,77 @@ static zend_result contiguous_array_binary_apply(zval *return_value, zval *tenso
         return FAILURE;
     }
 
-    if (left->dtype != DTYPE_FLOAT32 && left->dtype != DTYPE_FLOAT64) {
-        CUDA_THROW_INVALID("CPU HostArray arithmetic currently supports float32 and float64");
-        return FAILURE;
-    }
-    if (operation == '/' && !right && scalar == 0.0) {
-        CUDA_THROW_INVALID("Division by zero is not supported by HostArray");
+    if (!dtype_is_floating(left->dtype) || (right && !dtype_is_floating(right->dtype))) {
+        CUDA_THROW_INVALID("CPU HostArray arithmetic requires floating-point tensors");
         return FAILURE;
     }
 
     int shape[MAX_DIMS];
-    memcpy(shape, left->shape, left->ndims * sizeof(int));
+    int ndims = left->ndims;
+    operation_type_t op = operation == '+' ? OP_ADD : operation == '-' ? OP_SUB :
+        operation == '*' ? OP_MUL : OP_DIV;
+    dtype_t dtype;
+    if (right) {
+        if (!tensor_broadcast_shape(left->shape, left->ndims, right->shape, right->ndims,
+                                    shape, &ndims)) {
+            CUDA_THROW_INVALID("HostArray arithmetic requires broadcast-compatible shapes");
+            return FAILURE;
+        }
+        dtype = promote_types_for_arithmetic(left->dtype, right->dtype, op);
+    } else {
+        memcpy(shape, left->shape, ndims * sizeof(int));
+        scalar_value_t input;
+        SCALAR_FROM_ZVAL(other, input);
+        dtype = promote_scalar_for_arithmetic(left->dtype, input.dtype, op, input.is_neg);
+        scalar_value_t rounded = cast_single_value(input, dtype);
+        long double number;
+        if (rounded.dtype == DTYPE_UNKNOWN || !scalar_value_as_long_double(rounded, &number)) {
+            CUDA_THROW_INVALID("Scalar cannot be represented by the result dtype");
+            return FAILURE;
+        }
+        scalar = (double)number;
+    }
     tensor_t *result_tensor = cuda_tensor_create_on_host(
-        shape, left->ndims, NULL, left->dtype);
+        shape, ndims, NULL, dtype);
     if (!result_tensor) return FAILURE;
 
-    const void *left_data = left->cached_data_ptr;
-    const void *right_data = right ? right->cached_data_ptr : NULL;
-    int left_contiguous = contiguous_array_has_contiguous_layout(left);
-    int right_contiguous = right && contiguous_array_has_contiguous_layout(right);
-    for (size_t i = 0; i < left->total_elements; i++) {
+    int left_contiguous = left->total_elements == result_tensor->total_size &&
+        contiguous_array_has_contiguous_layout(left);
+    int right_contiguous = right && right->total_elements == result_tensor->total_size &&
+        contiguous_array_has_contiguous_layout(right);
+    for (size_t i = 0; i < result_tensor->total_size; i++) {
         size_t left_offset = left_contiguous
             ? i
-            : contiguous_array_element_offset(left, i);
+            : contiguous_array_broadcast_offset(left, i, shape, ndims);
         size_t right_offset = right
             ? (right_contiguous
                 ? i
-                : contiguous_array_element_offset(right, i))
+                : contiguous_array_broadcast_offset(right, i, shape, ndims))
             : 0;
-        const char *left_element =
-            (const char *)left_data + left_offset * left->element_size;
-        const char *right_element = right
-            ? (const char *)right_data + right_offset * right->element_size
-            : NULL;
-        double tensor_value = left->dtype == DTYPE_FLOAT32
-            ? *(const float *)left_element
-            : *(const double *)left_element;
+        double tensor_value = contiguous_array_number_at(left, left_offset);
         double other_tensor_value = right
-            ? (left->dtype == DTYPE_FLOAT32
-                ? *(const float *)right_element
-                : *(const double *)right_element)
+            ? contiguous_array_number_at(right, right_offset)
             : scalar;
         double lhs = reverse ? other_tensor_value : tensor_value;
         double rhs = reverse ? tensor_value : other_tensor_value;
-        if (operation == '/' && rhs == 0.0) {
-            tensor_host_destroy(result_tensor);
-            CUDA_THROW_INVALID("Division by zero is not supported by HostArray");
-            return FAILURE;
+        if (dtype == DTYPE_FLOAT32) {
+            lhs = (float)lhs;
+            rhs = (float)rhs;
         }
-        double value = operation == '+' ? lhs + rhs :
-                       operation == '-' ? lhs - rhs :
-                       operation == '*' ? lhs * rhs : lhs / rhs;
-        if (left->dtype == DTYPE_FLOAT32) {
-            ((float *)result_tensor->data)[i] = (float)value;
+        if (dtype != DTYPE_FLOAT64) {
+            float a = (float)lhs, b = (float)rhs;
+            scalar_value_t value = {.dtype = DTYPE_FLOAT32};
+            value.v.f32 = operation == '+' ? a + b : operation == '-' ? a - b :
+                operation == '*' ? a * b : a / b;
+            if (dtype == DTYPE_FLOAT32) {
+                ((float *)result_tensor->data)[i] = value.v.f32;
+            } else if (contiguous_array_store_scalar(result_tensor, i, value) != SUCCESS) {
+                tensor_host_destroy(result_tensor);
+                return FAILURE;
+            }
         } else {
-            ((double *)result_tensor->data)[i] = value;
+            ((double *)result_tensor->data)[i] = operation == '+' ? lhs + rhs :
+                operation == '-' ? lhs - rhs : operation == '*' ? lhs * rhs : lhs / rhs;
         }
     }
 
@@ -1322,7 +2018,7 @@ static zval *contiguous_array_iterator_get_current_data(zend_object_iterator *it
 static void contiguous_array_iterator_move_forward(zend_object_iterator *iter)
 {
     contiguous_array_iterator *iterator = (contiguous_array_iterator *)iter;
-    if (iterator->is_1d)
+    if (iterator->is_1d && iterator->current_idx + 1 < iterator->max_idx)
         iterator->current_data_ptr = (char *)iterator->current_data_ptr + iterator->stride_bytes;
     iterator->current_idx++;
     if (Z_TYPE(iterator->current) != IS_UNDEF)
@@ -1367,7 +2063,7 @@ static zend_object_iterator *contiguous_array_get_iterator(zend_class_entry *ce,
     if (iterator->is_1d)
     {
         iterator->current_data_ptr = obj->cached_data_ptr;
-        iterator->stride_bytes = obj->strides[0] * obj->element_size;
+        iterator->stride_bytes = obj->shape[0] > 1 ? obj->strides[0] * obj->element_size : 0;
         iterator->getter = getter;
     }
 

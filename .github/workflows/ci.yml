@@ -46,9 +46,35 @@ jobs:
               bash ./run-tests.sh --cpu-only
             '
 
+  cuda-native-api:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build CUDA metadata validation image
+        run: |
+          docker build \
+            --build-arg CUDA_IMAGE=nvidia/cuda:12.6.3-devel-ubuntu22.04 \
+            --build-arg PHP_VERSION=8.1 \
+            -t phptensors-cuda-api .
+
+      - name: Compile CUDA profile and compare native API without GPU execution
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/usr/src/ext" \
+            -w /usr/src/ext \
+            phptensors-cuda-api \
+            bash -euo pipefail -c '
+              bash ./compile.sh
+              mkdir -p /tmp/phptensors-linker-stub
+              ln -s /usr/local/cuda/lib64/stubs/libcuda.so /tmp/phptensors-linker-stub/libcuda.so.1
+              export LD_LIBRARY_PATH=/tmp/phptensors-linker-stub:${LD_LIBRARY_PATH:-}
+              NO_INTERACTION=1 REPORT_EXIT_STATUS=1 bash ./run-tests.sh --cuda-api-only
+            '
+
   draft-release:
     if: github.event.deleted != true && startsWith(github.ref, 'refs/tags/v')
-    needs: [build-and-cpu-tests]
+    needs: [build-and-cpu-tests, cuda-native-api]
     runs-on: ubuntu-22.04
     permissions:
       contents: write

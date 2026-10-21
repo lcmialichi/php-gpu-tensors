@@ -20,8 +20,8 @@ strided, batched, and broadcast matmul shapes alongside large reductions. It
 checks outputs and records the dispatched backend per matmul case. It also
 compares eager, Fusion, and CUDA Graph replay for elementwise chains and
 reductions around a native boundary. It also measures repeated same-shape
-allocation/release workloads to expose memory-pool reuse latency. See the root
-README for command-line options; use `--precision=tf32` to measure the
+allocation/release workloads to expose memory-pool reuse latency. See the
+[benchmark guide](../docs/guide.md#kernel-benchmark) for command-line options; use `--precision=tf32` to measure the
 opt-in Tensor Core mode. Use `--tune-matmul` to benchmark and cache eligible
 cuBLASLt algorithms before timing the matrix workloads.
 
@@ -50,13 +50,13 @@ The core `CudaArray` API also includes shape views (`squeeze()`,
 `clamp()`), logical and statistical reductions (`all()`, `any()`, `var()`,
 `std()`), and `item()` for reading one value as a PHP scalar. `gather()` and
 `scatterAdd()` provide indexed reads and additive updates; they currently run
-eagerly rather than inside Fusion. See the root README for their dtype,
+eagerly rather than inside Fusion. See the [usage guide](../docs/guide.md) for their dtype,
 broadcasting, and indexing requirements.
 
 ## Execution Requirements
 
 1. **NVIDIA Driver** & **CUDA Toolkit** installed.
-2. **PHP GPU Tensors** built and loaded in PHP (module name: `cuda`).
+2. **PHP GPU Tensors** built and loaded in PHP (module name: `phptensors`).
 3. An active NVIDIA GPU visible to the system.
 
 To run any example:

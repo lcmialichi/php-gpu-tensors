@@ -140,6 +140,25 @@ int main(void)
     assert(elements == 0 && shape[2] == 0);
 #endif
     int result_rank, result_shape[MAX_DIMS];
+    int column_shape[] = {2, 1, 3}, row_shape[] = {4, 1};
+    assert(tensor_broadcast_shape(column_shape, 3, row_shape, 2, result_shape, &result_rank));
+    assert(result_rank == 3 && result_shape[0] == 2 &&
+           result_shape[1] == 4 && result_shape[2] == 3);
+    int empty_broadcast[] = {2, 0, 3}, single_row[] = {1, 3};
+    assert(tensor_broadcast_shape(empty_broadcast, 3, single_row, 2, result_shape, &result_rank));
+    assert(result_rank == 3 && result_shape[0] == 2 &&
+           result_shape[1] == 0 && result_shape[2] == 3);
+    int incompatible[] = {2, 2};
+    assert(!tensor_broadcast_shape(empty_broadcast, 3, incompatible, 2, result_shape, &result_rank));
+    int matrix_a[] = {2, 1, 3, 4}, matrix_b[] = {5, 4, 6};
+    assert(tensor_matmul_shape(matrix_a, 4, matrix_b, 3, result_shape, &result_rank));
+    assert(result_rank == 4 && result_shape[0] == 2 && result_shape[1] == 5 &&
+           result_shape[2] == 3 && result_shape[3] == 6);
+    int zero_matrix[] = {2, 0}, zero_inner[] = {0, 3};
+    assert(tensor_matmul_shape(zero_matrix, 2, zero_inner, 2, result_shape, &result_rank));
+    assert(result_rank == 2 && result_shape[0] == 2 && result_shape[1] == 3);
+    assert(!tensor_matmul_shape(zero_matrix, 1, zero_inner, 2, result_shape, &result_rank));
+    assert(!tensor_matmul_shape(matrix_a, 4, incompatible, 2, result_shape, &result_rank));
     assert(!prepare_matmul_result_shape(0, NULL, 2, maximum_rank, &result_rank, result_shape));
     check_view_storage();
     puts("tensor shape checks passed");

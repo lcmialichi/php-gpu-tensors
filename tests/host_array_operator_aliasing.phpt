@@ -19,17 +19,35 @@ if (array_key_exists('__contiguous_array_v1', $matrix->__serialize())) {
     check($row->toArray() === [4.0, 5.0], 'Offset host assignment');
     check($matrix->toArray() === [[1.0, 2.0], [3.0, 4.0]], 'Host assignment mutated shared storage');
 }
-foreach ([0, new HostArray([1, 0])] as $divisor) {
+foreach ([new stdClass(), new HostArray([1, 0, 1])] as $divisor) {
     $value = new HostArray([2, 4]);
     $old = $value;
     $reference =& $value;
     try {
         $value /= $divisor;
-        throw new RuntimeException('Host division by zero was accepted');
+        throw new RuntimeException('Invalid host division operand was accepted');
     } catch (PhpTensors\InvalidArgumentException $error) {
     }
     check($value === $old && $reference === $old, 'Failed division lost the original object');
     check($value->toArray() === [2.0, 4.0], 'Failed division changed host values');
+    unset($reference);
+}
+foreach ([
+    function (&$value) { return $value++; },
+    function (&$value) { return ++$value; },
+    function (&$value) { return $value--; },
+    function (&$value) { return --$value; },
+] as $change) {
+    $value = new HostArray([2], 'int64');
+    $old = $value;
+    $reference =& $value;
+    try {
+        $change($value);
+        throw new RuntimeException('Integer host increment/decrement accepted');
+    } catch (PhpTensors\InvalidArgumentException $error) {
+        check(str_contains($error->getMessage(), 'requires floating-point tensors'), 'Original arithmetic exception preserved');
+    }
+    check($value === $old && $reference === $old && $value->toArray() === [2], 'Failed increment/decrement changed host value');
     unset($reference);
 }
 $value = HostArray::ones([8192]);

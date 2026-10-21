@@ -50,33 +50,27 @@ check(($float32 + 1)->toBuffer() === pack('f*', 16777216, 2.25));
 $empty = HostArray::fromFlatArray([], [2, 0], 'float32');
 check($empty->getShape() === [2, 0] && $empty->getSize() === 0);
 check($empty->toArray() === [[], []]);
-try {
-    $left + new HostArray([[1, 2], [3, 4]], 'float32');
-    throw new RuntimeException('HostArray arithmetic unexpectedly accepted different dtypes');
-} catch (PhpTensors\InvalidArgumentException $error) {
-    check(str_contains($error->getMessage(), 'identical dtypes'));
-}
+$mixed = $left + new HostArray([[1, 2], [3, 4]], 'float32');
+check($mixed->dtype() === 'float64' && $mixed->toArray() === [[2.0, 4.0], [6.0, 8.0]]);
 try {
     $left + new HostArray([[1, 2, 3], [4, 5, 6]], 'float64');
     throw new RuntimeException('HostArray arithmetic unexpectedly accepted different shapes');
 } catch (PhpTensors\InvalidArgumentException $error) {
-    check(str_contains($error->getMessage(), 'identical shapes'));
+    check(str_contains($error->getMessage(), 'broadcast-compatible shapes'));
 }
-try {
-    $left / 0;
-    throw new RuntimeException('HostArray division by zero unexpectedly succeeded');
-} catch (PhpTensors\InvalidArgumentException $error) {
-    check(str_contains($error->getMessage(), 'Division by zero'));
-}
+check(($left / 0)->at(0, 0) === INF);
+check(is_nan((HostArray::zeros([1]) / 0)->at(0)));
 foreach (['matmul', 'reshape', 'sum', 'fromFile'] as $method) {
     if (!method_exists(HostArray::class, $method)) {
         throw new RuntimeException("CPU HostArray is missing {$method}");
     }
 }
+check((new HostArray($left->toArray()))->matmul(new HostArray($right->toArray()))->toArray() ===
+    [[70.0, 100.0], [150.0, 220.0]]);
 try {
     $left->matmul($right);
-    throw new RuntimeException('Unsupported host matmul unexpectedly succeeded');
-} catch (RuntimeException $error) {
+    throw new RuntimeException('Unsupported FP64 matmul unexpectedly succeeded');
+} catch (PhpTensors\InvalidArgumentException $error) {
     check(str_contains($error->getMessage(), 'matmul'));
 }
 $restored = unserialize(serialize($left));
