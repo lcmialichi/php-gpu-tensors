@@ -1003,18 +1003,18 @@ function optFloat(array $o, string $name, float $default, float $min = 0.0, floa
 
 /**
  * -------------------------------------------------------------------------
- * Returns the command-line usage text for the classifier example.
+ * Returns the command-line usage text for the advanced classifier runner.
  * -------------------------------------------------------------------------
  */
 function usage(): string
 {
     return <<<'TXT'
-08_gpu_classifier.php: train an MLP classifier with PHP and CUDA tensors
+runClassifier(): advanced MLP training with PHP and CUDA tensors
 
-Edit the $config array in 08_gpu_classifier.php for the common settings:
+Pass a PHP settings array to runClassifier() in Support/ClassifierRunner.php:
   dataset, hiddenLayers, activation, epochs, batchSize, optimizer, learningRate, seed
 
-Advanced CLI options (these override the PHP settings):
+Its CLI options override the PHP settings; example 08 does not parse these options.
 Data:      --dataset=mnist|fashion|csv  --data-dir=<script_dir>/training/data  --url-base=<mirror>  --val=5000
            CSV: --csv=file.csv --header --label-col=-1 --val-fraction=0.15 --test-fraction=0.15
 Model:     --layers=512,256  --activation=relu|leaky
@@ -1031,7 +1031,7 @@ TXT;
 
 /**
  * -------------------------------------------------------------------------
- * Combines the example's simple PHP settings with optional CLI overrides.
+ * Combines the advanced runner's PHP settings with optional CLI overrides.
  * -------------------------------------------------------------------------
  *
  * @param array<string,mixed> $settings

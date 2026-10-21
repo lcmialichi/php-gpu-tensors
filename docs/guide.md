@@ -456,8 +456,9 @@ pressure. The [stream-status unit](../tests/module_stream_status_test.c) tests t
 shared driver guard with 24 simulated combinations of query/synchronization,
 pending/completed/failed work, and context push/pop failures. It passes in all
 three build profiles and with host ASan/UBSan.
-The GPU regression's PHP syntax is checked, but its execution assertions still
-require a working device. Mocked driver tests do not validate GPU memory safety,
+The earlier driverless run checked the GPU regression's PHP syntax and skipped
+its execution assertions. The current PHP 8.1 / CUDA 12.6.3 / MX570 A run passes
+both lifetime and mixed ordering without skips. Mocked driver tests do not validate GPU memory safety,
 destruction after fatal driver failures, or ordering between independent streams.
 The [pool unit](../tests/memory_pool_test.c) now also verifies that a failed runtime
 cannot allocate, recycle, destroy or reactivate its pool, without calling CUDA
@@ -476,9 +477,13 @@ Separate PHPT processes exercise intentional kernel traps for
 [destruction](../tests/cuda_destruction_failure.phpt) failure paths.
 These fault-injection tests deliberately invalidate their own CUDA process:
 never run their fixture inside an application worker you intend to reuse.
-They remain SKIP without a working GPU. Final EXEC-02 acceptance still requires
-healthy overlap/lifetime tests under real GPU memory/race checking and the
-isolated fault tests; expected kernel traps are not a clean sanitizer run.
+They skipped in the earlier driverless run, but the current GPU run executes
+all five and fails their fixture assertions. Four fail the post-failure
+restart-message check; destruction does not observe the expected error at
+`unset()`. See [validation status](#validation-status) for the exact selected run.
+Final EXEC-02 acceptance remains open for these failures and healthy
+overlap/lifetime tests under GPU memory/race checking. Expected kernel traps
+are not a clean sanitizer run.
 
 ## Optional kernel fusion
 
@@ -595,17 +600,26 @@ $probabilities = NN::softmax($pooled);
 
 ## Training example
 
-[`examples/08_gpu_classifier.php`](../examples/08_gpu_classifier.php) trains an
-MLP on MNIST, Fashion-MNIST or a custom CSV dataset using autograd and SGD/AdamW.
+[`examples/08_gpu_classifier.php`](../examples/08_gpu_classifier.php) is a
+standalone MNIST example with no required configuration. Data loading, the
+fixed ReLU MLP, stable cross-entropy, `backward()`, AdamW update, training loop
+and held-out evaluation are all in one file. Two retained `FusionGraph` plans
+cover the full and partial batches, with CUDA Graph replay enabled.
+The tensor-input adapter is explicit and uses an ordinary variadic callback,
+not generated code or `eval()`.
 
 ```bash
-php -n -d extension=./phptensors_build-8.3/modules/phptensors.so \
-  examples/08_gpu_classifier.php --dataset=mnist --epochs=40 \
-  --batch-size=128 --optimizer=adam
+php -n -d extension=./phptensors_build-8.1/modules/phptensors.so \
+  examples/08_gpu_classifier.php
 ```
 
-Use `--profile` for Fusion stats, `--predict-index=N` for a sample prediction,
-`--no-save` to disable saving, or `--load` to evaluate a saved model.
+Use the PHP version/build directory matching your runtime; `8.1` above is the
+default Docker development image. Run it without CLI options. The example does not save models or run
+inference/profiling modes. Advanced dataset, persistence
+and diagnostic helpers remain in
+[`Support/ClassifierRunner.php`](../examples/Support/ClassifierRunner.php).
+See the [example walkthrough](../examples/README.md#train-mnist-one-standalone-file)
+for the training recipe, performance measurements and compile-once replay.
 
 ## API and limits
 
@@ -1035,12 +1049,24 @@ or GPU performance.
 
 ## Validation status
 
-The CPU-02 minimum numerical core implementation is complete. Its real-CUDA
-parity and affected GPU/Fusion regression checks remain an open release-validation
-gate, tracked separately as CPU-02-GPU in [TODO.md](../TODO.md).
+The CPU-02 minimum numerical core implementation and its seven-PHPT real-CUDA
+parity/view/broadcast/operator/shape gate now pass. EXEC-02 remains open:
+five isolated fault-injection tests fail, and healthy overlap/workspace GPU
+memory/race evidence is still required. These are separate gates in
+[TODO.md](../TODO.md).
 
-Build and CPU tests do not substitute for GPU runtime tests. The source has been
-validated on the following configurations:
+Build and CPU tests do not substitute for GPU runtime tests. Results below are
+scoped to their stated milestone/configuration, not cumulative coverage of the
+latest checkout.
+
+Local Docker GPU access has been restored by switching from Libkrun to WSL 2.
+The MX570 A (4 GB, driver 560.94) is visible in a CUDA 12.6.3 container, and a
+compiled native CUDA kernel completed `40 + 2 = 42`. The extension was then
+rebuilt for the image's PHP 8.1 runtime; it is no longer blocked by the previous
+PHP 8.3 module/PHP 8.1 ABI mismatch. The selected extension results below are
+separate evidence from that infrastructure probe.
+Full `nvidia-smi` monitoring exited with an error; device enumeration and the
+focused name/driver/memory query succeeded.
 
 The first EXEC-01 increment adds a shared raw-byte fixture for all 13 dtypes and
 nine layouts: dense, offset, transposed, stepped, offset/stepped, broadcast,
@@ -1052,28 +1078,103 @@ passes 7/7 host tests, including the transfer benchmark contract.
 The [GPU matrix](../tests/cuda_transfer_contract.phpt)
 adds pinned/unpinned round trips, ownership checks and large dense/sparse
 device-packing cases; it and both existing transfer regressions explicitly skip
-when the device query is unavailable. Their GPU assertions are not yet validated.
+when the device query is unavailable. They skipped in the earlier driverless
+run; all three now pass on PHP 8.1 / CUDA 12.6.3 / MX570 A.
 Transfer-cost instrumentation is available; actual GPU latency/throughput and
 device peak-memory acceptance remain open in EXEC-01.
 
 | PHP / mode | GPU and configuration | Validation |
 | --- | --- | --- |
+| 8.1 NTS CLI, current selected run | MX570 A, driver 560.94, CUDA 12.6.3, Docker WSL 2 | Native/stub API matches all 19 classes/interfaces. Selected PHPTs: **16 passed, 5 failed, 0 skipped out of 21**. Numerical parity, transfers, healthy lifetime/ordering and classifier checks pass; the five isolated fault-injection fixtures fail. This is not a full-suite or GPU-sanitizer result |
 | 8.1, Docker development image | GPU-enabled CUDA 12.6.3 environment | Previous CPU-02 foundation slice only: build, shared native shape check and 19 targeted PHPTs passed, including all 169 CPU/CUDA cast decisions, broadcast arithmetic, transfers, lifecycle and Fusion regressions; three numerical regressions passed with system malloc and two host tests with no visible GPU. Earlier milestone: full FPM-enabled suite passed 97 PHPTs with one expected CPU-only skip and seven native checks |
 | 8.1 NTS CLI and PHP-FPM | GPU-enabled CUDA 12.6.3 environment | Pre-CUDA worker fork/recycling, post-CUDA fork rejection and safe inherited-object destruction passed; 24 GPU and eight CPU-only requests across four recycled FPM workers passed with request-state reset, pending shutdown and bounded warm memory |
 | 8.4 and 8.5 ZTS | CPU-only Docker builds | Builds, snapshot, generated arginfo and native/stub reflection of all 12 classes/interfaces pass; 19/19 selected PHPTs per version, including the operator protocol, raw-byte host staging and transfer-cost reporting contract. The new API regression also passes with system malloc on PHP 8.4. Earlier CPU-02 validation passed eight host/numerical malloc regressions per version and those eight on a separate PHP 8.4 UBSan build without undefined-behavior reports |
-| 8.3 NTS | CUDA 12.3.2 build, no GPU/driver | Full CUDA build and native/stub reflection of all 19 classes/interfaces pass. SDK linker stub permits host-only loading: 15 shared/API tests pass, including two API/parser regressions that also pass with system malloc; both real-GPU parity matrices explicitly skip. The earlier native shape check passed. This is not GPU execution evidence: Docker GPU startup cannot load `libnvidia-ml.so.1` |
+| 8.3 NTS, earlier driverless run | CUDA 12.3.2 build, GPU not exposed to that container | Full CUDA build and native/stub reflection of all 19 classes/interfaces passed. SDK linker stub permitted host-only loading: 15 shared/API tests passed, including two API/parser regressions that also passed with system malloc; both real-GPU parity matrices skipped. The native shape check passed. That run preceded the WSL 2 repair and is not GPU execution evidence |
 | 8.3 NTS | GeForce MX570 A, cuDNN 8.9.7 | Beta.5: all 44 GPU PHPT tests passed, including CNN inference |
 | 8.3 and 8.5 NTS | GeForce MX570 A, without cuDNN | Beta.5: 43 GPU PHPT tests passed per runtime; optional cuDNN test skipped |
 | 8.3 NTS | GeForce MX570 A, without cuBLAS/cuDNN | Beta.5: 43 GPU PHPT tests passed; optional cuDNN test skipped |
 | 8.5 NTS/ZTS and 8.1 ZTS | RTX A2000 | Earlier tensor/JIT validation; not the latest Fusion changes |
 | PHP 8.1-8.5, NTS/ZTS | CI without CUDA/GPU | CPU-only build, backend PHPT and API matrix; GPU execution is not covered |
 
-A CUDA-profile run of [runtime shape boundaries](../tests/tensor_shape_boundaries.phpt)
-reaches device memory-pool initialization and fails without the driver; its CPU
-runs pass. That CUDA runtime path remains pending with CPU-02-GPU, not covered by
-the successful metadata-only checks. The new CUDA CI job is configured for PHP
+A driverless CUDA-profile run of [runtime shape boundaries](../tests/tensor_shape_boundaries.phpt)
+reached device memory-pool initialization and failed without the driver; its CPU
+runs passed. That historical failure does not describe current GPU availability.
+That CUDA path now passes in the seven-PHPT real-GPU numerical acceptance set.
+It is not covered by metadata-only checks. The CUDA CI job is configured for PHP
 8.1 / CUDA 12.6.3; its entry point was validated locally on PHP 8.3 / CUDA 12.3.2,
 not by running the remote workflow.
+
+### Current selected GPU run
+
+This command was run against the rebuilt PHP 8.1 module (replace the container
+name if your Compose project uses a different one):
+
+```bash
+docker exec -e NO_INTERACTION=1 -e REPORT_EXIT_STATUS=1 \
+  php-cuda-ext-php_cuda_dev-1 php -n phptensors_build-8.1/run-tests.php \
+  -q -n -d enable_dl=0 \
+  -d extension=/usr/src/ext/phptensors_build-8.1/modules/phptensors.so \
+  tests/classifier_example_contract.phpt tests/classifier_training.phpt \
+  tests/optimizer.phpt tests/autograd.phpt \
+  tests/host_array_core_cuda.phpt tests/host_array_numeric_cuda.phpt \
+  tests/tensor_shape_boundaries.phpt tests/cuda_array_operator_aliasing.phpt \
+  tests/array_manipulation_views.phpt tests/fusion_views.phpt \
+  tests/fusion_broadcast_cast.phpt tests/cuda_transfer_contract.phpt \
+  tests/ca_transfer.phpt tests/ca_transfer_fast.phpt \
+  tests/cuda_async_lifetime.phpt tests/cuda_async_ordering.phpt \
+  tests/cuda_execution_failure.phpt tests/cuda_async_execution_failure.phpt \
+  tests/cuda_batch_execution_failure.phpt tests/cuda_query_failure.phpt \
+  tests/cuda_destruction_failure.phpt
+```
+
+Result: **16 PASS / 5 FAIL / 0 SKIP**, exit status 1. `enable_dl=0` disables
+the runner's optional scan of unrelated installed extensions; the module under
+test is still loaded explicitly. The five failed tests are
+[sync](../tests/cuda_execution_failure.phpt),
+[async](../tests/cuda_async_execution_failure.phpt),
+[batch](../tests/cuda_batch_execution_failure.phpt),
+[query](../tests/cuda_query_failure.phpt) and
+[destruction](../tests/cuda_destruction_failure.phpt).
+The first four fail the fixture's `runtime remains disabled` assertion after
+the initial failure requests a restart. The destruction fixture instead reaches
+`Failed kernel was accepted`. These results need investigation; they are neither
+passes nor device-unavailable skips. Expected traps alone do not establish that
+the failure-containment contract passed.
+
+The standalone MNIST training function also completed 40 epochs. Comparing its
+metrics with the old runner found zero differences in every epoch's loss and
+validation accuracy: best epoch 37, validation 99.12%, test 98.95% on 10,000
+images. The initial scoped-capture standalone took 181.4 s; the corrected
+retained-CUDA-Graph example took 34.97 s and reported exactly two plans and
+17,200 graph launches. See the [training comparison](../examples/README.md#measured-training-result)
+for the diagnosis and measurements. The import/configuration contract
+also passes without loading the extension.
+
+The actual CLI entrypoint was also validated:
+
+```bash
+docker exec php-cuda-ext-php_cuda_dev-1 php -n \
+  -d extension=phptensors_build-8.1/modules/phptensors.so \
+  examples/08_gpu_classifier.php
+```
+
+Result: exit 0, 33.19 s wall time, validation 99.12%, test 98.95%.
+
+After the replay optimization, this targeted command passed **7/7, zero skips**:
+
+```bash
+docker exec -e NO_INTERACTION=1 -e REPORT_EXIT_STATUS=1 \
+  php-cuda-ext-php_cuda_dev-1 php -n phptensors_build-8.1/run-tests.php \
+  -q -n -d enable_dl=0 \
+  -d extension=/usr/src/ext/phptensors_build-8.1/modules/phptensors.so \
+  tests/classifier_example_contract.phpt tests/classifier_training.phpt \
+  tests/autograd.phpt tests/optimizer.phpt tests/fusion_cuda_graph.phpt \
+  tests/fusion_workspace.phpt tests/fusion_lifetime.phpt
+```
+
+This verifies the example's repeated CUDA Graph updates, partial batches,
+retained outputs and scratch/lifetime regressions. It does not change the five
+fault-injection failures above or replace GPU memory/race sanitizers.
 
 Reports for other PHP, driver, CUDA or GPU versions are welcome. Include those
 versions and the result of `./run-tests.sh --require-gpu` in an

@@ -448,24 +448,27 @@ coverage and unsupported cases instead.
   unsupported operations fail explicitly. CPU autograd/Fusion remain deferred.
   Closing implementation does not waive the CPU-02-GPU acceptance gate.
 
-- [ ] **CPU-02-GPU — Validate the completed CPU core against real CUDA execution.**
+- [x] **CPU-02-GPU — Validate the completed CPU core against real CUDA execution.**
   The expanded [CPU/CUDA parity matrix](tests/host_array_core_cuda.phpt) covers all
   dtype pairs for six comparisons, views, reductions, unary math, IEEE division
-  and batched matmul. It is not yet executed: Docker GPU startup is blocked by
-  missing `libnvidia-ml.so.1`; SDK stubs are not a substitute for real GPU results.
-  Both that matrix and the [foundation matrix](tests/host_array_numeric_cuda.phpt)
-  now skip explicitly when CUDA device discovery fails; neither skip is a pass.
-  Keep this release-validation gate open until both matrices and the affected
-  GPU/Fusion regressions pass on a functioning NVIDIA container runtime.
+  and batched matmul. Both it and the
+  [foundation matrix](tests/host_array_numeric_cuda.phpt) now pass on PHP 8.1 NTS,
+  CUDA 12.6.3, MX570 A (driver 560.94) under Docker WSL 2. The seven targeted
+  parity/view/broadcast/operator/shape PHPTs pass without skips.
+  The earlier Libkrun `libnvidia-ml.so.1` failure is historical, not a current
+  hardware limitation. These are extension results, beyond the native CUDA probe.
+  Both matrices still skip explicitly when CUDA device discovery fails; neither
+  skip is a pass. The targeted acceptance set also includes
+  [view manipulation](tests/array_manipulation_views.phpt),
+  [Fusion views](tests/fusion_views.phpt), [broadcast/casts](tests/fusion_broadcast_cast.phpt),
+  [shape boundaries](tests/tensor_shape_boundaries.phpt) and
+  [CUDA operators](tests/cuda_array_operator_aliasing.phpt).
   **Accept:** each selected operation matches the documented CUDA contract within
   dtype-specific tolerances, including scalar-left operators and non-contiguous
-  layouts. Revalidate the shared slice parser through the affected CUDA/Fusion
-  view regressions and the CUDA path in
-  [runtime shape boundaries](tests/tensor_shape_boundaries.phpt), which fails at
-  device memory-pool initialization without a driver. Also rerun the expanded
-  [CUDA operator regression](tests/cuda_array_operator_aliasing.phpt) for preserved
-  Fusion/OOM exceptions from all four increment/decrement forms. Record real-GPU
-  results separately from host-only SDK-stub runs.
+  layouts. The seven-PHPT result covers the shared slice parser, CUDA shape
+  boundaries and preserved Fusion/OOM exceptions from all four increment/decrement
+  forms. This closes the numerical parity gate, not EXEC-02's separate fault and
+  GPU memory/race acceptance. Real-GPU results remain separate from SDK-stub runs.
 
 - [x] **CPU-03 — Use dtype-native CPU storage and measure it.**
   Shared storage allocates `elements * dtype_size`, not a double array with
@@ -574,8 +577,9 @@ coverage and unsupported cases instead.
   The [GPU transfer matrix](tests/cuda_transfer_contract.phpt) exercises those
   layouts from pinned/unpinned sources, independent upload/download storage and
   device-packed dense/sparse exports. It and both existing transfer regressions
-  explicitly skip when the device query fails; their actual GPU assertions remain
-  pending. The [cost benchmark](tests/benchmark_transfers.php) now separates host
+  now pass on PHP 8.1 NTS / CUDA 12.6.3 / MX570 A under WSL 2: three passed,
+  zero skipped. They retain explicit skips for unavailable devices.
+  The [cost benchmark](tests/benchmark_transfers.php) now separates host
   import/export, upload, download and device-buffer export, with all 13 dtypes,
   three default sizes and five layouts. Each case has a fresh worker, byte checks,
   first-call resolution flags, calibrated warm batches, raw samples, median/p95,
@@ -611,9 +615,10 @@ coverage and unsupported cases instead.
   CPU runners pass 19/19 per version; the rebuilt CUDA module passes 7/7 host/API
   tests. Public signatures/snapshot are unchanged.
   The expanded [GPU regression](tests/cuda_async_lifetime.phpt) covers callback
-  reconstruction, aborted scalar conversion and reentrant argument cleanup, but
-  explicitly skips without a device. Actual GPU assertions, overlapping
-  Fusion/custom streams, mutation/read ordering, failure injection and race checks
+  reconstruction, aborted scalar conversion and reentrant argument cleanup.
+  It and the [mixed-ordering regression](tests/cuda_async_ordering.phpt) now pass
+  on PHP 8.1 NTS / CUDA 12.6.3 / MX570 A under WSL 2 without skips.
+  Healthy overlap/workspace memory/race checks and fault-injection acceptance
   remain open. No device-wide synchronization was added to the allocator.
   **Completion/ordering increment:** fixed a use-after-free in global `wait()`,
   added shared owner-context checks for async queries/synchronization, and stopped
@@ -629,7 +634,8 @@ coverage and unsupported cases instead.
   driver/context outcomes in CPU 8.4/8.5 and CUDA 8.3 gates, plus host ASan/UBSan.
   CPU suites remain 19/19 per version; CUDA build and 7/7 host/API tests pass.
   GPU regressions now also cover completion flags, repeated global waits and
-  pressure beyond 100 submitted operations; they still SKIP without a device.
+  pressure beyond 100 submitted operations; these assertions passed in the
+  current real-GPU lifetime run.
   **Fail-closed implementation:** unconfirmed CompiledModule/Fusion completion,
   including sync/batch/destruction and warmup/value cleanup, now disables CUDA
   process-wide and requests worker restart. The allocator retains device storage
@@ -641,10 +647,19 @@ coverage and unsupported cases instead.
   tests and host ASan/UBSan; both now run in the CUDA API-only gate.
   Added isolated GPU trap regressions for sync, async, batch, query and destruction,
   plus explicit custom/Fusion/custom ordering and released PHP inputs. All seven
-  GPU regressions (including lifetime) currently SKIP due to unavailable device
-  query. CUDA build + 7/7 host/API and CPU 19/19 per version pass.
-  **Final acceptance BLOCKED:** real GPU execution, overlap/workspace memory/race
-  checking and isolated fault-injection assertions have not run. Keep EXEC-02 open
+  GPU regressions (including lifetime) skipped in the earlier driverless run.
+  CUDA build + 7/7 host/API and CPU 19/19 per version passed in that run.
+  Docker now exposes the GPU through WSL 2; the earlier SKIPs are historical,
+  not a claim that this machine lacks a GPU.
+  **Current real-GPU result:** lifetime and mixed ordering pass, but all five
+  isolated fault-injection PHPTs fail (zero skips). Sync, async, batch and query
+  reach the restart-error check, then fail the fixture's `runtime remains disabled`
+  assertion; destruction does not observe the expected failure at `unset()`.
+  These failures need investigation, not weaker expectations or device skips.
+  The complete selected run is 16 passed / 5 failed / 0 skipped out of 21 PHPTs;
+  see [commands and scope](docs/guide.md#validation-status).
+  **Final acceptance OPEN:** resolve the fault-injection failures and collect
+  healthy overlap/workspace GPU memory/race evidence. Keep EXEC-02 open
   until that evidence exists; host sanitizers and SDK stubs do not substitute for it.
   Evidence: the general allocator recycles freed blocks immediately without stream/
   event ownership ([pool](src/backends/cuda/memory_pool.c)); Fusion and CompiledModule

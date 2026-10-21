@@ -116,18 +116,17 @@ function modelExpectedBoundaries(ModelConfiguration $configuration, bool $withLo
 
 /**
  * -------------------------------------------------------------------------
- * Creates a closure with positional parameters for Fusion capture.
+ * Adapts the advanced runner's array-based body to Fusion's tensor arguments.
  * -------------------------------------------------------------------------
  */
 function fusionPositionalCallback(Closure $body, int $arity): Closure
 {
-    $parameters = [];
-    for ($index = 0; $index < $arity; $index++) {
-        $parameters[] = '$input' . $index;
-    }
-    $arguments = implode(', ', $parameters);
-    $code = 'return static function (' . $arguments . ') use ($body) { return $body([' . $arguments . ']); };';
-    return eval($code);
+    return static function (CudaArray ...$inputs) use ($body, $arity) {
+        if (count($inputs) !== $arity) {
+            throw new InvalidArgumentException("Expected $arity Fusion inputs, got " . count($inputs) . '.');
+        }
+        return $body($inputs);
+    };
 }
 
 /**

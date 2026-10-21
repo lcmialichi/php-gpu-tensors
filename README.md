@@ -163,7 +163,7 @@ initialization. Shapes have at most 10 axes. See the guide for lifecycle rules.
 | [Custom kernels](examples/04_custom_jit_kernels.php) | Compile CUDA C++ from PHP |
 | [Async launches](examples/05_jit_async_execution.php) | Submit work, poll and synchronize |
 | [Fusion and CUDA Graphs](examples/07_fusion_graph.php) | Capture, inspect and replay plans |
-| [Train an MLP](examples/08_gpu_classifier.php) | Autograd, SGD/AdamW and reusable training plans |
+| [Train an MLP](examples/08_gpu_classifier.php) | MNIST in one readable loop: autograd, AdamW and Fusion replay |
 
 The runnable examples above require the CUDA backend and a working GPU.
 See the [examples guide](examples/README.md) for setup and the
@@ -214,10 +214,14 @@ job builds and checks metadata and host-side behavior **without executing GPU wo
 Current local CPU validation includes PHP 8.4/8.5 ZTS; earlier milestones also
 ran real-GPU suites.
 
-**The latest CPU-core parity and affected CUDA/Fusion regressions still need a
-working GPU runtime.** Compiling CUDA or loading it through an SDK linker stub
-does not prove GPU execution. See the [validation history](docs/guide.md#validation-status)
-and open release gates in [TODO.md](TODO.md).
+Local Docker GPU passthrough now works under WSL 2. CPU/CUDA numerical parity,
+transfer correctness and healthy lifetime/ordering checks pass on the MX570 A.
+**Release validation is not all green:** the selected run has 16 passed,
+five failed fault-injection tests and zero skips; GPU memory/race acceptance
+remains open. Historical SDK-stub runs are host-only evidence, not GPU coverage.
+See the
+[validation history](docs/guide.md#validation-status) and open gates in
+[TODO.md](TODO.md) for the scope of each run.
 
 ## Help build it
 
