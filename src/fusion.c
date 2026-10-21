@@ -529,8 +529,12 @@ static int fusion_execution_finish(fusion_execution *execution)
             CUDA_THROW_RUNTIME("Asynchronous fusion failed (CUDA error %d)", execution->error);
         return execution->error == CUDA_SUCCESS;
     }
-    if (!fusion_context_check(plan)) return 0;
-    CUresult synchronization = execution->stream ? cuStreamSynchronize(execution->stream) : CUDA_SUCCESS;
+    int already_failed = tensor_mem_failed();
+    if (!already_failed && !fusion_context_check(plan)) return 0;
+    CUresult synchronization = already_failed ? CUDA_ERROR_LAUNCH_FAILED :
+        (execution->stream ? cuStreamSynchronize(execution->stream) : CUDA_SUCCESS);
+    if (synchronization != CUDA_SUCCESS && !already_failed)
+        cuda_fail_runtime("asynchronous Fusion completion", synchronization);
     if (execution->stream) plan->synchronizations++;
     if (execution->error == CUDA_SUCCESS) execution->error = synchronization;
     execution->finished = 1;
@@ -539,7 +543,8 @@ static int fusion_execution_finish(fusion_execution *execution)
         fusion_copy_outputs(&execution->result, &graph->outputs, plan, execution->values);
         plan->executions++;
     }
-    else if (!EG(exception)) CUDA_THROW_RUNTIME("Asynchronous fusion failed (CUDA error %d)", execution->error);
+    else if (!already_failed && !EG(exception))
+        CUDA_THROW_RUNTIME("Asynchronous fusion failed (CUDA error %d)", execution->error);
     fusion_unbind(plan, execution->values);
     execution->values = NULL;
     for (size_t i = 0; i < execution->retained_count; i++)
@@ -616,9 +621,11 @@ ZEND_METHOD(FusionGraph, run)
     if (ok) fusion_copy_outputs(return_value, &graph->outputs, graph->plan, values);
     if (!ok)
     {
-        cudaError_t error = cudaDeviceSynchronize();
-        if (error != cudaSuccess && !EG(exception))
-            CUDA_THROW_RUNTIME("Fusion cleanup failed: %s", cudaGetErrorString(error));
+        if (!tensor_mem_failed())
+        {
+            cudaError_t error = cudaDeviceSynchronize();
+            if (error != cudaSuccess) cuda_fail_runtime("Fusion cleanup synchronization", error);
+        }
     }
     fusion_unbind(graph->plan, values);
     if (!ok || EG(exception)) RETURN_THROWS();
@@ -651,6 +658,7 @@ ZEND_METHOD(FusionExecution, __construct) {}
 ZEND_METHOD(FusionExecution, wait)
 {
     ZEND_PARSE_PARAMETERS_NONE();
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     fusion_execution *execution = Z_FUSION_EXECUTION_P(ZEND_THIS);
     if (Z_ISUNDEF(execution->graph))
     {
@@ -664,6 +672,7 @@ ZEND_METHOD(FusionExecution, wait)
 ZEND_METHOD(FusionExecution, isFinished)
 {
     ZEND_PARSE_PARAMETERS_NONE();
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     fusion_execution *execution = Z_FUSION_EXECUTION_P(ZEND_THIS);
     if (Z_ISUNDEF(execution->graph))
     {
@@ -676,7 +685,7 @@ ZEND_METHOD(FusionExecution, isFinished)
     if (error == CUDA_ERROR_NOT_READY) RETURN_FALSE;
     if (error != CUDA_SUCCESS)
     {
-        CUDA_THROW_RUNTIME("Cannot query fusion completion (CUDA error %d)", error);
+        cuda_fail_runtime("Fusion completion query", error);
         RETURN_THROWS();
     }
     RETURN_TRUE;
@@ -843,20 +852,26 @@ static void fusion_execution_free(zend_object *object)
     {
         fusion_plan *plan = Z_FUSION_GRAPH_P(&execution->graph)->plan;
         CUcontext previous;
-        CUresult error = cuCtxPushCurrent(plan->context);
+        CUresult error = tensor_mem_failed() ? CUDA_ERROR_LAUNCH_FAILED : cuCtxPushCurrent(plan->context);
         if (error == CUDA_SUCCESS)
         {
             if (!execution->finished) fusion_execution_finish(execution);
-            if (execution->event) fusion_cleanup_error("Destroying completion event", cuEventDestroy(execution->event));
-            if (execution->stream) {
+            if (execution->event && !tensor_mem_failed())
+                fusion_cleanup_error("Destroying completion event", cuEventDestroy(execution->event));
+            if (execution->stream && !tensor_mem_failed()) {
                 cudaError_t workspace_error = cuda_reduction_release_stream((cudaStream_t)execution->stream);
                 if (workspace_error != cudaSuccess)
                     php_error_docref(NULL, E_WARNING, "Releasing reduction workspace failed: %s", cudaGetErrorString(workspace_error));
                 fusion_cleanup_error("Destroying async stream", cuStreamDestroy(execution->stream));
             }
-            fusion_cleanup_error("Restoring async context", cuCtxPopCurrent(&previous));
+            CUresult restore = tensor_mem_failed() ? CUDA_SUCCESS : cuCtxPopCurrent(&previous);
+            if (restore != CUDA_SUCCESS) cuda_fail_runtime("Fusion cleanup context restoration", restore);
         }
-        else php_error_docref(NULL, E_WARNING, "Cannot clean up fusion execution context (CUDA error %d)", error);
+        else
+        {
+            if (!tensor_mem_failed()) cuda_fail_runtime("Fusion cleanup context selection", error);
+            if (!execution->finished) fusion_execution_finish(execution);
+        }
         zval_ptr_dtor(&execution->graph);
     }
     if (!Z_ISUNDEF(execution->result)) zval_ptr_dtor(&execution->result);

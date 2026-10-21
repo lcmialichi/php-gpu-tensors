@@ -38,6 +38,17 @@ if [ "$CPU_ONLY" -eq 1 ]; then
    exit 0
 fi
 "$PHP_BIN" -n -d extension="$PWD/modules/phptensors.so" tests/check_native_api.php --cuda
+POOL_TEST_BINARY=$(mktemp)
+trap 'rm -f "$POOL_TEST_BINARY"' EXIT
+${CC:-cc} -D_GNU_SOURCE -pthread $($PHP_CONFIG --includes) \
+   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc/backends/cuda \
+   tests/memory_pool_test.c -o "$POOL_TEST_BINARY"
+"$POOL_TEST_BINARY"
+${CC:-cc} -D_GNU_SOURCE -ffunction-sections -fdata-sections \
+   -Wl,--gc-sections $($PHP_CONFIG --includes) \
+   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc -Isrc/backends/cuda -Isrc/cuda_array \
+   tests/cuda_runtime_failure_test.c -o "$POOL_TEST_BINARY"
+"$POOL_TEST_BINARY"
 if [ "${1:-}" = "--cuda-api-only" ]; then
    make test TESTS="tests/native_api_contract.phpt tests/native_api_cuda_parsers.phpt tests/operator_overload_protocol.phpt tests/operator_overload_aliasing.phpt tests/host_array_operator_aliasing.phpt tests/host_array_transfer_layout.phpt tests/transfer_benchmark_contract.phpt" TEST_PHP_ARGS="-q"
    exit 0
@@ -48,12 +59,6 @@ if [ "${1:-}" = "--require-gpu" ]; then
       exit 1
    fi
 fi
-POOL_TEST_BINARY=$(mktemp)
-trap 'rm -f "$POOL_TEST_BINARY"' EXIT
-${CC:-cc} -D_GNU_SOURCE -pthread $($PHP_CONFIG --includes) \
-   -I"${CUDA_HOME:-/usr/local/cuda}/include" -Isrc/backends/cuda \
-   tests/memory_pool_test.c -o "$POOL_TEST_BINARY"
-"$POOL_TEST_BINARY"
 NPY_TEST_BINARY=$(mktemp)
 trap 'rm -f "$POOL_TEST_BINARY" "$NPY_TEST_BINARY"' EXIT
 ${CC:-cc} -D_GNU_SOURCE -ffunction-sections -fdata-sections \

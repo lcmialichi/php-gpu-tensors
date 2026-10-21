@@ -33,6 +33,8 @@ enum {
 
 int tensor_mem_claim_owner(void);
 int tensor_mem_owner_status(void);
+int tensor_mem_failed(void);
+void tensor_mem_mark_failed(void);
 int tensor_mem_init(size_t size);
 int tensor_mem_device(void);
 CUcontext tensor_mem_context(void);

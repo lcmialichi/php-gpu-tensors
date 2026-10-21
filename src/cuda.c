@@ -246,9 +246,8 @@ ZEND_FUNCTION(cuda_tune_matmul)
     cudaError_t sync_status = cudaDeviceSynchronize();
     if (sync_status != cudaSuccess)
     {
+        cuda_fail_runtime("matmul autotuning synchronization", sync_status);
         cuda_tensor_destroy(output);
-        CUDA_THROW_RUNTIME("Failed to synchronize before matmul autotuning: %s",
-                           cudaGetErrorString(sync_status));
         RETURN_THROWS();
     }
 
@@ -425,9 +424,10 @@ ZEND_FUNCTION(cuda_get_runtime_version)
 ZEND_FUNCTION(cuda_synchronize)
 {
     if (!cuda_tensor_require_context()) RETURN_THROWS();
-    if (!cuda_wrapper_synchronize())
+    cudaError_t status = cudaDeviceSynchronize();
+    if (status != cudaSuccess)
     {
-        zend_throw_exception(cuda_runtime_exception_ce, "Failed to synchronize device", 0);
+        cuda_fail_runtime("device synchronization", status);
         RETURN_THROWS();
     }
 
@@ -499,7 +499,7 @@ static zend_function_entry cuda_functions[] = {
 
 PHP_MSHUTDOWN_FUNCTION(cuda)
 {
-    if (tensor_mem_owner_status() < 0) return SUCCESS;
+    if (tensor_mem_owner_status() < 0 || tensor_mem_failed()) return SUCCESS;
     cuda_blas_shutdown();
     cuda_reduction_shutdown();
     cuda_nn_shutdown();
@@ -511,7 +511,7 @@ PHP_MSHUTDOWN_FUNCTION(cuda)
 PHP_RSHUTDOWN_FUNCTION(cuda)
 {
     fusion_request_shutdown();
-    if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT) return SUCCESS;
+    if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT || tensor_mem_failed()) return SUCCESS;
     cuda_blas_shutdown();
     cuda_blas_set_precision(CUDA_MATMUL_PRECISION_FP32_STRICT);
     cuda_reduction_shutdown();

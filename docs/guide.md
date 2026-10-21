@@ -416,7 +416,35 @@ make concurrent reads/writes safe. Wait before reading results or modifying
 storage used by pending custom kernels. Arbitrary kernels remain responsible for
 bounds checks and their mutation/gradient behavior. The allocator was not changed
 to add device-wide synchronization on every free.
+Before feeding custom-kernel output into Fusion, finish the producing module
+operation with `sync()` or `wait()`. During pending Fusion execution, custom
+launches and mutations remain rejected by the existing Fusion guard; call
+`FusionExecution::wait()` before submitting custom consumers. Device-level
+synchronization alone does not release that execution record's pending guard.
 See the [JIT examples](../examples/README.md).
+
+#### Unconfirmed completion: fail closed
+
+If a CompiledModule/Fusion completion check or cleanup cannot confirm that its
+consumers stopped, the CUDA runtime is disabled for the rest of the PHP process.
+The error explicitly requests a process restart. Clearing CUDA errors, resetting
+a device, ending the PHP request, or constructing another module does not revive
+it. CPU-only HostArray operations remain independent.
+
+Device allocations are not returned to the pool, freed or reused after that
+transition. CUDA streams, modules, graph handles, pinned storage and library
+workspaces are abandoned to process-exit driver cleanup instead of attempting
+unsafe teardown; ordinary PHP/native bookkeeping can still be destroyed.
+Reserved GPU memory can remain visible until the worker exits. Restart the
+affected CLI process or PHP-FPM worker; do not keep sending CUDA requests to it.
+This is deliberate failure containment, not recoverable OOM or invalid-argument
+handling. Ordinary validation/conversion errors that submit no failing GPU work
+do not disable the runtime.
+
+When cleanup fails while a PHP exception is already pending, that original
+exception is preserved and the CUDA failure/restart requirement is logged.
+Healthy completion still releases resources normally. There is no extra
+device-wide synchronization on the normal allocation/free path.
 
 The [native lease test](../tests/module_tensor_lease_test.c) exercises reference
 ownership, duplicate arguments and shared views without a GPU, using a test
@@ -431,6 +459,26 @@ three build profiles and with host ASan/UBSan.
 The GPU regression's PHP syntax is checked, but its execution assertions still
 require a working device. Mocked driver tests do not validate GPU memory safety,
 destruction after fatal driver failures, or ordering between independent streams.
+The [pool unit](../tests/memory_pool_test.c) now also verifies that a failed runtime
+cannot allocate, recycle, destroy or reactivate its pool, without calling CUDA
+again. The [runtime-failure unit](../tests/cuda_runtime_failure_test.c) executes the
+production reporting/owner guards with mocked Zend/pool dependencies to check
+restart errors and preservation of an existing exception. Both run in the
+CUDA API-only gate and passed with host ASan/UBSan.
+
+The [mixed-ordering regression](../tests/cuda_async_ordering.phpt) covers explicit
+custom-to-Fusion-to-custom boundaries and releasing the original PHP inputs.
+Separate PHPT processes exercise intentional kernel traps for
+[sync](../tests/cuda_execution_failure.phpt),
+[async](../tests/cuda_async_execution_failure.phpt),
+[batch](../tests/cuda_batch_execution_failure.phpt),
+[query](../tests/cuda_query_failure.phpt) and
+[destruction](../tests/cuda_destruction_failure.phpt) failure paths.
+These fault-injection tests deliberately invalidate their own CUDA process:
+never run their fixture inside an application worker you intend to reuse.
+They remain SKIP without a working GPU. Final EXEC-02 acceptance still requires
+healthy overlap/lifetime tests under real GPU memory/race checking and the
+isolated fault tests; expected kernel traps are not a clean sanitizer run.
 
 ## Optional kernel fusion
 

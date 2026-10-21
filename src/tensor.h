@@ -18,6 +18,7 @@
 
 int cuda_tensor_require_context(void);
 int cuda_require_runtime_owner(void);
+void cuda_fail_runtime(const char *operation, int error);
 int cuda_initialize_memory_pool(void);
 
 struct _operation_t;

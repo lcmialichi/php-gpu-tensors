@@ -137,15 +137,18 @@ void fusion_plan_free(fusion_plan *plan)
 {
     if (!plan || tensor_mem_owner_status() < 0) return;
     CUcontext current = NULL, popped;
-    CUresult context_error = cuCtxGetCurrent(&current);
-    int pushed = context_error == CUDA_SUCCESS && plan->context && current != plan->context;
+    CUresult context_error = CUDA_SUCCESS;
+    if (plan->context && !tensor_mem_failed()) context_error = cuCtxGetCurrent(&current);
+    int pushed = !tensor_mem_failed() && context_error == CUDA_SUCCESS &&
+        plan->context && current != plan->context;
     if (pushed)
     {
         context_error = cuCtxPushCurrent(plan->context);
         if (context_error != CUDA_SUCCESS) pushed = 0;
     }
-    fusion_cleanup_error("Selecting module context", context_error);
-    if (plan->indexed_validation_error)
+    if (context_error != CUDA_SUCCESS && !tensor_mem_failed())
+        cuda_fail_runtime("Fusion plan cleanup context selection", context_error);
+    if (plan->indexed_validation_error && !tensor_mem_failed())
     {
         cudaError_t status = cudaFree(plan->indexed_validation_error);
         if (status != cudaSuccess)
@@ -153,19 +156,23 @@ void fusion_plan_free(fusion_plan *plan)
                              "Releasing Fusion index validation status failed: %s",
                              cudaGetErrorString(status));
     }
-    if (plan->graph_exec) fusion_cleanup_error("Destroying graph executable", cuGraphExecDestroy(plan->graph_exec));
-    if (plan->cuda_graph) fusion_cleanup_error("Destroying CUDA graph", cuGraphDestroy(plan->cuda_graph));
+    if (plan->graph_exec && !tensor_mem_failed())
+        fusion_cleanup_error("Destroying graph executable", cuGraphExecDestroy(plan->graph_exec));
+    if (plan->cuda_graph && !tensor_mem_failed())
+        fusion_cleanup_error("Destroying CUDA graph", cuGraphDestroy(plan->cuda_graph));
     if (plan->graph_nodes) efree(plan->graph_nodes);
-    if (plan->graph_capture_stream)
+    if (plan->graph_capture_stream && !tensor_mem_failed())
     {
         cudaError_t error = cuda_reduction_release_stream((cudaStream_t)plan->graph_capture_stream);
         if (error != cudaSuccess)
             php_error_docref(NULL, E_WARNING, "Releasing graph reduction workspace failed: %s", cudaGetErrorString(error));
         fusion_cleanup_error("Destroying graph capture stream", cuStreamDestroy(plan->graph_capture_stream));
     }
-    if (plan->sync_stream) fusion_cleanup_error("Destroying replay stream", cuStreamDestroy(plan->sync_stream));
-    if (plan->sync_ready) fusion_cleanup_error("Destroying replay readiness event", cuEventDestroy(plan->sync_ready));
-    if (plan->module)
+    if (plan->sync_stream && !tensor_mem_failed())
+        fusion_cleanup_error("Destroying replay stream", cuStreamDestroy(plan->sync_stream));
+    if (plan->sync_ready && !tensor_mem_failed())
+        fusion_cleanup_error("Destroying replay readiness event", cuEventDestroy(plan->sync_ready));
+    if (plan->module && !tensor_mem_failed())
     {
         CUresult error = cuModuleUnload(plan->module);
         if (error != CUDA_SUCCESS && !EG(exception))

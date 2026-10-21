@@ -20,6 +20,11 @@ static int tensor_storage_range_valid(tensor_t *tensor, size_t element_offset,
 
 int cuda_require_runtime_owner(void)
 {
+    if (tensor_mem_failed())
+    {
+        CUDA_THROW_RUNTIME("CUDA runtime is unusable after an unconfirmed execution failure; restart the PHP process");
+        return 0;
+    }
     int status = tensor_mem_claim_owner();
     if (status == CUDA_OWNER_CURRENT) return 1;
     if (status == CUDA_OWNER_FORKED)
@@ -27,6 +32,19 @@ int cuda_require_runtime_owner(void)
     else
         CUDA_THROW_RUNTIME("CUDA is owned by another thread; only one CUDA owner thread per process is supported");
     return 0;
+}
+
+void cuda_fail_runtime(const char *operation, int error)
+{
+    tensor_mem_mark_failed();
+    char message[384];
+    snprintf(message, sizeof(message),
+             "CUDA runtime disabled after %s (status %d); completion is unconfirmed, allocations remain reserved; restart the PHP process",
+             operation, error);
+    if (EG(exception))
+        php_log_err(message);
+    else
+        CUDA_THROW_RUNTIME("%s", message);
 }
 
 int cuda_tensor_require_context(void)
@@ -821,7 +839,7 @@ void cuda_tensor_destroy(tensor_t *tensor)
         {
             if (tensor->host_pinned)
             {
-                if (tensor_mem_owner_status() == CUDA_OWNER_CURRENT)
+                if (tensor_mem_owner_status() == CUDA_OWNER_CURRENT && !tensor_mem_failed())
                     cudaFreeHost(tensor->data);
             }
             else

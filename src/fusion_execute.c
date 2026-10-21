@@ -430,7 +430,7 @@ int fusion_enqueue(fusion_plan *plan, tensor_t **values, CUstream stream, fusion
             plan->synchronizations++;
             if (error != CUDA_SUCCESS)
             {
-                CUDA_THROW_RUNTIME("CUDA graph native warmup failed (CUDA error %d)", error);
+                cuda_fail_runtime("CUDA graph native warmup completion", error);
                 return 0;
             }
             plan->native_warmed = 1;
@@ -615,11 +615,12 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
         }
         if (persistent) plan->sync_stream = stream;
         int ok = fusion_enqueue(plan, values, stream, persistent ? FUSION_BUFFERS_WORKSPACE : FUSION_BUFFERS_FRESH);
-        error = cuStreamSynchronize(stream);
+        int already_failed = tensor_mem_failed();
+        error = already_failed ? CUDA_ERROR_LAUNCH_FAILED : cuStreamSynchronize(stream);
         plan->synchronizations++;
-        if (!persistent) fusion_cleanup_error("Destroying execution stream", cuStreamDestroy(stream));
-        if (error != CUDA_SUCCESS && !EG(exception))
-            CUDA_THROW_RUNTIME("Fusion stream failed (CUDA error %d)", error);
+        if (error != CUDA_SUCCESS && !already_failed) cuda_fail_runtime("Fusion stream completion", error);
+        if (!persistent && !tensor_mem_failed())
+            fusion_cleanup_error("Destroying execution stream", cuStreamDestroy(stream));
         if (ok && error == CUDA_SUCCESS) plan->executions++;
         plan->execution_complete = ok && error == CUDA_SUCCESS;
         return ok && error == CUDA_SUCCESS;
@@ -779,7 +780,7 @@ int fusion_execute(fusion_plan *plan, tensor_t **values)
     plan->synchronizations++;
     if (runtime_error != cudaSuccess)
     {
-        CUDA_THROW_RUNTIME("Fusion synchronization failed: %s", cudaGetErrorString(runtime_error));
+        cuda_fail_runtime("Fusion fallback completion", runtime_error);
         return 0;
     }
     plan->execution_complete = 1;
@@ -797,11 +798,10 @@ tensor_t **fusion_values(fusion_plan *plan)
 
 void fusion_values_free(fusion_plan *plan, tensor_t **values)
 {
-    if (!plan->execution_complete)
+    if (!plan->execution_complete && !tensor_mem_failed())
     {
         cudaError_t error = cudaDeviceSynchronize();
-        if (error != cudaSuccess && !EG(exception))
-            CUDA_THROW_RUNTIME("Fusion cleanup synchronization failed: %s", cudaGetErrorString(error));
+        if (error != cudaSuccess) cuda_fail_runtime("Fusion value cleanup synchronization", error);
     }
     fusion_values_release(plan, values);
 }

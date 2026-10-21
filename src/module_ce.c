@@ -334,6 +334,11 @@ static zend_bool module_initialize_global_cuda(cuda_module_object *module)
 static void module_release_shared_context_locked(void)
 {
     if (!g_shared_context) return;
+    if (tensor_mem_failed())
+    {
+        g_shared_context = NULL;
+        return;
+    }
     CUresult result = cuDevicePrimaryCtxRelease(g_primary_device);
     if (result != CUDA_SUCCESS)
         module_log_error("Failed to release primary CUDA context: %s", get_cuda_error_string(result));
@@ -552,7 +557,7 @@ static void module_destroy_stream_pool(cuda_module_object *module)
 
         for (int i = 0; i < module->stream_pool->size; i++)
         {
-            if (module->stream_pool->streams[i].stream)
+            if (module->stream_pool->streams[i].stream && !tensor_mem_failed())
             {
                 CUresult result = cuStreamDestroy(module->stream_pool->streams[i].stream);
                 if (result != CUDA_SUCCESS && result != CUDA_ERROR_INVALID_HANDLE)
@@ -783,7 +788,7 @@ static void module_return_stream_to_pool(cuda_module_object *module, CUstream st
             if (module->stream_pool->streams[i].context != module->cu_context)
             {
                 module_log_error("Stream context mismatch, destroying stream");
-                cuStreamDestroy(stream);
+                if (!tensor_mem_failed()) cuStreamDestroy(stream);
                 module->stream_pool->streams[i].stream = NULL;
             }
 
@@ -807,7 +812,7 @@ static void module_cleanup_cuda_resources(cuda_module_object *module)
         {
             if (cu_module_ptr && *cu_module_ptr)
             {
-                cu_result = cuModuleUnload(*cu_module_ptr);
+                cu_result = tensor_mem_failed() ? CUDA_SUCCESS : cuModuleUnload(*cu_module_ptr);
                 if (cu_result != CUDA_SUCCESS && cu_result != CUDA_ERROR_INVALID_HANDLE)
                 {
                     module_log_error("Failed to unload CUDA module: %s",
@@ -825,7 +830,7 @@ static void module_cleanup_cuda_resources(cuda_module_object *module)
 
     if (module->cu_stream)
     {
-        cu_result = cuStreamDestroy(module->cu_stream);
+        cu_result = tensor_mem_failed() ? CUDA_SUCCESS : cuStreamDestroy(module->cu_stream);
         if (cu_result != CUDA_SUCCESS && cu_result != CUDA_ERROR_INVALID_HANDLE)
         {
             module_log_error("Failed to destroy CUDA stream: %s",
@@ -954,6 +959,9 @@ static CUresult module_check_async_operation(cuda_async_operation *op, int synch
     if (!op->is_active)
         return CUDA_SUCCESS;
 
+    if (tensor_mem_failed())
+        return CUDA_ERROR_LAUNCH_FAILED;
+
     module_stream_status status = module_stream_check(op->context, op->stream, synchronize);
     if (status.result == CUDA_SUCCESS)
         op->is_active = 0;
@@ -962,11 +970,8 @@ static CUresult module_check_async_operation(cuda_async_operation *op, int synch
         op->last_error = status.result;
         snprintf(op->error_message, sizeof(op->error_message), "%s",
                  get_cuda_error_string(status.result));
+        cuda_fail_runtime("async stream completion check", status.result);
     }
-    if (status.restore_result != CUDA_SUCCESS && !EG(exception))
-        CUDA_THROW_RUNTIME("CUDA async stream check failed: %s; context restoration failed: %s",
-                           get_cuda_error_string(status.result),
-                           get_cuda_error_string(status.restore_result));
     return status.result;
 }
 
@@ -1122,12 +1127,7 @@ static void module_cleanup_all_async_operations(cuda_module_object *module)
         {
             if (op->is_active && op->stream)
             {
-                CUcontext old_context = NULL;
-                if (cuCtxPushCurrent(op->context) == CUDA_SUCCESS)
-                {
-                    cuStreamSynchronize(op->stream);
-                    cuCtxPopCurrent(&old_context);
-                }
+                module_check_async_operation(op, 1);
             }
             module_cleanup_async_operation_by_id(module, op->id);
         }
@@ -1425,7 +1425,7 @@ ZEND_METHOD(CompiledModule, autoGrid)
 
     if (!module_ensure_cuda_initialized(module))
     {
-        CUDA_THROW_RUNTIME("Failed to initialize CUDA context");
+        if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to initialize CUDA context");
         RETURN_FALSE;
     }
 
@@ -1488,7 +1488,7 @@ ZEND_METHOD(CompiledModule, launch)
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
     if (!module_ensure_cuda_initialized(module))
     {
-        CUDA_THROW_RUNTIME("Failed to initialize CUDA context");
+        if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to initialize CUDA context");
         RETURN_FALSE;
     }
 
@@ -1531,10 +1531,10 @@ ZEND_METHOD(CompiledModule, launch)
     if (success)
     {
         // Nota: Um launch síncrono requer a sincronização aqui no final.
-        CUresult cu_result = cuStreamSynchronize(module->cu_stream);
-        if (cu_result != CUDA_SUCCESS)
+        module_stream_status status = module_stream_check(module->cu_context, module->cu_stream, 1);
+        if (status.result != CUDA_SUCCESS)
         {
-            module_check_cuda_error(module, cu_result, "kernel execution");
+            cuda_fail_runtime("synchronous kernel completion", status.result);
             success = 0;
         }
         else
@@ -1566,7 +1566,7 @@ ZEND_METHOD(CompiledModule, launchAsync)
 
     if (!module_ensure_cuda_initialized(module))
     {
-        CUDA_THROW_RUNTIME("Failed to initialize CUDA context");
+        if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to initialize CUDA context");
         RETURN_FALSE;
     }
 
@@ -1697,7 +1697,7 @@ ZEND_METHOD(CompiledModule, launchAsyncBatch)
 
     if (!module_ensure_cuda_initialized(module))
     {
-        CUDA_THROW_RUNTIME("Failed to initialize CUDA context");
+        if (!EG(exception)) CUDA_THROW_RUNTIME("Failed to initialize CUDA context");
         RETURN_FALSE;
     }
 
@@ -1825,16 +1825,22 @@ ZEND_METHOD(CompiledModule, launchAsyncBatch)
     }
     ZEND_HASH_FOREACH_END();
 
-    cu_result = cuStreamSynchronize(batch_stream);
+    module_stream_status status = {CUDA_ERROR_LAUNCH_FAILED, CUDA_SUCCESS};
+    if (!tensor_mem_failed())
+        status = module_stream_check(module->cu_context, batch_stream, 1);
+    cu_result = status.result;
+    if (cu_result != CUDA_SUCCESS)
+        cuda_fail_runtime("batch kernel completion", cu_result);
 
-    cuCtxPopCurrent(&old_context);
+    CUresult restore_result = tensor_mem_failed() ? CUDA_SUCCESS : cuCtxPopCurrent(&old_context);
+    if (restore_result != CUDA_SUCCESS)
+    {
+        cuda_fail_runtime("batch context restoration", restore_result);
+        batch_success = 0;
+    }
 
     if (cu_result != CUDA_SUCCESS)
     {
-        if (!EG(exception))
-            module_check_cuda_error(module, cu_result, "batch stream synchronization");
-        else
-            module_log_error("Batch cleanup synchronization failed: %s", get_cuda_error_string(cu_result));
         batch_success = 0;
     }
 

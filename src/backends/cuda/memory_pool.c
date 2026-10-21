@@ -22,6 +22,7 @@ static int initialized = 0;
 static int owner_device = -1;
 static CUcontext owner_context = NULL;
 static atomic_long owner_process = ATOMIC_VAR_INIT(0);
+static atomic_int runtime_failed = ATOMIC_VAR_INIT(0);
 static _Thread_local int owns_runtime;
 static pthread_mutex_t owner_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -55,6 +56,14 @@ int tensor_mem_owner_status(void) {
     return owns_runtime ? CUDA_OWNER_CURRENT : CUDA_OWNER_THREAD;
 }
 
+int tensor_mem_failed(void) {
+    return atomic_load_explicit(&runtime_failed, memory_order_acquire);
+}
+
+void tensor_mem_mark_failed(void) {
+    atomic_store_explicit(&runtime_failed, 1, memory_order_release);
+}
+
 int tensor_mem_claim_owner(void) {
     int status = tensor_mem_owner_status();
     if (status != CUDA_OWNER_UNCLAIMED) return status;
@@ -78,6 +87,7 @@ CUcontext tensor_mem_context(void) {
 }
 
 int tensor_mem_context_matches(void) {
+    if (tensor_mem_failed()) return 0;
     if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT) return 0;
     int device = -1;
     CUcontext context = NULL;
@@ -149,6 +159,7 @@ static void insert_into_pool_and_merge(FreeBlock **head, FreeBlock *new_block) {
 }
 
 int tensor_mem_init(size_t size) {
+    if (tensor_mem_failed()) return 0;
     if (tensor_mem_claim_owner() != CUDA_OWNER_CURRENT) return 0;
     if (initialized) return 1;
     if (size == 0 || size > SIZE_MAX - (ALIGNMENT - 1)) return 0;
@@ -337,6 +348,7 @@ static void *allocate_from_pool_logic(FreeBlock **pool_head, size_t aligned_size
 }
 
 void cuda_mem_free(void *ptr) {
+    if (tensor_mem_failed()) return;
     if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT) return;
     if (!initialized || !ptr) return;
     int pushed;
@@ -369,6 +381,8 @@ void cuda_mem_free(void *ptr) {
 }
 
 void tensor_mem_destroy() {
+    /* Unconfirmed consumers may still use these allocations until process exit. */
+    if (tensor_mem_failed()) return;
     if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT) return;
     if (!initialized) return;
     int pushed;

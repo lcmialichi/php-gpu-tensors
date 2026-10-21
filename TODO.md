@@ -630,8 +630,22 @@ coverage and unsupported cases instead.
   CPU suites remain 19/19 per version; CUDA build and 7/7 host/API tests pass.
   GPU regressions now also cover completion flags, repeated global waits and
   pressure beyond 100 submitted operations; they still SKIP without a device.
-  Fatal-driver destruction, sync/batch failure cleanup, workspaces, real GPU fault
-  injection and cross-stream dependency/mutation rules still need verification.
+  **Fail-closed implementation:** unconfirmed CompiledModule/Fusion completion,
+  including sync/batch/destruction and warmup/value cleanup, now disables CUDA
+  process-wide and requests worker restart. The allocator retains device storage
+  instead of recycling/freeing it; poisoned-runtime teardown abandons CUDA handles,
+  pinned storage and library workspaces to process-exit cleanup. The original PHP
+  exception survives cleanup failures, with an explicit secondary log.
+  Ordinary argument errors and healthy allocation reuse keep their existing paths.
+  The pool and production runtime-reporting/owner helpers pass driverless native
+  tests and host ASan/UBSan; both now run in the CUDA API-only gate.
+  Added isolated GPU trap regressions for sync, async, batch, query and destruction,
+  plus explicit custom/Fusion/custom ordering and released PHP inputs. All seven
+  GPU regressions (including lifetime) currently SKIP due to unavailable device
+  query. CUDA build + 7/7 host/API and CPU 19/19 per version pass.
+  **Final acceptance BLOCKED:** real GPU execution, overlap/workspace memory/race
+  checking and isolated fault-injection assertions have not run. Keep EXEC-02 open
+  until that evidence exists; host sanitizers and SDK stubs do not substitute for it.
   Evidence: the general allocator recycles freed blocks immediately without stream/
   event ownership ([pool](src/backends/cuda/memory_pool.c)); Fusion and CompiledModule
   implement different retention/synchronization mechanisms.

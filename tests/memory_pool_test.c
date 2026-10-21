@@ -190,6 +190,37 @@ int main(void)
     assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     assert(tensor_mem_owner_status() == CUDA_OWNER_UNCLAIMED);
 
+    worker = fork();
+    assert(worker >= 0);
+    if (worker == 0)
+    {
+        alarm(5);
+        assert(tensor_mem_init(64 * 1024 * 1024));
+        void *uncertain = cuda_mem_alloc(128);
+        void *large_uncertain = cuda_mem_alloc(12 * 1024 * 1024);
+        assert(uncertain && large_uncertain && !tensor_mem_failed());
+        size_t reserved = live_bytes;
+        size_t allocations = device_allocation_calls;
+        int queries = context_queries;
+        AllocatedBlock *tracked = allocated_list;
+        tensor_mem_mark_failed();
+        tensor_mem_mark_failed();
+        assert(tensor_mem_failed());
+        assert(!tensor_mem_context_matches());
+        assert(!tensor_mem_init(1024 * 1024));
+        assert(cuda_mem_alloc(128) == NULL);
+        cuda_mem_free(uncertain);
+        cuda_mem_free(large_uncertain);
+        tensor_mem_destroy();
+        assert(tensor_mem_failed() && initialized && allocated_list == tracked);
+        assert(live_bytes == reserved && device_allocation_calls == allocations);
+        assert(context_queries == queries && invalid_frees == 0);
+        _exit(0);
+    }
+    assert(waitpid(worker, &status, 0) == worker);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    assert(!tensor_mem_failed());
+
     fail_metadata = 1;
     assert(!tensor_mem_init(64 * 1024 * 1024));
     assert(live_bytes == 0);

@@ -120,7 +120,10 @@ final class Compiler
     public function clearCache(): bool {}
 }
 
-/** PTX module supporting synchronous and queued stream launches. */
+/**
+ * PTX module supporting synchronous and queued stream launches.
+ * Unconfirmed execution failure disables CUDA until the PHP process restarts.
+ */
 final class CompiledModule
 {
     /** Load PTX into a CUDA context. @throws RuntimeException */
