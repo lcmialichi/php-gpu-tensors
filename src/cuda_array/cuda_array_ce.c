@@ -1821,6 +1821,31 @@ ZEND_METHOD(CudaArray, any)
     create_result_object(return_value, result);
 }
 
+static tensor_t *cuda_array_standard_deviation(tensor_t *variance)
+{
+    scalar_value_t zero = {0}, one = {0};
+    zero.dtype = one.dtype = variance->dtype;
+    if (variance->dtype == DTYPE_FLOAT64) one.v.f64 = 1.0;
+    else one.v.f32 = 1.0f;
+    tensor_t *mask = cuda_scalar_op(variance, zero, OP_EQ);
+    tensor_t *zeros = mask ? cuda_tensor_create_with_value(
+        variance->shape, variance->ndims, zero, variance->dtype) : NULL;
+    tensor_t *ones = zeros ? cuda_tensor_create_with_value(
+        variance->shape, variance->ndims, one, variance->dtype) : NULL;
+    tensor_t *safe = ones ? (fusion_active() ? fusion_where(mask, ones, variance)
+        : cuda_tensor_where(mask, ones, variance)) : NULL;
+    tensor_t *root = safe ? cuda_unary_op(safe, OP_SQRT) : NULL;
+    tensor_t *result = root ? (fusion_active() ? fusion_where(mask, zeros, root)
+        : cuda_tensor_where(mask, zeros, root)) : NULL;
+    if (root) cuda_tensor_destroy(root);
+    if (safe) cuda_tensor_destroy(safe);
+    if (ones) cuda_tensor_destroy(ones);
+    if (zeros) cuda_tensor_destroy(zeros);
+    if (mask) cuda_tensor_destroy(mask);
+    cuda_tensor_destroy(variance);
+    return result;
+}
+
 static tensor_t *cuda_array_variance(tensor_t *input, int axis, zend_long correction,
                                      int standard_deviation)
 {
@@ -1872,9 +1897,7 @@ static tensor_t *cuda_array_variance(tensor_t *input, int axis, zend_long correc
     }
     if (!variance || !standard_deviation) return variance;
 
-    tensor_t *result = cuda_unary_op(variance, OP_SQRT);
-    cuda_tensor_destroy(variance);
-    return result;
+    return cuda_array_standard_deviation(variance);
 }
 
 ZEND_METHOD(CudaArray, var)
@@ -3266,16 +3289,8 @@ static void sync_php_object_shape(cuda_array_obj *obj, tensor_t *tensor)
     }
 }
 
-int cuda_array_init(size_t mb)
+int cuda_array_init(void)
 {
-    if (!tensor_mem_init(mb))
-    {
-        php_error_docref(NULL, E_WARNING,
-                         "Failed to initialize CUDA memory pool with %ld MB.",
-                         mb);
-        return 0;
-    }
-
     memcpy(&cuda_array_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
 
     cuda_array_handlers.offset = XtOffsetOf(cuda_array_obj, obj);

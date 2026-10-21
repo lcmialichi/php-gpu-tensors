@@ -24,6 +24,15 @@ typedef MemoryBlock AllocatedBlock;
 typedef MemoryBlock FreeBlock;
 typedef MemoryBlock CachedBlock;
 
+enum {
+    CUDA_OWNER_UNCLAIMED = 0,
+    CUDA_OWNER_CURRENT = 1,
+    CUDA_OWNER_FORKED = -1,
+    CUDA_OWNER_THREAD = -2
+};
+
+int tensor_mem_claim_owner(void);
+int tensor_mem_owner_status(void);
 int tensor_mem_init(size_t size);
 int tensor_mem_device(void);
 CUcontext tensor_mem_context(void);

@@ -244,6 +244,7 @@ static int fusion_call(zend_fcall_info *fci, zend_fcall_info_cache *fcc, zval *o
     ZVAL_UNDEF(output);
     if (zend_call_function(fci, fcc) == FAILURE && !EG(exception))
         CUDA_THROW_RUNTIME("Failed to invoke Fusion callback");
+    if (!EG(exception) && fusion_active() && !cuda_require_runtime_owner()) return 0;
     return !EG(exception);
 }
 
@@ -371,6 +372,18 @@ ZEND_METHOD(Fusion, compile)
     zend_hash_init(&seen, 8, NULL, NULL, 0);
     if (ok) ok = fusion_output_roots(&outputs, &roots, &root_count, &seen);
     zend_hash_destroy(&seen);
+    for (size_t i = 0; ok && i < root_count; i++)
+    {
+        if (!roots[i]->requires_grad) continue;
+        size_t j = 0;
+        while (j < scope->backward_count && scope->backward_tensors[j] != roots[i]) j++;
+        if (j == scope->backward_count)
+        {
+            CUDA_THROW_INVALID("Fusion::compile() cannot detach tracked outputs implicitly; "
+                "call backward() inside the callback or detach() the output explicitly");
+            ok = 0;
+        }
+    }
     fusion_plan *plan = ok ? fusion_build_plan(roots, root_count) : NULL;
     if (ok && !plan) ok = 0;
     if (ok)
@@ -442,6 +455,7 @@ static tensor_t **fusion_bind(fusion_graph *graph, zval *inputs, int count)
         CUDA_THROW_INVALID("FusionGraph expects %zu inputs, got %d", plan->input_count, count);
         return NULL;
     }
+    if (!cuda_require_runtime_owner()) return NULL;
     if (plan->use_cuda_graph && plan->pending)
     {
         CUDA_THROW_RUNTIME("A CUDA Graph replay is already pending; wait before reusing this graph");
@@ -463,6 +477,13 @@ static tensor_t **fusion_bind(fusion_graph *graph, zval *inputs, int count)
         }
         tensor_t *tensor = Z_CUDA_ARRAY_P(input)->tensor_handle;
         tensor_t *example = plan->input_examples[i];
+        if (tensor->requires_grad && !example->requires_grad)
+        {
+            CUDA_THROW_INVALID("FusionGraph input %d enables gradients absent from capture; "
+                "enable requiresGrad() before compile and capture backward(), or detach() the input", i);
+            ok = 0;
+            break;
+        }
         if (!fusion_materialize(tensor)) { ok = 0; break; }
         if (tensor->dtype != example->dtype || tensor->ndims != example->ndims ||
             (tensor->ndims && (memcmp(tensor->shape, example->shape, tensor->ndims * sizeof(int)) ||
@@ -812,6 +833,11 @@ static zend_object *fusion_execution_create(zend_class_entry *ce)
 static void fusion_execution_free(zend_object *object)
 {
     fusion_execution *execution = (fusion_execution *)((char *)object - XtOffsetOf(fusion_execution, std));
+    if (tensor_mem_owner_status() < 0)
+    {
+        zend_object_std_dtor(object);
+        return;
+    }
     if (!Z_ISUNDEF(execution->graph))
     {
         fusion_plan *plan = Z_FUSION_GRAPH_P(&execution->graph)->plan;

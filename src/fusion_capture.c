@@ -69,7 +69,8 @@ tensor_t *fusion_record(fusion_kind kind, tensor_t *a, tensor_t *b,
         {
             tensor_t *existing = scope->nodes[i];
             fusion_node *node = existing->fusion;
-            if (node && node->kind == kind && node->a == a && node->b == b &&
+            if (node && !existing->autograd_consumed &&
+                node->kind == kind && node->a == a && node->b == b &&
                 node->op == op && existing->dtype == dtype)
             {
                 existing->ref_count++;
@@ -113,6 +114,27 @@ void fusion_release_node(tensor_t *tensor)
     efree(node);
 }
 
+void fusion_record_backward(tensor_t **tensors, size_t count)
+{
+    fusion_scope *scope = CUDA_G(fusion_scope);
+    if (!scope || !scope->compiling) return;
+    for (size_t i = 0; i < count; i++)
+    {
+        size_t j = 0;
+        while (j < scope->backward_count && scope->backward_tensors[j] != tensors[i]) j++;
+        if (j < scope->backward_count) continue;
+        if (scope->backward_count == scope->backward_capacity)
+        {
+            scope->backward_capacity = scope->backward_capacity
+                ? scope->backward_capacity * 2 : 16;
+            scope->backward_tensors = safe_erealloc(scope->backward_tensors,
+                scope->backward_capacity, sizeof(tensor_t *), 0);
+        }
+        tensors[i]->ref_count++;
+        scope->backward_tensors[scope->backward_count++] = tensors[i];
+    }
+}
+
 void fusion_scope_free(fusion_scope *scope, int invalidate)
 {
     if (!scope) return;
@@ -132,6 +154,9 @@ void fusion_scope_free(fusion_scope *scope, int invalidate)
     }
     for (size_t i = 0; i < scope->count; i++)
         cuda_tensor_destroy(scope->nodes[i]);
+    for (size_t i = 0; i < scope->backward_count; i++)
+        cuda_tensor_destroy(scope->backward_tensors[i]);
+    if (scope->backward_tensors) efree(scope->backward_tensors);
     if (scope->nodes) efree(scope->nodes);
     efree(scope);
 }

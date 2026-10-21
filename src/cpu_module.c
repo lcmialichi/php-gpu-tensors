@@ -4,7 +4,7 @@
 
 #include "php.h"
 #include "backend_contract.h"
-#include "cpu_host_array.h"
+#include "contiguous_array_ce.h"
 #include "cuda.h"
 #include "cuda_exceptions.h"
 #include "ext/standard/info.h"
@@ -101,7 +101,7 @@ PHP_MINIT_FUNCTION(cuda)
     }
     cuda_register_exceptions();
     register_operator_overload_class();
-    if (cpu_host_array_init() != SUCCESS ||
+    if (contiguous_array_init() != SUCCESS ||
         register_unavailable_cuda_array() != SUCCESS) {
         return FAILURE;
     }

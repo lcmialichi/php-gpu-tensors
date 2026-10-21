@@ -5,6 +5,8 @@
 #include <pthread.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdatomic.h>
+#include <unistd.h>
 #include "php.h"
 #include "memory_pool.h"
 
@@ -19,6 +21,9 @@ static pthread_mutex_t central_mutex;
 static int initialized = 0;
 static int owner_device = -1;
 static CUcontext owner_context = NULL;
+static atomic_long owner_process = ATOMIC_VAR_INIT(0);
+static _Thread_local int owns_runtime;
+static pthread_mutex_t owner_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static size_t max_pool_size = 0;
 static size_t current_allocated = 0;
@@ -43,6 +48,27 @@ static void __cache_release_block(void *ptr, size_t size);
 static int expand_pool_if_needed(size_t aligned_size);
 static int can_allocate_more(size_t requested_size);
 
+int tensor_mem_owner_status(void) {
+    long process = atomic_load_explicit(&owner_process, memory_order_acquire);
+    if (!process) return CUDA_OWNER_UNCLAIMED;
+    if (process != (long)getpid()) return CUDA_OWNER_FORKED;
+    return owns_runtime ? CUDA_OWNER_CURRENT : CUDA_OWNER_THREAD;
+}
+
+int tensor_mem_claim_owner(void) {
+    int status = tensor_mem_owner_status();
+    if (status != CUDA_OWNER_UNCLAIMED) return status;
+    if (pthread_mutex_trylock(&owner_mutex) != 0) return CUDA_OWNER_THREAD;
+    status = tensor_mem_owner_status();
+    if (status == CUDA_OWNER_UNCLAIMED) {
+        owns_runtime = 1;
+        atomic_store_explicit(&owner_process, (long)getpid(), memory_order_release);
+        status = CUDA_OWNER_CURRENT;
+    }
+    pthread_mutex_unlock(&owner_mutex);
+    return status;
+}
+
 int tensor_mem_device(void) {
     return initialized ? owner_device : -1;
 }
@@ -52,6 +78,7 @@ CUcontext tensor_mem_context(void) {
 }
 
 int tensor_mem_context_matches(void) {
+    if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT) return 0;
     int device = -1;
     CUcontext context = NULL;
     return initialized &&
@@ -122,6 +149,7 @@ static void insert_into_pool_and_merge(FreeBlock **head, FreeBlock *new_block) {
 }
 
 int tensor_mem_init(size_t size) {
+    if (tensor_mem_claim_owner() != CUDA_OWNER_CURRENT) return 0;
     if (initialized) return 1;
     if (size == 0 || size > SIZE_MAX - (ALIGNMENT - 1)) return 0;
 
@@ -309,6 +337,7 @@ static void *allocate_from_pool_logic(FreeBlock **pool_head, size_t aligned_size
 }
 
 void cuda_mem_free(void *ptr) {
+    if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT) return;
     if (!initialized || !ptr) return;
     int pushed;
     if (!cleanup_context_enter(&pushed)) return;
@@ -340,6 +369,7 @@ void cuda_mem_free(void *ptr) {
 }
 
 void tensor_mem_destroy() {
+    if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT) return;
     if (!initialized) return;
     int pushed;
     if (!cleanup_context_enter(&pushed)) return;

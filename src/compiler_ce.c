@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "nvidia_types.h"
+#include "tensor.h"
 
 zend_class_entry *cuda_compiler_ce;
 static zend_object_handlers compiler_handlers;
@@ -848,6 +849,7 @@ ZEND_METHOD(Compiler, __construct)
 
     compiler = Z_CUDA_COMPILER_P(ZEND_THIS);
 
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     compiler->devices = (HashTable *)emalloc(sizeof(HashTable));
     zend_hash_init(compiler->devices, 8, NULL, NULL, 0);
 
@@ -1043,6 +1045,7 @@ ZEND_METHOD(Compiler, header)
 
 ZEND_METHOD(Compiler, compile)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     cuda_compiler_object *compiler;
     zend_bool optimize = 1;
     zend_bool debug = 0;
@@ -1378,6 +1381,7 @@ static zend_object *compiler_create_object(zend_class_entry *class_type)
 
 int cuda_compile_generated_source(zend_string *source, const char **names, size_t count, zval *module)
 {
+    if (!cuda_require_runtime_owner()) return 0;
     int device;
     struct cudaDeviceProp properties;
     cudaError_t error = cudaGetDevice(&device);

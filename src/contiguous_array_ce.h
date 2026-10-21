@@ -73,6 +73,7 @@ ZEND_METHOD(ContiguousArray, __debugInfo);
 ZEND_METHOD(ContiguousArray, isPinned);
 ZEND_METHOD(ContiguousArray, getElementSize);
 ZEND_METHOD(ContiguousArray, count);
+ZEND_METHOD(ContiguousArray, getIterator);
 ZEND_METHOD(ContiguousArray, at);
 ZEND_METHOD(ContiguousArray, __unserialize);
 ZEND_METHOD(ContiguousArray, __serialize);

@@ -135,7 +135,7 @@ static void fusion_schedule(fusion_plan *plan, size_t id)
 
 void fusion_plan_free(fusion_plan *plan)
 {
-    if (!plan) return;
+    if (!plan || tensor_mem_owner_status() < 0) return;
     CUcontext current = NULL, popped;
     CUresult context_error = cuCtxGetCurrent(&current);
     int pushed = context_error == CUDA_SUCCESS && plan->context && current != plan->context;
@@ -347,7 +347,11 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
                 plan->incompatibility = plan->items[plan->steps[i].root].reason;
             }
         }
-    fusion_generate_source(plan);
+    if (!fusion_generate_source(plan))
+    {
+        fusion_plan_free(plan);
+        return NULL;
+    }
     for (size_t i = 0; i < plan->step_count; i++)
     {
         fusion_step *step = &plan->steps[i];

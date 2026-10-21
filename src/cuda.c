@@ -55,6 +55,7 @@ static PHP_INI_MH(OnUpdateMemSize)
     {
         php_error_docref(NULL, E_WARNING,
                          "Changing the CUDA memory pool size at runtime (via ini_set) has no effect.");
+        return FAILURE;
     }
 
     return SUCCESS;
@@ -91,21 +92,6 @@ static PHP_GINIT_FUNCTION(cuda)
 PHP_MINIT_FUNCTION(cuda)
 {
     REGISTER_INI_ENTRIES();
-    const char *ini_value = INI_STR("phptensors.cuda.memory_pool_size");
-    const char *legacy_ini_value = INI_STR("cuda.memory_size");
-    if (legacy_ini_value && legacy_ini_value[0] &&
-        (!ini_value || strcmp(ini_value, "3G") == 0))
-    {
-        ini_value = legacy_ini_value;
-    }
-    size_t pool_size = parse_size_string(ini_value);
-
-    int count = cuda_wrapper_get_device_count();
-    if (count < 0)
-    {
-        php_error_docref(NULL, E_WARNING, "CUDA initialization failed");
-    }
-
     if (php_tensors_backend_contract_init() != SUCCESS)
     {
         return FAILURE;
@@ -117,7 +103,7 @@ PHP_MINIT_FUNCTION(cuda)
     contiguous_array_init();
     fusion_init();
     cuda_nn_init();
-    if (!cuda_array_init(pool_size))
+    if (!cuda_array_init())
     {
         return FAILURE;
     }
@@ -131,6 +117,7 @@ PHP_MINIT_FUNCTION(cuda)
 
 ZEND_FUNCTION(cuda_get_device_count)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     int count = cuda_wrapper_get_device_count();
 
     if (count < 0)
@@ -145,6 +132,7 @@ ZEND_FUNCTION(cuda_get_device_count)
 ZEND_FUNCTION(cuda_get_backend_info)
 {
     ZEND_PARSE_PARAMETERS_NONE();
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     cuda_backend_info info = {0};
     cuda_blas_info(&info);
     cuda_reduction_info(&info);
@@ -171,6 +159,7 @@ ZEND_FUNCTION(cuda_set_matmul_precision)
     Z_PARAM_STR(precision)
     ZEND_PARSE_PARAMETERS_END();
 
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     if (!fusion_check_mutation()) RETURN_THROWS();
 
     int mode;
@@ -311,6 +300,7 @@ ZEND_FUNCTION(cuda_get_device_info)
     ZEND_PARSE_PARAMETERS_END();
 
     if (!cuda_validate_device_id(device_id)) RETURN_THROWS();
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     char name[256];
     int major, minor;
     size_t total_mem;
@@ -334,6 +324,7 @@ ZEND_FUNCTION(cuda_get_device_info)
 
 ZEND_FUNCTION(cuda_set_device)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     if (!fusion_check_mutation()) RETURN_THROWS();
     zend_long device_id;
 
@@ -342,18 +333,18 @@ ZEND_FUNCTION(cuda_set_device)
     ZEND_PARSE_PARAMETERS_END();
 
     if (!cuda_validate_device_id(device_id)) RETURN_THROWS();
+    if (!cuda_tensor_require_context()) RETURN_THROWS();
     if (device_id != tensor_mem_device())
     {
         CUDA_THROW_RUNTIME("PhpTensors owns device %d; select another GPU with CUDA_VISIBLE_DEVICES before starting PHP", tensor_mem_device());
         RETURN_THROWS();
     }
-    if (!cuda_tensor_require_context()) RETURN_THROWS();
-
     RETURN_TRUE;
 }
 
 ZEND_FUNCTION(cuda_get_current_device)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     int device = cuda_wrapper_get_current_device();
 
     if (device == -1)
@@ -395,6 +386,7 @@ ZEND_FUNCTION(cuda_device_reset)
 
 ZEND_FUNCTION(cuda_get_driver_version)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     int version = cuda_wrapper_get_driver_version();
 
     if (version == -1)
@@ -413,6 +405,7 @@ ZEND_FUNCTION(cuda_get_driver_version)
 
 ZEND_FUNCTION(cuda_get_runtime_version)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     int version = cuda_wrapper_get_runtime_version();
 
     if (version == -1)
@@ -443,6 +436,7 @@ ZEND_FUNCTION(cuda_synchronize)
 
 ZEND_FUNCTION(cuda_get_last_error)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     int error = cuda_wrapper_error();
 
     if (error == 0)
@@ -458,6 +452,7 @@ ZEND_FUNCTION(cuda_get_last_error)
 
 ZEND_FUNCTION(cuda_clear_error)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     cuda_wrapper_error();
     RETURN_TRUE;
 }
@@ -472,6 +467,7 @@ ZEND_FUNCTION(cuda_get_peer_access)
     ZEND_PARSE_PARAMETERS_END();
 
     if (!cuda_validate_device_id(device1) || !cuda_validate_device_id(device2)) RETURN_THROWS();
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     int result = cuda_wrapper_get_peer_access((int)device1, (int)device2);
 
     if (result == -1)
@@ -503,6 +499,7 @@ static zend_function_entry cuda_functions[] = {
 
 PHP_MSHUTDOWN_FUNCTION(cuda)
 {
+    if (tensor_mem_owner_status() < 0) return SUCCESS;
     cuda_blas_shutdown();
     cuda_reduction_shutdown();
     cuda_nn_shutdown();
@@ -514,6 +511,7 @@ PHP_MSHUTDOWN_FUNCTION(cuda)
 PHP_RSHUTDOWN_FUNCTION(cuda)
 {
     fusion_request_shutdown();
+    if (tensor_mem_owner_status() != CUDA_OWNER_CURRENT) return SUCCESS;
     cuda_blas_shutdown();
     cuda_blas_set_precision(CUDA_MATMUL_PRECISION_FP32_STRICT);
     cuda_reduction_shutdown();
@@ -539,23 +537,47 @@ zend_module_entry phptensors_module_entry = {
 
 static size_t parse_size_string(const char *str)
 {
-    char unit = str[strlen(str) - 1];
-    size_t n = atol(str);
-
-    switch (unit)
+    if (!str || *str < '0' || *str > '9') return 0;
+    size_t n = 0, multiplier = 1;
+    while (*str >= '0' && *str <= '9')
     {
-    case 'G':
-    case 'g':
-        return n * 1024ULL * 1024ULL * 1024ULL;
-    case 'M':
-    case 'm':
-        return n * 1024ULL * 1024ULL;
-    case 'K':
-    case 'k':
-        return n * 1024ULL;
-    default:
-        return n;
+        unsigned int digit = (unsigned int)(*str++ - '0');
+        if (n > (SIZE_MAX - digit) / 10) return 0;
+        n = n * 10 + digit;
     }
+    if (*str)
+    {
+        switch (*str++)
+        {
+            case 'G': case 'g': multiplier = 1024ULL * 1024ULL * 1024ULL; break;
+            case 'M': case 'm': multiplier = 1024ULL * 1024ULL; break;
+            case 'K': case 'k': multiplier = 1024ULL; break;
+            default: return 0;
+        }
+        if (*str) return 0;
+    }
+    return n > SIZE_MAX / multiplier ? 0 : n * multiplier;
+}
+
+int cuda_initialize_memory_pool(void)
+{
+    if (!cuda_require_runtime_owner()) return 0;
+    const char *value = INI_STR("phptensors.cuda.memory_pool_size");
+    const char *legacy = INI_STR("cuda.memory_size");
+    if (legacy && legacy[0] && (!value || strcmp(value, "3G") == 0))
+        value = legacy;
+    size_t size = parse_size_string(value);
+    if (!size || size > SIZE_MAX - (ALIGNMENT - 1))
+    {
+        CUDA_THROW_INVALID("CUDA memory pool size must be a positive byte count with an optional K, M or G suffix, without overflow");
+        return 0;
+    }
+    if (!tensor_mem_init(size))
+    {
+        CUDA_THROW_RUNTIME("Failed to initialize the CUDA memory pool");
+        return 0;
+    }
+    return 1;
 }
 
 #ifdef COMPILE_DL_PHPTENSORS

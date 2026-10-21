@@ -23,6 +23,7 @@ static void fusion_graph_discard(fusion_plan *plan)
 }
 int fusion_context_check(fusion_plan *plan)
 {
+    if (!cuda_require_runtime_owner()) return 0;
     int device;
     CUcontext context;
     cudaError_t runtime_error = cudaGetDevice(&device);

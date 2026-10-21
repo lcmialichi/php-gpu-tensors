@@ -3483,6 +3483,13 @@
                     "parameters": [],
                     "returnType": "int"
                 },
+                "getIterator": {
+                    "static": false,
+                    "abstract": false,
+                    "returnsReference": false,
+                    "parameters": [],
+                    "returnType": "Traversable"
+                },
                 "getNdims": {
                     "static": false,
                     "abstract": false,

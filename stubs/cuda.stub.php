@@ -56,7 +56,7 @@ final class Fusion
     private function __construct() {}
     /** Execute once and return materialized tensor outputs; false uses eager execution. */
     public static function run(callable $callback, bool $enabled = true): mixed {}
-    /** Trace with metadata-only inputs and compile all fused segments together. */
+    /** Compile segments together. Tracked outputs require backward inside the callback or explicit detach. */
     public static function compile(callable $callback, array $inputs, bool $cudaGraph = false): FusionGraph {}
     /** Request-local bounded PTX cache counters. */
     public static function getCacheStats(): array {}
@@ -64,7 +64,7 @@ final class Fusion
     public static function clearCache(): void {}
 }
 
-/** Reusable synchronous plan specialized for input shapes, dtypes and strides. */
+/** Plan specialized for shapes/dtypes/strides and captured gradient inputs; replay does not build dynamic autograd history. */
 final class FusionGraph
 {
     private function __construct() {}
@@ -94,7 +94,10 @@ final class FusionExecution
 
 namespace PhpTensors;
 
-/** Compile CUDA C++ source into PTX with NVRTC. */
+/**
+ * Compile CUDA C++ source into PTX with NVRTC.
+ * Construct only after worker fork; CUDA belongs to the first calling process/thread.
+ */
 class Compiler
 {
     /** Configure source and target architecture (e.g. sm_86); null selects the device. */
@@ -164,8 +167,10 @@ namespace PhpTensors;
 /**
  * Host-resident tensor; unsupported operations throw RuntimeException.
  */
-final class HostArray implements Tensor, OperatorOverloadable
+final class HostArray implements Tensor, OperatorOverloadable, \IteratorAggregate, \Countable
 {
+    /** Iterate scalars in one dimension or zero-copy HostArray rows in higher ranks. */
+    public function getIterator(): \Traversable {}
     /** Copy a rectangular numeric PHP array into CPU storage. */
     public function __construct(array $values, ?string $dtype = 'float32', bool $pinned = false) {}
     /** Create from row-major flat values and an explicit shape. */
@@ -404,7 +409,10 @@ final class HostArray implements Tensor, OperatorOverloadable
 namespace PhpTensors;
 
 /** Contiguous host-memory buffer for explicit copies to CUDA. */
-/** GPU-resident n-dimensional tensor; [] uses native dimension handlers. */
+/**
+ * GPU-resident n-dimensional tensor; [] uses native dimension handlers.
+ * Lazily initializes CUDA storage in the worker; post-CUDA fork and other threads are rejected.
+ */
 class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
 {
     /** Import row-major little-endian packed bytes matching shape and dtype. */
@@ -446,11 +454,11 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     public function add(CudaArray|float|int|bool $other): CudaArray {}
     /** Elementwise subtract with scalar or broadcast-compatible tensor. */
     public function subtract(CudaArray|float|int|bool $other): CudaArray {}
-    /** Elementwise maximum with broadcasting. Ties route gradients to the left operand. */
+    /** Elementwise maximum with broadcasting. Exact ties split gradients equally, including scalar bounds. */
     public function maximum(CudaArray|float|int|bool $other): CudaArray {}
-    /** Elementwise minimum with broadcasting. Ties route gradients to the left operand. */
+    /** Elementwise minimum with broadcasting. Exact ties split gradients equally, including scalar bounds. */
     public function minimum(CudaArray|float|int|bool $other): CudaArray {}
-    /** Clamp values to optional inclusive scalar bounds. */
+    /** Compose maximum/minimum bounds: input derivative 0.5 at either boundary, 0.25 where equal bounds coincide. */
     public function clamp(float|int|null $min = null, float|int|null $max = null): CudaArray {}
     /**
      * Matrix multiply (2D or batched). Matching float32, float16 and bfloat16
@@ -499,7 +507,7 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
      * @param int|list<int>|null $axis
      */
     public function roll(int|array $shift, int|array|null $axis = null): CudaArray {}
-    /** Elementwise exponentiation. */
+    /** Elementwise exponentiation. A scalar zero exponent has a zero input gradient. */
     public function power(CudaArray|float|int $other): CudaArray {}
     /** Elementwise square root. */
     public function sqrt(): CudaArray {}
@@ -509,13 +517,13 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     public function expm1(): CudaArray {}
     /** Elementwise base-2 exponential. */
     public function exp2(): CudaArray {}
-    /** Elementwise natural logarithm. */
+    /** Elementwise natural logarithm; backward is NaN outside the real domain and follows IEEE at zero. */
     public function log(): CudaArray {}
-    /** Elementwise log(1 + x), evaluated with improved precision near zero. */
+    /** Precise log(1 + x); backward is NaN below -1 and follows IEEE at -1. */
     public function log1p(): CudaArray {}
-    /** Elementwise base-2 logarithm. */
+    /** Elementwise base-2 logarithm; backward is NaN below zero and follows IEEE at zero. */
     public function log2(): CudaArray {}
-    /** Elementwise base-10 logarithm. */
+    /** Elementwise base-10 logarithm; backward is NaN below zero and follows IEEE at zero. */
     public function log10(): CudaArray {}
     /** Elementwise sine. */
     public function sin(): CudaArray {}
@@ -577,7 +585,7 @@ class CudaArray implements \PhpTensors\Tensor, \PhpTensors\OperatorOverloadable
     public function any(?int $axis = null): CudaArray {}
     /** Population variance by default; correction adjusts the denominator. */
     public function var(?int $axis = null, int $correction = 0): CudaArray {}
-    /** Square root of var(). */
+    /** Square root of var(); constant groups have zero input gradients. */
     public function std(?int $axis = null, int $correction = 0): CudaArray {}
     /** Numerically stable softmax; low-precision input is widened to float32. */
     public function softmax(int $axis = -1): CudaArray {}

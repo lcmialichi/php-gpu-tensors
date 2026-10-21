@@ -1,6 +1,7 @@
 #ifndef WHERE_KERNELS_H
 #define WHERE_KERNELS_H
 
+#include <cuda_runtime.h>
 #include "../../tensor.h"
 
 #ifdef __cplusplus

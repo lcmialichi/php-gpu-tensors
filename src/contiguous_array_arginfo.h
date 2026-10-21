@@ -52,8 +52,11 @@ ZEND_END_ARG_INFO()
 ZEND_BEGIN_ARG_INFO_EX(arginfo_contiguous_array_getElementSize, 0, 0, 0)
 ZEND_END_ARG_INFO()
 
-ZEND_BEGIN_ARG_INFO_EX(arginfo_contiguous_array_count, 0, 0, 0)
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_contiguous_array_count, 0, 0, IS_LONG, 0)
 ZEND_END_ARG_INFO();
+
+ZEND_BEGIN_ARG_WITH_RETURN_OBJ_INFO_EX(arginfo_contiguous_array_iterator, 0, 0, Traversable, 0)
+ZEND_END_ARG_INFO()
 
 ZEND_BEGIN_ARG_INFO_EX(arginfo_contiguous_array_toGpu, 0, 0, 0)
 ZEND_END_ARG_INFO();
@@ -133,6 +136,7 @@ static const zend_function_entry contiguous_array_methods[] = {
     ZEND_ME(ContiguousArray, getBackend, arginfo_contiguous_array_getBackend, ZEND_ACC_PUBLIC)
     ZEND_ME(ContiguousArray, getElementSize, arginfo_contiguous_array_getElementSize, ZEND_ACC_PUBLIC)
     ZEND_ME(ContiguousArray, count, arginfo_contiguous_array_count, ZEND_ACC_PUBLIC)
+    ZEND_ME(ContiguousArray, getIterator, arginfo_contiguous_array_iterator, ZEND_ACC_PUBLIC)
     ZEND_ME(ContiguousArray, toGpu, arginfo_contiguous_array_toGpu, ZEND_ACC_PUBLIC)
     ZEND_ME(ContiguousArray, toHost, arginfo_contiguous_array_toHost, ZEND_ACC_PUBLIC)
     ZEND_ME(ContiguousArray, toBuffer, arginfo_contiguous_array_toBuffer, ZEND_ACC_PUBLIC)

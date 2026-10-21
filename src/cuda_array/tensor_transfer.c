@@ -2,6 +2,7 @@
 #include "tensor_scalar.h"
 #include "cuda_exceptions.h"
 #include "contiguous_array_ce.h"
+#ifdef HAVE_CUDA
 #include "factory_kernels.h"
 #include "memory_pool.h"
 
@@ -83,6 +84,7 @@ static int tensor_download(const tensor_t *tensor, void *destination)
     }
     return 1;
 }
+#endif
 
 typedef void (*php_leaf_writer)(HashTable *, const void *, size_t, size_t, int);
 
@@ -168,6 +170,7 @@ static int build_php_array(zval *result, const void *data, int dim, const tensor
             writer(array, data, offset, tensor->strides[dim], size);
             return 1;
         }
+#ifdef HAVE_CUDA
         size_t remaining = (size_t)size;
         while (remaining)
         {
@@ -192,6 +195,7 @@ static int build_php_array(zval *result, const void *data, int dim, const tensor
             offset += count;
             remaining -= count;
         }
+#endif
         return 1;
     }
     ZEND_HASH_FILL_PACKED(array);
@@ -230,6 +234,7 @@ void tensor_host_to_php_array(zval *result, const tensor_t *tensor, const void *
     build_php_array(result, data, 0, &descriptor, 0, php_leaf_writers[tensor->dtype], NULL);
 }
 
+#ifdef HAVE_CUDA
 void tensor_to_php_array(zval *result, const tensor_t *tensor)
 {
     size_t bytes = tensor->total_size * tensor->element_size;
@@ -331,3 +336,4 @@ zend_string *tensor_to_buffer(const tensor_t *tensor)
     }
     return result;
 }
+#endif

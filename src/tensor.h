@@ -1,7 +1,12 @@
 #ifndef TENSOR_H
 #define TENSOR_H
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+#if defined(HAVE_CUDA) || defined(__CUDACC__)
 #include <cuda_runtime.h>
+#endif
 #include <stdint.h>
 #include "data_types.h"
 #ifndef __CUDACC__
@@ -12,6 +17,8 @@
 #define MAX_CONCAT_TENSORS 10
 
 int cuda_tensor_require_context(void);
+int cuda_require_runtime_owner(void);
+int cuda_initialize_memory_pool(void);
 
 struct _operation_t;
 struct fusion_node;

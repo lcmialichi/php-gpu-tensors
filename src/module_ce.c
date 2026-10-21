@@ -1799,6 +1799,7 @@ ZEND_METHOD(CompiledModule, launchAsyncBatch)
 
 ZEND_METHOD(CompiledModule, sync)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id = -1;
 
     ZEND_PARSE_PARAMETERS_START(0, 1)
@@ -1882,6 +1883,7 @@ ZEND_METHOD(CompiledModule, sync)
 
 ZEND_METHOD(CompiledModule, isFinished)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id = -1;
 
     ZEND_PARSE_PARAMETERS_START(0, 1)
@@ -1962,6 +1964,7 @@ ZEND_METHOD(CompiledModule, isFinished)
 
 ZEND_METHOD(CompiledModule, wait)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id = -1;
     zend_long timeout_ms = -1;
 
@@ -2302,6 +2305,7 @@ restore_failed:
 
 ZEND_METHOD(CompiledModule, getAsyncStatus)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id = -1;
 
     ZEND_PARSE_PARAMETERS_START(0, 1)
@@ -2367,6 +2371,7 @@ ZEND_METHOD(CompiledModule, getAsyncStatus)
 
 ZEND_METHOD(CompiledModule, getPendingOperations)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
 
     module_cleanup_timeout_operations(module);
@@ -2462,6 +2467,7 @@ ZEND_METHOD(CompiledModule, getStats)
 
 ZEND_METHOD(CompiledModule, cancelOperation)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     zend_long op_id;
 
     ZEND_PARSE_PARAMETERS_START(1, 1)
@@ -2516,6 +2522,7 @@ ZEND_METHOD(CompiledModule, cancelOperation)
 
 ZEND_METHOD(CompiledModule, cleanup)
 {
+    if (!cuda_require_runtime_owner()) RETURN_THROWS();
     cuda_module_object *module = Z_CUDA_MODULE_P(ZEND_THIS);
 
     zend_ulong num_idx;
@@ -2539,6 +2546,12 @@ static void module_free_object(zend_object *object)
 {
     cuda_module_object *module = Z_CUDA_MODULE_FROM_OBJ(object);
 
+    /* Inherited CUDA resources and mutexes must remain untouched after fork. */
+    if (tensor_mem_owner_status() < 0)
+    {
+        zend_object_std_dtor(object);
+        return;
+    }
     if (module->init_data.init_in_progress)
     {
         pthread_mutex_lock(&module->init_data.init_mutex);
@@ -2648,6 +2661,7 @@ int module_init(void)
 
 void module_shutdown(void)
 {
+    if (tensor_mem_owner_status() < 0) return;
     pthread_mutex_lock(&g_cuda_global_init_mutex);
     g_cuda_initialized = 0;
     pthread_mutex_unlock(&g_cuda_global_init_mutex);

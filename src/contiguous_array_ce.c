@@ -1,3 +1,7 @@
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #include "cuda_exceptions.h"
 #include "php.h"
 #include "contiguous_array_ce.h"
@@ -5,12 +9,16 @@
 #include "backend_contract.h"
 #include "zend_smart_str.h"
 #include <stdint.h>
+#include <limits.h>
 #include <string.h>
-#include "tensor_factory.h"
+#include "host_tensor.h"
 #include "tensor_import.h"
 #include "tensor_transfer.h"
+#ifdef HAVE_CUDA
+#include "tensor_factory.h"
 #include "cuda_array_ce.h"
 #include "ca_struct.h"
+#endif
 #include "zend_exceptions.h"
 #include "operator_result.h"
 #include "tensor_scalar.h"
@@ -73,6 +81,9 @@ static contiguous_array_object *contiguous_array_fetch_valid_object(zend_object 
         CUDA_THROW_RUNTIME("Attempting to access uninitialized HostArray");
         return NULL;
     }
+#ifdef HAVE_CUDA
+    if (obj->tensor->host_pinned && !cuda_require_runtime_owner()) return NULL;
+#endif
     return obj;
 }
 
@@ -85,7 +96,8 @@ static void contiguous_array_attach_tensor(contiguous_array_object *obj, tensor_
     obj->dtype = tensor->dtype;
     obj->element_size = tensor->element_size;
     obj->total_elements = tensor->total_size;
-    obj->cached_data_ptr = (char *)tensor->data + tensor->offset * tensor->element_size;
+    obj->cached_data_ptr = tensor->data
+        ? (char *)tensor->data + tensor->offset * tensor->element_size : NULL;
     obj->offset = tensor->offset;
     obj->is_contiguous = 1;
     obj->read_only = 0;
@@ -194,6 +206,7 @@ static zend_object *contiguous_array_clone_object(zend_object *object)
 
 static int contiguous_array_validate_values(zval *value, int depth, int shape[MAX_DIMS], int *leaf_depth)
 {
+    ZVAL_DEREF(value);
     if (Z_TYPE_P(value) != IS_ARRAY)
     {
         if (Z_TYPE_P(value) != IS_LONG && Z_TYPE_P(value) != IS_DOUBLE &&
@@ -206,9 +219,14 @@ static int contiguous_array_validate_values(zval *value, int depth, int shape[MA
     if (depth >= MAX_DIMS || !zend_array_is_list(Z_ARRVAL_P(value)))
         return 0;
     size_t length = zend_hash_num_elements(Z_ARRVAL_P(value));
-    if (length == 0 || length > INT_MAX || (shape[depth] && shape[depth] != (int)length))
+    if (length > INT_MAX || (shape[depth] >= 0 && shape[depth] != (int)length))
         return 0;
     shape[depth] = (int)length;
+    if (!length)
+    {
+        if (*leaf_depth == -1) *leaf_depth = depth + 1;
+        return *leaf_depth == depth + 1;
+    }
 
     zval *child;
     ZEND_HASH_FOREACH_VAL(Z_ARRVAL_P(value), child)
@@ -305,7 +323,14 @@ static zval *contiguous_array_offset_get(zend_object *object, zval *offset, int 
         ZVAL_NULL(rv);
         return rv;
     }
-    zend_long idx = zval_get_long(offset);
+    if (offset) ZVAL_DEREF(offset);
+    if (!offset || Z_TYPE_P(offset) != IS_LONG)
+    {
+        CUDA_THROW_INVALID("HostArray indices must be integers");
+        ZVAL_NULL(rv);
+        return rv;
+    }
+    zend_long idx = Z_LVAL_P(offset);
 
     if (UNEXPECTED(obj->ndims == 0 || idx < 0 || idx >= obj->shape[0]))
     {
@@ -329,7 +354,8 @@ static zval *contiguous_array_offset_get(zend_object *object, zval *offset, int 
         slice->strides = obj->strides + 1;
         slice->dtype = obj->dtype;
         slice->element_size = obj->element_size;
-        slice->cached_data_ptr = obj->cached_data_ptr + (idx * obj->strides[0] * obj->element_size);
+        slice->cached_data_ptr = obj->cached_data_ptr
+            ? obj->cached_data_ptr + (idx * obj->strides[0] * obj->element_size) : NULL;
         slice->offset += idx * obj->strides[0];
 
         size_t total = slice->shape[0];
@@ -417,6 +443,44 @@ ZEND_METHOD(ContiguousArray, __serialize)
         efree(packed_data);
 }
 
+static void contiguous_array_restore_legacy(contiguous_array_object *obj, HashTable *data)
+{
+    zval *version = zend_hash_str_find(data, "__host_array_v1", sizeof("__host_array_v1") - 1);
+    zval *shape_value = zend_hash_str_find(data, "shape", sizeof("shape") - 1);
+    zval *dtype_value = zend_hash_str_find(data, "dtype", sizeof("dtype") - 1);
+    zval *buffer = zend_hash_str_find(data, "buffer", sizeof("buffer") - 1);
+    if (!version || Z_TYPE_P(version) != IS_STRING ||
+        !zend_string_equals_literal(Z_STR_P(version), "1") ||
+        !shape_value || Z_TYPE_P(shape_value) != IS_ARRAY ||
+        !zend_array_is_list(Z_ARRVAL_P(shape_value)) ||
+        !dtype_value || Z_TYPE_P(dtype_value) != IS_STRING ||
+        !buffer || Z_TYPE_P(buffer) != IS_STRING)
+    {
+        CUDA_THROW_INVALID("Malformed legacy HostArray payload");
+        return;
+    }
+    dtype_t dtype = dtype_from_string(Z_STRVAL_P(dtype_value));
+    if (dtype != DTYPE_FLOAT32 && dtype != DTYPE_FLOAT64)
+    {
+        CUDA_THROW_INVALID("Invalid legacy HostArray dtype");
+        return;
+    }
+    int shape[MAX_DIMS];
+    size_t elements;
+    int ndims = tensor_import_shape(shape_value, shape, &elements);
+    if (!ndims) return;
+    if (elements > SIZE_MAX / dtype_size(dtype) ||
+        Z_STRLEN_P(buffer) != elements * dtype_size(dtype))
+    {
+        CUDA_THROW_INVALID("Invalid legacy HostArray buffer length");
+        return;
+    }
+    tensor_t *tensor = cuda_tensor_create_on_host(shape, ndims, Z_STRVAL_P(buffer), dtype);
+    if (!tensor) return;
+    if (obj->tensor) tensor_host_destroy(obj->tensor);
+    contiguous_array_attach_tensor(obj, tensor);
+}
+
 ZEND_METHOD(ContiguousArray, __unserialize)
 {
     HashTable *data;
@@ -426,6 +490,12 @@ ZEND_METHOD(ContiguousArray, __unserialize)
     ZEND_PARSE_PARAMETERS_END();
 
     zval *version = zend_hash_str_find(data, "__contiguous_array_v1", sizeof("__contiguous_array_v1") - 1);
+    if (!version && zend_hash_str_exists(data, "__host_array_v1", sizeof("__host_array_v1") - 1))
+    {
+        contiguous_array_restore_legacy(contiguous_array_from_obj(Z_OBJ_P(ZEND_THIS)), data);
+        if (EG(exception)) RETURN_THROWS();
+        return;
+    }
     if (!version || Z_TYPE_P(version) != IS_STRING ||
         !zend_string_equals_literal(Z_STR_P(version), "1"))
     {
@@ -501,7 +571,7 @@ ZEND_METHOD(ContiguousArray, __unserialize)
 
     contiguous_array_object *obj = contiguous_array_from_obj(Z_OBJ_P(getThis()));
     if (obj->tensor)
-        cuda_tensor_destroy(obj->tensor);
+        tensor_host_destroy(obj->tensor);
     contiguous_array_attach_tensor(obj, tensor);
 }
 
@@ -548,6 +618,7 @@ ZEND_METHOD(ContiguousArray, toGpu)
 {
     contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(getThis()));
     if (!obj) RETURN_THROWS();
+#ifdef HAVE_CUDA
     const void *host_data;
     void *packed_data;
     if (contiguous_array_host_data(obj, &host_data, &packed_data) != SUCCESS)
@@ -576,6 +647,10 @@ ZEND_METHOD(ContiguousArray, toGpu)
         zend_hash_index_update(cuda_array->shape, i, &dim);
     }
 
+#else
+    CUDA_THROW_RUNTIME("CUDA backend is unavailable in the CPU-only build");
+    RETURN_THROWS();
+#endif
 }
 
 static zend_result contiguous_array_binary_apply(zval *return_value, zval *tensor_value,
@@ -651,7 +726,7 @@ static zend_result contiguous_array_binary_apply(zval *return_value, zval *tenso
         double lhs = reverse ? other_tensor_value : tensor_value;
         double rhs = reverse ? tensor_value : other_tensor_value;
         if (operation == '/' && rhs == 0.0) {
-            cuda_tensor_destroy(result_tensor);
+            tensor_host_destroy(result_tensor);
             CUDA_THROW_INVALID("Division by zero is not supported by HostArray");
             return FAILURE;
         }
@@ -667,7 +742,7 @@ static zend_result contiguous_array_binary_apply(zval *return_value, zval *tenso
 
     zend_object *object = contiguous_array_from_tensor(result_tensor);
     if (!object) {
-        cuda_tensor_destroy(result_tensor);
+        tensor_host_destroy(result_tensor);
         CUDA_THROW_RUNTIME("Failed to create HostArray result");
         return FAILURE;
     }
@@ -771,7 +846,7 @@ ZEND_METHOD(ContiguousArray, fromBuffer)
     Z_PARAM_STR(bytes)
     Z_PARAM_ARRAY(shape_array)
     Z_PARAM_OPTIONAL
-    Z_PARAM_STR(dtype_name)
+    Z_PARAM_STR_OR_NULL(dtype_name)
     Z_PARAM_BOOL(pinned)
     ZEND_PARSE_PARAMETERS_END();
 
@@ -823,7 +898,14 @@ ZEND_METHOD(ContiguousArray, at)
     size_t final_offset = 0;
     for (uint32_t i = 0; i < argc; i++)
     {
-        zend_long idx = zval_get_long(&args[i]);
+        zval *index_value = &args[i];
+        ZVAL_DEREF(index_value);
+        if (Z_TYPE_P(index_value) != IS_LONG)
+        {
+            CUDA_THROW_INVALID("HostArray indices must be integers");
+            RETURN_THROWS();
+        }
+        zend_long idx = Z_LVAL_P(index_value);
 
         if (UNEXPECTED((zend_ulong)idx >= (zend_ulong)obj->shape[i]))
         {
@@ -846,6 +928,11 @@ ZEND_METHOD(ContiguousArray, get)
     ZEND_PARSE_PARAMETERS_END();
 
     HashTable *ht = Z_ARRVAL_P(index_array);
+    if (!zend_array_is_list(ht))
+    {
+        CUDA_THROW_INVALID("HostArray indices must be a list of integers");
+        RETURN_THROWS();
+    }
     if (zend_hash_num_elements(ht) != obj->ndims)
     {
         CUDA_THROW_INVALID("Expected %d indices", obj->ndims);
@@ -857,7 +944,13 @@ ZEND_METHOD(ContiguousArray, get)
     zval *val;
     ZEND_HASH_FOREACH_VAL(ht, val)
     {
-        zend_long idx = zval_get_long(val);
+        ZVAL_DEREF(val);
+        if (Z_TYPE_P(val) != IS_LONG)
+        {
+            CUDA_THROW_INVALID("HostArray indices must be integers");
+            RETURN_THROWS();
+        }
+        zend_long idx = Z_LVAL_P(val);
         if (idx < 0 || idx >= obj->shape[dim])
         {
             CUDA_THROW_INVALID("Index out of bounds");
@@ -920,6 +1013,14 @@ ZEND_METHOD(ContiguousArray, count)
     RETURN_LONG(obj->ndims > 0 ? obj->shape[0] : 0);
 }
 
+ZEND_METHOD(ContiguousArray, getIterator)
+{
+    ZEND_PARSE_PARAMETERS_NONE();
+    if (!contiguous_array_fetch_valid_object(Z_OBJ_P(ZEND_THIS))) RETURN_THROWS();
+    if (zend_create_internal_iterator_zval(return_value, ZEND_THIS) != SUCCESS)
+        RETURN_THROWS();
+}
+
 ZEND_METHOD(ContiguousArray, getShape)
 {
     contiguous_array_object *obj = contiguous_array_fetch_valid_object(Z_OBJ_P(getThis()));
@@ -938,7 +1039,7 @@ ZEND_METHOD(ContiguousArray, __construct)
     ZEND_PARSE_PARAMETERS_START(1, 3)
     Z_PARAM_ARRAY(values)
     Z_PARAM_OPTIONAL
-    Z_PARAM_STR(dtype_name)
+    Z_PARAM_STR_OR_NULL(dtype_name)
     Z_PARAM_BOOL(pinned)
     ZEND_PARSE_PARAMETERS_END();
 
@@ -949,27 +1050,12 @@ ZEND_METHOD(ContiguousArray, __construct)
         RETURN_THROWS();
     }
 
-    int shape[MAX_DIMS] = {0};
+    int shape[MAX_DIMS];
+    for (int d = 0; d < MAX_DIMS; d++) shape[d] = -1;
     int ndims = -1;
     if (!contiguous_array_validate_values(values, 0, shape, &ndims) || ndims <= 0)
     {
-        CUDA_THROW_INVALID("HostArray requires a nonempty, rectangular numeric array");
-        RETURN_THROWS();
-    }
-
-    size_t elements = 1;
-    for (int axis = 0; axis < ndims; axis++)
-    {
-        if (elements > SIZE_MAX / (size_t)shape[axis])
-        {
-            CUDA_THROW_INVALID("HostArray shape exceeds supported limits");
-            RETURN_THROWS();
-        }
-        elements *= (size_t)shape[axis];
-    }
-    if (elements > SIZE_MAX / dtype_size(dtype))
-    {
-        CUDA_THROW_INVALID("HostArray byte size exceeds supported limits");
+        CUDA_THROW_INVALID("HostArray requires a rectangular numeric array");
         RETURN_THROWS();
     }
 
@@ -980,12 +1066,12 @@ ZEND_METHOD(ContiguousArray, __construct)
     size_t position = 0;
     if (!contiguous_array_copy_values(values, tensor->data, dtype, &position))
     {
-        cuda_tensor_destroy(tensor);
+        tensor_host_destroy(tensor);
         RETURN_THROWS();
     }
 
     contiguous_array_object *obj = contiguous_array_from_obj(Z_OBJ_P(ZEND_THIS));
-    if (obj->tensor) cuda_tensor_destroy(obj->tensor);
+    if (obj->tensor) tensor_host_destroy(obj->tensor);
     contiguous_array_attach_tensor(obj, tensor);
 }
 
@@ -1022,12 +1108,12 @@ static int contiguous_array_create_filled(zval *return_value, zval *shape_value,
     if (!tensor) return FAILURE;
     if (contiguous_array_fill_tensor(tensor, fill_value) != SUCCESS)
     {
-        cuda_tensor_destroy(tensor);
+        tensor_host_destroy(tensor);
         return FAILURE;
     }
     zend_object *object = contiguous_array_from_tensor(tensor);
     if (!object) {
-        cuda_tensor_destroy(tensor);
+        tensor_host_destroy(tensor);
         CUDA_THROW_RUNTIME("Failed to create HostArray object");
         return FAILURE;
     }
@@ -1043,7 +1129,7 @@ ZEND_METHOD(ContiguousArray, fromFlatArray)
         Z_PARAM_ARRAY(values)
         Z_PARAM_ARRAY(shape_array)
         Z_PARAM_OPTIONAL
-        Z_PARAM_STR(dtype_name)
+        Z_PARAM_STR_OR_NULL(dtype_name)
     ZEND_PARSE_PARAMETERS_END();
 
     int shape[MAX_DIMS];
@@ -1074,12 +1160,12 @@ ZEND_METHOD(ContiguousArray, fromFlatArray)
     size_t position = 0;
     if (!contiguous_array_copy_values(values, tensor->data, dtype, &position))
     {
-        cuda_tensor_destroy(tensor);
+        tensor_host_destroy(tensor);
         RETURN_THROWS();
     }
     zend_object *object = contiguous_array_from_tensor(tensor);
     if (!object) {
-        cuda_tensor_destroy(tensor);
+        tensor_host_destroy(tensor);
         CUDA_THROW_RUNTIME("Failed to create HostArray object");
         RETURN_THROWS();
     }
@@ -1217,6 +1303,8 @@ static int contiguous_array_iterator_valid(zend_object_iterator *iter)
 static zval *contiguous_array_iterator_get_current_data(zend_object_iterator *iter)
 {
     contiguous_array_iterator *iterator = (contiguous_array_iterator *)iter;
+    if (!contiguous_array_fetch_valid_object(Z_OBJ(iterator->host_array)))
+        return &EG(uninitialized_zval);
 
     if (iterator->is_1d)
     {
@@ -1296,9 +1384,10 @@ int contiguous_array_init()
     contiguous_array_ce->create_object = contiguous_array_create_object;
     contiguous_array_ce->get_iterator = contiguous_array_get_iterator;
     contiguous_array_ce->ce_flags |= ZEND_ACC_FINAL;
-    zend_class_implements(contiguous_array_ce, 2,
+    zend_class_implements(contiguous_array_ce, 4,
                           php_tensors_tensor_ce,
-                          php_tensors_operator_overloadable_ce);
+                          php_tensors_operator_overloadable_ce,
+                          zend_ce_aggregate, zend_ce_countable);
 
     memcpy(&contiguous_array_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     contiguous_array_handlers.offset = XtOffsetOf(contiguous_array_object, std);
@@ -1324,7 +1413,7 @@ void contiguous_array_free_object(zend_object *object)
 {
     contiguous_array_object *obj = contiguous_array_from_obj(object);
     if (obj->tensor)
-        cuda_tensor_destroy(obj->tensor);
+        tensor_host_destroy(obj->tensor);
     zend_object_std_dtor(&obj->std);
 }
 

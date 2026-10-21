@@ -78,7 +78,7 @@ coverage and unsupported cases instead.
 - [x] **MEM-02 — Make deserialization validated and transactional.**
   Fixed: CPU/CUDA host and CUDA tensor payloads validate exact versions, types,
   dimensions and byte lengths before replacing storage
-  ([CUDA-build host](src/contiguous_array_ce.c), [CPU host](src/cpu_host_array.c)).
+  ([shared host](src/contiguous_array_ce.c), [host storage](src/host_tensor.c)).
   Host snapshots pack logical subarray contents and use canonical contiguous
   metadata. CompiledModule persists explicit versioned parameter fields, rejects
   malformed entries and legacy blobs, and bounds argument lists at 128
@@ -102,7 +102,7 @@ coverage and unsupported cases instead.
   Fixed: both HostArray implementations clone logical values into independent
   storage, preserving dtype, shape and host pinning. CPU construction prepares the
   replacement before releasing the previous allocation
-  ([CPU host](src/cpu_host_array.c), [CUDA-build host](src/contiguous_array_ce.c)).
+  ([shared host](src/contiguous_array_ce.c), [host storage](src/host_tensor.c)).
   Storage access, arithmetic and like-factories reject uninitialized host objects.
   Active host iterators retain a shared-storage snapshot so reconstruction or
   restoration cannot invalidate their cached pointers. CUDA cloning preserves
@@ -132,7 +132,7 @@ coverage and unsupported cases instead.
   user code. Callback references are copied as values rather than escaping into
   result bindings. All four native/custom handlers use the same ownership contract
   ([operator bridge](src/operator_overload_ce.c),
-  [CPU host](src/cpu_host_array.c),
+  [shared host storage](src/host_tensor.c),
   [CUDA-build host](src/contiguous_array_ce.c),
   [CudaArray](src/cuda_array/cuda_array_ce.c)).
   OperatorOverload now provides six typed optional hooks with explicit unsupported
@@ -177,15 +177,31 @@ coverage and unsupported cases instead.
   runs pass 2/2. Only one real GPU was used; multi-device support is not claimed.
   Process/thread/request ownership remains MEM-06, not covered by this item.
 
-- [ ] **MEM-06 — Validate process/thread/request lifecycle.**
-  Evidence: MINIT initializes CUDA/pool storage before any request; the pool uses
-  shared static state, while Fusion and backend workspaces have different lifetimes
-  ([startup/shutdown](src/cuda.c), [pool](src/backends/cuda/memory_pool.c)).
-  This is a deployment risk to investigate, not a reproduced FPM failure.
-  **Accept:** lazy initialization after fork where needed, or an explicit supported
-  CLI-only boundary. Exercise worker startup/recycling, repeated requests, ZTS
-  concurrency and shutdown with pending work; no inherited invalid contexts,
-  cross-request state leakage, deadlocks or unbounded allocation growth.
+- [x] **MEM-06 — Validate process/thread/request lifecycle.**
+  CUDA/pool startup is now lazy, after worker fork. CLI and PHP-FPM use one CUDA
+  owner process/thread; queries also establish ownership. Post-CUDA fork and
+  other threads throw before CUDA or inherited mutex access. Inherited module,
+  tensor, pinned storage and Fusion destruction skips native CUDA cleanup in a
+  rejected child; start a fresh process/exec rather than reuse its runtime.
+  Ordinary CPU storage and request-local cache cleanup do not need CUDA ownership.
+  Pool sizes reject empty, negative, malformed and overflowing values; runtime
+  `ini_set()` cannot change the first worker pool configuration.
+  Validation: [native pool tests](tests/memory_pool_test.c) exercise pre-init fork,
+  post-init fork with a deliberately inherited locked pool mutex, foreign pthread
+  rejection and owner-thread exit without ownership transfer. The
+  [GPU process regression](tests/cuda_process_lifecycle.phpt) exercises recycled
+  workers, query ownership, inherited API/object/pinned/async cleanup, parent
+  continuity and a fork inside Fusion capture. The
+  [real FPM regression](tests/cuda_fpm_lifecycle.phpt) passes 24 GPU and eight
+  CPU-only requests across four recycled workers, checking precision/counters,
+  request-local caches, pending work and bounded warm host/GPU memory.
+  [Pool configuration regression](tests/cuda_lazy_pool_configuration.phpt) passes
+  checked sizes and immutable runtime INI. Full GPU suite with FPM enabled:
+  95 passed, one expected CPU-only skip, seven native checks; CPU PHP 8.4/8.5 ZTS:
+  8/8 each. Eight lifecycle regressions also pass with `USE_ZEND_ALLOC=0`,
+  including real FPM; three CPU-storage regressions pass in the CUDA build with
+  no visible GPU. Concurrent CUDA through PHP/ZTS threads remains explicitly unsupported;
+  rejection is tested with native pthreads, not claimed as concurrent GPU support.
 
 - [x] **MEM-07 — Audit shape/index/stride arithmetic end to end.**
   Progress: [shared shape metrics](src/tensor_shape.h) validate reverse stride
@@ -305,8 +321,8 @@ coverage and unsupported cases instead.
   promotion. Unsupported combinations throw before launch; no silent zero fills
   or uninitialized successful outputs.
 
-- [ ] **NUM-04 — Never silently sever a differentiable path.**
-  Progress: floating autograd nodes now retain FP16/BF16 edges regardless of node
+- [x] **NUM-04 — Never silently sever a differentiable path.**
+  Completed: floating autograd nodes now retain FP16/BF16 edges regardless of node
   kind; concat, slices and floating casts no longer silently lose those edges.
   Unsupported floating derivatives retain an explicit unsupported node and fail
   during backward instead of appearing detached. Empty concat gradient views
@@ -329,12 +345,61 @@ coverage and unsupported cases instead.
   [selection regressions](tests/autograd_selection_paths.phpt) cover four floating
   dtypes, eager/Fusion, capture/replay, independent condition histories,
   broadcasts, non-finite seeds and saved-mask mutation checks.
-  Full CUDA suite: 88 passed, one expected CPU-only skip; seven native checks.
-  The API snapshot remains unchanged. Both new regressions and the existing
-  low-precision path regression also pass with `USE_ZEND_ALLOC=0`.
-  **Remaining:** complete the operation/dtype derivative matrix, including
-  boundary/tie/singularity behavior across transforms and composites. The
-  verified paths above alone do not establish that full contract.
+  `maximum`/`minimum` now split exact ties equally, including scalar constants,
+  broadcasting and repeated parents. Scalar predicates use the forward result
+  dtype instead of rounding promoted bounds back to the input dtype. `clamp`
+  retains composition semantics: input derivative 0.5 at either boundary, 0.25
+  where equal bounds coincide. Max/min reduction backward also uses true zeros
+  for inactive elements with non-finite seeds. Gradient accumulation preserves
+  FP32/FP64 input dtype and uses FP32 for FP16/BF16, including promoted forward
+  operations and mixed-precision contributions.
+  [Extrema regressions](tests/autograd_extrema_boundaries.phpt) cover four floating
+  dtypes, eager/Fusion, replay, strided inputs, adjacent representable values,
+  signed zeros, infinite ties, non-finite seeds and empty tensors.
+  Scalar power backward now constructs correctly typed constants and widens
+  FP16/BF16 intermediates to FP32; exponent zero and inverse scalar base one
+  produce genuine zero derivatives even with non-finite seeds. `exp2`, `log2`
+  and `log10` preserve FP64 derivative constants instead of rounding them to
+  FP32. A malformed low-precision scalar previously triggered undefined behavior
+  and a native Fusion abort; corrected derivative constants avoid that path,
+  and unsupported codegen scalar types now raise an explicit exception with
+  source-buffer cleanup instead of relying on a release-disabled assertion.
+  [Numerical regressions](tests/autograd_numerical.phpt) cover scalar powers in
+  all four floating dtypes, boolean/integer/floating scalar constants, non-finite
+  seeds, repeated compiled replay and first-order-only backward behavior.
+  The [complete path matrix](tests/autograd_operation_matrix.phpt) audits public
+  tensor arithmetic, all 22 unary operations, reductions/scans, casts, copies,
+  views, index transforms, repeated-index gather/scatter, concat, matmul and
+  var/std/softmax/layerNorm composites in eager and Fusion for all four floating
+  input dtypes. It covers all 16 mixed floating pairs for the seven binary
+  operations, strided and empty paths, all 13 cast targets, integer/bool tracking
+  rejection, unsupported comparison derivatives and FP64 matmul rejection.
+  Global cumsum backward now reverses the flattened sequence before restoring
+  the input shape; low-precision abs backward uses valid FP32 scalar constants.
+  [Singularity and capture regressions](tests/autograd_singularities.phpt) define
+  NaN outside real logarithm domains and IEEE boundary derivatives; constant
+  standard-deviation groups have genuine zero gradients, including corrected
+  reductions and non-finite seeds. Binary power partials route true zeros for
+  zero exponents, unit bases and zero bases with positive exponents, without
+  hiding the other partial's undefined derivative.
+  Compiled Fusion rejects tracked outputs without backward captured for that
+  output, including nested/partially differentiated outputs. Replay rejects
+  gradient-enabled inputs absent from capture, in sync/async/CUDA Graph paths;
+  explicit detach remains supported. Captured retained backward and gradients
+  after Fusion::run remain supported. Consumed expressions are not reused by
+  capture CSE when new autograd history is required. Codegen failure propagates
+  before module loading, with normal scope/plan cleanup instead of a native abort.
+  Full CUDA suite: 92 passed, one expected CPU-only skip; seven native checks.
+  The API snapshot remains unchanged. All eight autograd regressions (basic,
+  low-precision, discrete outputs, selection, extrema, numerical, operation matrix
+  and singularities) also pass with
+  `USE_ZEND_ALLOC=0`.
+  Intentional history boundaries remain explicit: detach, native clone, host/
+  byte export and serialization are snapshots; factories do not differentiate
+  their shape prototypes. NN is inference-only and rejects tracked inputs.
+  First-order-only support and singularity/selection conventions are documented.
+  Extending finite-difference accuracy proofs beyond the current numerical
+  fixtures remains the separate P1 task GRAD-01, not a missing edge in this audit.
   **Accept:** implement the derivative or reject the unsupported tracked operation
   explicitly. Audit the full operation/dtype matrix, including casts, copies,
   transforms and composites; no forward success that silently drops required
@@ -342,18 +407,20 @@ coverage and unsupported cases instead.
 
 ## 4. P1 — A useful, consistent CPU backend and extension API
 
-- [ ] **CPU-01 — Remove accidental build-dependent HostArray behavior.**
-  Evidence: CPU-only supports FP32/FP64 with no dimension handlers/iteration;
-  CUDA-build host has broader dtypes/indexing but rejects some empty construction
-  cases. Serialization formats differ
-  ([CPU host](src/cpu_host_array.c), [CUDA-build host](src/contiguous_array_ce.c)).
-  CUDA-build HostArray supports `foreach` but is not marked `Traversable`;
-  `iterator_to_array()` rejects it. Include standard iterator interoperability
-  when unifying the CPU/CUDA-build host contract.
-  **Accept:** one shared behavioral test matrix for construction, empties,
-  metadata, indexing, iteration, errors and persistence across build profiles.
-  Share storage/validation helpers where practical instead of maintaining two
-  independent numerical contracts.
+- [x] **CPU-01 — Remove accidental build-dependent HostArray behavior.**
+  Both profiles now compile the same [HostArray class](src/contiguous_array_ce.c),
+  [typed storage](src/host_tensor.c), scalar conversion, shape validation and
+  host export code. The duplicate double-backed CPU implementation was removed.
+  All 13 dtypes support identical construction, explicit/nested empties, metadata,
+  scalar/subarray indexing, clone and persistence. Nullable default dtypes agree;
+  invalid indices cannot be silently truncated/coerced. `IteratorAggregate`,
+  `Countable` and `getIterator()` provide standard iteration interoperability.
+  Pinned allocation and GPU transfers remain explicitly CUDA-only capabilities.
+  Validation: the [shared matrix](tests/host_array_contract.phpt) passes in CUDA
+  PHP 8.1 and CPU PHP 8.4/8.5 ZTS, including the same versioned binary fixture,
+  exact int64/uint64 boundaries, retained iterators and transactional legacy reads.
+  CPU suites pass 10/10 per version; four host regressions per CPU version also
+  pass with system malloc. The CUDA build passes the matrix with no visible GPU.
 
 - [ ] **CPU-02 — Implement the declared minimum CPU numerical core.**
   Current arithmetic supports same-shape/same-dtype operations; most other methods
@@ -364,12 +431,20 @@ coverage and unsupported cases instead.
   dtype-specific tolerances, including scalar-left operators and non-contiguous
   layouts. Explicitly defer CPU autograd/Fusion rather than imply full parity.
 
-- [ ] **CPU-03 — Use dtype-native CPU storage and measure it.**
-  Evidence: CPU-only FP32 is backed by `double *`, converting during buffer
-  import/export while reporting four-byte elements ([CPU host](src/cpu_host_array.c)).
-  **Accept:** real contiguous FP32/FP64 storage, or a clearly separated logical/
-  physical-size contract. Record actual allocation footprint and transfer/
-  arithmetic throughput; add SIMD/BLAS only after correctness and profiling.
+- [x] **CPU-03 — Use dtype-native CPU storage and measure it.**
+  Shared storage allocates `elements * dtype_size`, not a double array with
+  logical FP32 values. The [allocation regression](tests/host_array_storage.phpt)
+  checks all 13 physical widths against actual Zend-managed bytes with bounded
+  metadata overhead. The [benchmark](tests/benchmark_host_storage.php) reports
+  allocation, seven-run medians for buffer import/export and addition, and
+  optional byte-exact synchronous GPU transfers (`--gpu`).
+  Measured CPU PHP 8.4 ZTS, 1,048,576 elements: FP32 4,194,712 allocated bytes
+  (4 MiB payload + 408 metadata), FP64 8,389,016 (8 MiB + 408).
+  FP32/FP64 buffer import medians were 1.741/3.125 ms, export 1.941/3.171 ms,
+  addition 3.178/4.858 ms. CUDA PHP 8.1 NTS on the validated GPU measured
+  synchronous FP32/FP64 upload 0.742/1.475 ms and download 1.833/3.333 ms,
+  including result allocation; round-trip bytes matched. These local measurements
+  are reproducible evidence, not portable speed guarantees. No SIMD/BLAS was added.
 
 - [ ] **API-01 — Compare native API reflection with stubs.**
   Evidence: the current "frozen API" check reflects loaded PHP stubs rather than
@@ -386,13 +461,21 @@ coverage and unsupported cases instead.
   pre/post increment/decrement and aliasing. Inheriting `OperatorOverload` already
   supplies `OperatorOverloadable`; users must not repeat it.
 
-- [ ] **API-03 — Make serialization follow logical tensor contents.**
-  Evidence: host subarray indexing advances a cached pointer, but serialization
-  copies the parent tensor's starting bytes
-  ([CUDA-build host](src/contiguous_array_ce.c)).
-  **Accept:** indexed subarrays and strided views round-trip logical row-major
-  values, or unsupported views fail explicitly and have a documented copy path.
-  Specify format version, byte order, backend portability and gradient-state rules.
+- [x] **API-03 — Make serialization follow logical tensor contents.**
+  Shared [host serialization](src/contiguous_array_ce.c) exports logical row-major
+  contents, offset zero and canonical strides, packing non-contiguous layouts.
+  Indexed rows retain their storage but serialize only their own values, including
+  empty shapes. Both profiles use `__contiguous_array_v1`; legacy CPU-only
+  `__host_array_v1` FP32/FP64 payloads remain readable transactionally.
+  [Host persistence](tests/host_array_serialization.phpt) and the
+  [cross-profile contract](tests/host_array_contract.phpt) cover dtype bytes,
+  subarray offsets, empty tensors, fixed wire fixtures and malformed replacement.
+  Existing [CUDA persistence](tests/cuda_array_serialization.phpt) covers logical
+  GPU views. README specifies native byte order (validated little-endian),
+  same-endian CPU/CUDA portability and snapshot semantics: no gradient state or
+  pinned allocation is restored. Full GPU/FPM suite: 97 passed, one expected
+  CPU-only skip, seven native checks. Seven host/transfer/lifecycle regressions
+  also pass with system malloc.
 
 ## 5. P1 — Transfers, execution and performance guarantees
 
@@ -462,6 +545,25 @@ coverage and unsupported cases instead.
   explicitly rather than promising general linear algebra.
 
 - [ ] **GRAD-01 — Add numerical gradient validation, not only fixed examples.**
+  Progress: [numerical regressions](tests/autograd_numerical.phpt) compare 42
+  small FP64 objectives against a five-point finite-difference stencil in both
+  eager and Fusion. Coverage includes 22 unary operations, seven broadcast
+  binary operations, scalar and inverse arithmetic, repeated parents,
+  transpose/slice/flip/repeat, zero-safe product reductions and scans, variance,
+  standard deviation, weighted softmax and affine layerNorm gradients.
+  The stencil uses step `1e-4 * max(1, abs(x))`; comparisons require absolute
+  error <= `2e-10 + 1e-9 * abs(reference)` and verify gradient shape, dtype and
+  element count. Scalar-power analytical checks use absolute/relative budgets
+  of 2e-6 (FP32), 2e-12 (FP64), 4e-3 (FP16) and 2e-2 (BF16), including compiled
+  replay. These are regression thresholds for these fixtures, not global
+  accuracy guarantees. Backward is documented and tested as first-order only;
+  retaining a forward graph does not build a higher-order derivative graph.
+  Full CUDA and system-allocator checks pass. NUM-04 separately closes the public
+  path-preservation/rejection matrix and singularity contracts using analytical
+  regressions. Remaining here: extend finite-difference accuracy validation to
+  every advertised derivative, more indexing/casting/layout combinations and
+  dtype-specific numerical budgets. This numerical baseline alone does not
+  establish universal accuracy.
   **Accept:** finite-difference checks on small FP64 tensors for every advertised
   differentiable operation; cover broadcasting, views, repeated indices, zero-safe
   products/scans, ties and composite softmax/layerNorm/variance paths. Establish

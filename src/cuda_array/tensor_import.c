@@ -1,15 +1,20 @@
 #include "tensor_import.h"
 #include "cuda_exceptions.h"
-#include "tensor_factory.h"
 #include "tensor_shape.h"
+#ifdef HAVE_CUDA
+#include "tensor_factory.h"
+#include "memory_pool.h"
+#endif
 #include "main/php_streams.h"
 #include <limits.h>
 #include <stdint.h>
 
 #define PINNED_FILE_THRESHOLD (1024 * 1024)
 
+#ifdef HAVE_CUDA
 tensor_t *tensor_import_stream(php_stream *stream, const int *shape, int ndims, dtype_t dtype, size_t bytes)
 {
+    if (!cuda_tensor_require_context()) return NULL;
     void *buffer = NULL;
     int pinned = 0;
     if (bytes >= PINNED_FILE_THRESHOLD && cudaMallocHost(&buffer, bytes) == cudaSuccess)
@@ -40,11 +45,15 @@ tensor_t *tensor_import_stream(php_stream *stream, const int *shape, int ndims, 
         CUDA_THROW_INVALID("Tensor file size does not match shape and dtype");
 
     if (pinned)
-        cudaFreeHost(buffer);
+    {
+        if (tensor_mem_owner_status() == CUDA_OWNER_CURRENT)
+            cudaFreeHost(buffer);
+    }
     else
         efree(buffer);
     return tensor;
 }
+#endif
 
 int tensor_import_shape(zval *shape_array, int shape[MAX_DIMS], size_t *elements)
 {
@@ -116,6 +125,7 @@ int tensor_import_serialized_shape(zval *shape_array, zend_long ndims,
     return 1;
 }
 
+#ifdef HAVE_CUDA
 tensor_t *tensor_import_file(zend_string *path, const int *shape, int ndims, dtype_t dtype, size_t bytes)
 {
     php_stream *stream = php_stream_open_wrapper(ZSTR_VAL(path), "rb", 0, NULL);
@@ -129,3 +139,4 @@ tensor_t *tensor_import_file(zend_string *path, const int *shape, int ndims, dty
     php_stream_close(stream);
     return tensor;
 }
+#endif

@@ -8,6 +8,7 @@
 #include "compiler_ce.h"
 #include "kernel_types.h"
 #include "tensor_transform.h"
+#include "memory_pool.h"
 #include "zend_smart_str.h"
 #include <cuda.h>
 #include <limits.h>
@@ -57,6 +58,9 @@ typedef struct fusion_scope
     size_t count;
     size_t capacity;
     int compiling;
+    tensor_t **backward_tensors;
+    size_t backward_count;
+    size_t backward_capacity;
 } fusion_scope;
 
 typedef struct
@@ -132,6 +136,7 @@ typedef struct
 tensor_t *fusion_record(fusion_kind kind, tensor_t *a, tensor_t *b,
                        operation_type_t op, const int *shape, int ndims, dtype_t dtype);
 void fusion_scope_free(fusion_scope *scope, int invalidate);
+void fusion_record_backward(tensor_t **tensors, size_t count);
 int fusion_inline(tensor_t *tensor);
 size_t fusion_find(fusion_plan *plan, tensor_t *tensor);
 fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count);

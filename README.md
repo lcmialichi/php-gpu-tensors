@@ -136,6 +136,16 @@ docker compose run --build --rm php_cuda_dev bash -lc './compile.sh && ./run-tes
 ./run-tests.sh --require-gpu # Require a visible GPU
 ```
 
+To include the Linux PHP-FPM worker/repeated-request regression, point the
+runner at a PHP-FPM binary with the same PHP version, ABI and build mode:
+
+```bash
+TEST_PHP_FPM_EXECUTABLE=/usr/sbin/php-fpm8.1 ./run-tests.sh --require-gpu
+```
+
+Without that variable, the FPM regression is explicitly skipped. The test uses
+a private Unix socket and temporary configuration; no system FPM service is changed.
+
 ## GPU tensors with `CudaArray`
 
 `CudaArray` stores tensor data on the GPU. The constructor accepts rectangular
@@ -167,8 +177,9 @@ Create tensors from nested arrays or with `fromFlatArray()`, `fromBuffer()`,
 `full()` and `fullLike()` accept numeric or boolean fills. Integer fills and
 PHP-array imports reject NaN, infinity, overflow and negative unsigned values;
 in-range fractions truncate toward zero. Boolean conversion uses nonzero = true.
-CUDA-build factories support all 13 storage dtypes; CPU-only builds support
-`float32` and `float64`.
+`CudaArray` and `HostArray` storage factories support all 13 dtypes.
+`HostArray` uses the same implementation in CPU-only and CUDA builds; host
+arithmetic currently supports only `float32` and `float64`.
 
 `astype()` uses dtype-based rules: integer narrowing, signed-to-unsigned and
 float-to-integer casts are rejected. Integer-to-float casts may lose precision.
@@ -186,7 +197,7 @@ integer sampler.
 
 Scalar reads preserve PHP types: floats, integers and booleans. Integers outside
 PHP's `int` range export as exact decimal strings, consistently across indexing,
-`item()`, `toArray()` and CUDA-build `HostArray` reads. Use `toBuffer()` and
+`item()`, `toArray()` and `HostArray` reads in either build. Use `toBuffer()` and
 `fromBuffer()` for lossless binary round trips. FP64 tensors remain FP64 when
 dividing by a scalar or raising to a negative scalar power.
 
@@ -275,6 +286,15 @@ Gradients accumulate until `zeroGrad()`. Use `detach()` to stop gradient
 tracking. Non-scalar outputs need a matching seed; pass `retainGraph: true` to
 reuse the graph. Supported gradients depend on operation and dtype; unsupported
 cases raise exceptions. Inputs must enable gradients before Fusion capture.
+Autograd supports first-order derivatives; `retainGraph` reuses the forward graph,
+not a higher-order derivative graph.
+
+`Fusion::run()` preserves the history for backward inside or after the callback.
+With `Fusion::compile()`, capture backward inside the callback and return its
+gradients; tracked outputs without captured backward are rejected. For a
+forward-only graph, detach outputs explicitly. Replay cannot enable gradients
+that were absent from the example inputs, and replay values have no new dynamic
+backward history.
 
 Discrete reductions (`argMax()`, `argMin()`, `all()`, `any()`) require an explicit
 `detach()` on tracked inputs, including during Fusion capture:
@@ -287,7 +307,24 @@ remain unchanged until backward. Branch routing uses genuine zeros, rather
 than multiplying non-finite gradient seeds by zero.
 
 FP16/BF16 concat, slice and copy preserve gradient paths in eager and Fusion;
-their gradients use FP32, including repeated inputs and empty tensors.
+their gradients use FP32, including repeated inputs and empty tensors. Accumulated
+gradients use the input dtype for FP32/FP64 and FP32 for FP16/BF16, even when
+forward operations promote to a wider dtype.
+
+`maximum()` and `minimum()` split gradients equally at exact ties, including
+scalar bounds. `clamp()` composes these operations: its input gradient is `0.5`
+at either boundary, or `0.25` when both bounds coincide.
+
+Singular derivatives follow IEEE NaN/Inf rules. Logarithm gradients are NaN
+outside the real domain; `std()` uses zero input gradients for constant groups.
+`abs()` uses zero at zero, and `floor()`/`ceil()`/`round()` have zero gradients.
+Constant power partials (`x ** 0`, `1 ** x`, and `0 ** x` for positive `x`)
+also use genuine zeros.
+
+Arithmetic, safe floating casts, reductions/scans, indexing, views, transforms and
+tensor composites preserve floating gradient paths. Comparisons reject backward;
+integer/bool tracking and FP64 matmul are rejected explicitly. `copy()` preserves
+history; native `clone`, serialization and host/byte exports are value snapshots.
 
 `Optimizer` provides functional SGD and AdamW. Each `step()` returns updated
 parameters and explicit state; `weightDecayMask` can exclude parameters.
@@ -477,8 +514,39 @@ ID is usually `0`. `cuda_set_device()` accepts only the owning device, and
 `cuda_device_reset()` throws rather than invalidating tensors, modules or graphs.
 Start a new PHP process to reset CUDA. Compiled modules, eager operations and
 Fusion share the same primary context.
-GPU validation currently covers CLI only; fork/FPM and concurrent ZTS execution
-remain unvalidated. A successful ZTS build is not proof of CUDA thread safety.
+CUDA initialization is lazy: loading the extension and using ordinary `HostArray`
+storage do not initialize CUDA. CLI and PHP-FPM with isolated workers are
+supported. Fork workers **before the first CUDA API call**, including device
+queries, compiler construction and pinned host allocation. Do not use CUDA in
+FPM master/preload code. Each worker must create its own tensors, modules and
+graphs after forking.
+
+Once a process has accessed CUDA, its children cannot reuse that runtime:
+CUDA access throws `PhpTensors\RuntimeException` before touching inherited
+contexts or locks. Use a fresh PHP process/`exec` instead. Destruction in a
+rejected child does not synchronize or free the parent's CUDA resources;
+inherited native resources are abandoned until that child exits.
+
+The first CUDA caller also owns the process's CUDA thread for its entire
+lifetime. Other threads are rejected, even after the original thread exits.
+Concurrent CUDA calls from PHP/ZTS threads are **not supported**; use isolated
+processes. Internal GPU streams may still execute concurrently. Native pthread
+tests verify rejection, not concurrent PHP/ZTS GPU execution.
+
+The pool is allocated on the first operation needing a CUDA context and remains
+bounded and reusable across requests. Configure its positive byte count, or a
+`K`/`M`/`G` suffix, before starting PHP, for example:
+
+```ini
+phptensors.cuda.memory_pool_size=256M
+```
+
+Invalid/overflowing sizes throw on the first pool allocation, without preventing
+CPU-only work. The first pool configuration is fixed for the worker's lifetime;
+`ini_set()` emits a warning, returns `false` and leaves the value unchanged.
+Request shutdown completes pending Fusion work, clears request-local caches and
+backend workspaces/counters, and restores strict FP32 matmul precision without
+resetting the CUDA device or destroying the process pool.
 
 Shapes have at most 10 axes, with dimensions from `0` to `INT_MAX`. Factories
 check element counts, strides and byte sizes before allocating; empty axes are
@@ -512,10 +580,49 @@ active host iterators retain their original storage during replacement.
 `HostArray` supports CPU `+`, `-`, `*` and `/` for same-shape, same-dtype
 float32/float64 tensors and numeric scalars. Broadcasting is not supported.
 CPU-only builds need no CUDA installation; `toGpu()` and `CudaArray` operations
-throw if CUDA is unavailable. In CUDA builds, `HostArray` also stores
-`CudaArray::toHost()` results and supports the CUDA storage dtypes.
+throw if CUDA is unavailable. `HostArray` stores all 13 dtypes at their native
+width in either build: FP32 uses four bytes per element, FP64 eight, and
+FP16/BF16 two. Pinned allocation remains an explicit CUDA-only capability.
 Scalar access (`get()`, `at()`, `$host[$i]`) and iteration support these storage
 dtypes, including FP16/BF16; low-precision values are returned as PHP floats.
+Indices must be integers, not coercible strings or fractional values.
+Empty nested arrays preserve their shape: `[]` has shape `[0]`, while
+`[[], []]` has shape `[2, 0]`.
+
+`HostArray` implements `IteratorAggregate` and `Countable`. `count($host)` and
+`$host->count()` return the first dimension; `getSize()` returns the total
+element count. One-dimensional iteration yields PHP scalars, while higher ranks
+yield zero-copy `HostArray` rows that retain their backing storage:
+
+```php
+$host = new HostArray([[1, 2], [3, 4]], 'int32');
+$rows = iterator_to_array($host);
+print_r($rows[1]->toArray()); // [3, 4]
+print_r(iterator_to_array($host->getIterator())[0]->toArray()); // [1, 2]
+```
+
+Host serialization uses `__contiguous_array_v1` in both builds, packing logical
+row-major contents with offset zero rather than the parent allocation. Subarray
+snapshots, empty shapes and dtype bytes round-trip across CPU/CUDA build profiles
+on machines with the same native byte order. Bytes are native-endian (little-endian
+on the validated Linux x86-64 platforms), not a cross-endian interchange format.
+The old CPU-only `__host_array_v1` FP32/FP64 format remains readable and is
+normalized on the next export. Pinning and autograd state are not serialized;
+restoration produces ordinary host storage. CPU autograd/Fusion and numerical
+methods beyond the documented arithmetic remain unsupported.
+
+To measure host allocation footprint, buffer import/export and arithmetic:
+
+```bash
+php -n -d extension=phptensors_build-8.4/modules/phptensors.so tests/benchmark_host_storage.php
+```
+
+The benchmark reports actual Zend-managed allocation including metadata and
+seven-run median timings. It requires normal Zend allocation accounting
+(`USE_ZEND_ALLOC=0` is not suitable for footprint measurement). These are host
+buffer-copy measurements by default. In a CUDA build, append `--gpu` to also
+verify byte-exact GPU round trips and measure synchronous upload/download,
+including result allocation; uploads explicitly synchronize before timing ends.
 
 Custom backends can implement `BackendInterface`, but it does not automatically
 dispatch tensor operations. To overload PHP operators, extend
@@ -635,8 +742,9 @@ validated on the following configurations:
 
 | PHP / mode | GPU and configuration | Validation |
 | --- | --- | --- |
-| 8.1, Docker development image | GPU-enabled CUDA 12.6.3 environment | Current source: build and API snapshot passed; full suite: 88 PHPTs passed, one expected CPU-only skip; seven native checks passed, including scalar conversions and GPU integer/index/grid boundaries |
-| 8.4 and 8.5 ZTS | CPU-only Docker builds | Current source: builds succeeded; API snapshot matched; 8/8 selected PHPTs per version passed |
+| 8.1, Docker development image | GPU-enabled CUDA 12.6.3 environment | Current source: build and updated API snapshot passed; full suite with FPM enabled: 97 PHPTs passed, one expected CPU-only skip; seven native checks passed, including fork/thread ownership and GPU integer/index/grid boundaries |
+| 8.1 NTS CLI and PHP-FPM | GPU-enabled CUDA 12.6.3 environment | Pre-CUDA worker fork/recycling, post-CUDA fork rejection and safe inherited-object destruction passed; 24 GPU and eight CPU-only requests across four recycled FPM workers passed with request-state reset, pending shutdown and bounded warm memory |
+| 8.4 and 8.5 ZTS | CPU-only Docker builds | Current source: builds succeeded without CUDA SDK; updated API snapshot matched; 10/10 selected PHPTs per version passed, including shared 13-dtype storage/iteration/persistence; four host regressions per version also passed with system malloc |
 | 8.3 NTS | GeForce MX570 A, cuDNN 8.9.7 | Beta.5: all 44 GPU PHPT tests passed, including CNN inference |
 | 8.3 and 8.5 NTS | GeForce MX570 A, without cuDNN | Beta.5: 43 GPU PHPT tests passed per runtime; optional cuDNN test skipped |
 | 8.3 NTS | GeForce MX570 A, without cuBLAS/cuDNN | Beta.5: 43 GPU PHPT tests passed; optional cuDNN test skipped |

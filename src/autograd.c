@@ -31,6 +31,8 @@ typedef struct
 
 ZEND_TLS int autograd_suppressed;
 
+static tensor_t *gradient_cast(tensor_t *tensor, dtype_t dtype);
+
 static size_t tensor_pointer_hash(const tensor_t *tensor)
 {
     uint64_t value = (uint64_t)(uintptr_t)tensor;
@@ -607,6 +609,17 @@ static int gradient_add(gradient_entry_t **entries, size_t *count, size_t *capac
         return 1;
     }
 
+    dtype_t gradient_dtype = autograd_is_low_precision_type(tensor->dtype)
+        ? DTYPE_FLOAT32 : tensor->dtype;
+    if (gradient->dtype != gradient_dtype)
+    {
+        tensor_t *converted = gradient_cast(gradient, gradient_dtype);
+        cuda_tensor_destroy(gradient);
+        if (!converted)
+            return 0;
+        gradient = converted;
+    }
+
     size_t position = gradient_find(index, tensor);
     if (position != SIZE_MAX)
     {
@@ -644,13 +657,19 @@ static tensor_t *gradient_get(const gradient_entry_t *entries,
     return position == SIZE_MAX ? NULL : entries[position].gradient;
 }
 
-static tensor_t *gradient_scale(tensor_t *tensor, double value)
+static scalar_value_t gradient_scalar(dtype_t dtype, double value)
 {
     scalar_value_t scalar = {0};
-    scalar.dtype = tensor->dtype == DTYPE_FLOAT64 ? DTYPE_FLOAT64 : DTYPE_FLOAT32;
+    scalar.dtype = dtype == DTYPE_FLOAT64 ? DTYPE_FLOAT64 : DTYPE_FLOAT32;
     if (scalar.dtype == DTYPE_FLOAT64) scalar.v.f64 = value;
     else scalar.v.f32 = (float)value;
     scalar.is_neg = value < 0;
+    return scalar;
+}
+
+static tensor_t *gradient_scale(tensor_t *tensor, double value)
+{
+    scalar_value_t scalar = gradient_scalar(tensor->dtype, value);
     if (value == 0.0)
         return cuda_tensor_create_with_value(tensor->shape, tensor->ndims, scalar, tensor->dtype);
     return cuda_scalar_op(tensor, scalar, OP_MUL);
@@ -778,6 +797,28 @@ static tensor_t *autograd_where(tensor_t *condition, tensor_t *x, tensor_t *y)
 {
     return fusion_active() ? fusion_where(condition, x, y)
                            : cuda_tensor_where(condition, x, y);
+}
+
+static tensor_t *gradient_route_extrema(tensor_t *mask, tensor_t *ties,
+                                        tensor_t *upstream, tensor_t *half,
+                                        tensor_t *zeros, int inverse)
+{
+    tensor_t *selected = autograd_where(mask, inverse ? zeros : upstream,
+                                      inverse ? upstream : zeros);
+    if (!selected)
+        return NULL;
+    tensor_t *result = autograd_where(ties, half, selected);
+    cuda_tensor_destroy(selected);
+    return result;
+}
+
+static tensor_t *gradient_where_constant(tensor_t *condition, tensor_t *gradient, double value)
+{
+    tensor_t *constant = cuda_tensor_create_with_value(gradient->shape, gradient->ndims,
+        gradient_scalar(gradient->dtype, value), gradient->dtype);
+    tensor_t *result = constant ? autograd_where(condition, constant, gradient) : NULL;
+    if (constant) cuda_tensor_destroy(constant);
+    return result;
 }
 
 static tensor_t *gradient_for_product_reduction(tensor_t *input, tensor_t *upstream, int axis)
@@ -945,9 +986,7 @@ static tensor_t *gradient_for_reduction(tensor_t *output, tensor_t *upstream,
         return NULL;
     }
 
-    scalar_value_t zero = {0};
-    zero.dtype = share->dtype;
-    tensor_t *zeros = cuda_scalar_op(share, zero, OP_MUL);
+    tensor_t *zeros = gradient_scale(share, 0.0);
     if (!zeros)
     {
         cuda_tensor_destroy(mask_float);
@@ -1085,9 +1124,35 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                                 if (factor) cuda_tensor_destroy(factor);
                                 cuda_tensor_destroy(base_power);
                             }
+                            tensor_t *zero_exponent = cuda_scalar_op(exponent,
+                                gradient_scalar(gradient_dtype, 0.0), OP_EQ);
+                            tensor_t *routed_base = ga && zero_exponent
+                                ? gradient_where_constant(zero_exponent, ga, 0.0) : NULL;
+                            if (ga) cuda_tensor_destroy(ga);
+                            ga = routed_base;
+                            if (zero_exponent) cuda_tensor_destroy(zero_exponent);
                             tensor_t *log_base = cuda_unary_op(base, OP_LOG);
                             tensor_t *factor_y = log_base ? cuda_tensor_op(temporary, log_base, OP_MUL) : NULL;
                             if (factor_y) gb = cuda_tensor_op(upstream, factor_y, OP_MUL);
+                            tensor_t *zero_base = cuda_scalar_op(base,
+                                gradient_scalar(gradient_dtype, 0.0), OP_EQ);
+                            tensor_t *positive_exponent = zero_base ? cuda_scalar_op(exponent,
+                                gradient_scalar(gradient_dtype, 0.0), OP_GT) : NULL;
+                            tensor_t *constant_zero = positive_exponent
+                                ? cuda_tensor_op(zero_base, positive_exponent, OP_MUL) : NULL;
+                            tensor_t *unit_base = constant_zero ? cuda_scalar_op(base,
+                                gradient_scalar(gradient_dtype, 1.0), OP_EQ) : NULL;
+                            tensor_t *constant_exponent = unit_base
+                                ? cuda_tensor_op(constant_zero, unit_base, OP_ADD) : NULL;
+                            tensor_t *routed_exponent = gb && constant_exponent
+                                ? gradient_where_constant(constant_exponent, gb, 0.0) : NULL;
+                            if (gb) cuda_tensor_destroy(gb);
+                            gb = routed_exponent;
+                            if (constant_exponent) cuda_tensor_destroy(constant_exponent);
+                            if (unit_base) cuda_tensor_destroy(unit_base);
+                            if (constant_zero) cuda_tensor_destroy(constant_zero);
+                            if (positive_exponent) cuda_tensor_destroy(positive_exponent);
+                            if (zero_base) cuda_tensor_destroy(zero_base);
                             if (factor_y) cuda_tensor_destroy(factor_y);
                             if (log_base) cuda_tensor_destroy(log_base);
                             cuda_tensor_destroy(temporary);
@@ -1101,15 +1166,18 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                     {
                         operation_type_t comparison = node->op == OP_MAXIMUM ? OP_GE : OP_LE;
                         tensor_t *mask = cuda_tensor_op(node->a, node->b, comparison);
-                        tensor_t *zeros = mask ? gradient_scale(upstream, 0.0) : NULL;
-                        if (mask && zeros)
+                        tensor_t *ties = mask ? cuda_tensor_op(node->a, node->b, OP_EQ) : NULL;
+                        tensor_t *zeros = ties ? gradient_scale(upstream, 0.0) : NULL;
+                        tensor_t *half = zeros ? gradient_scale(upstream, 0.5) : NULL;
+                        if (half)
                         {
-                            ga = fusion_active() ? fusion_where(mask, upstream, zeros)
-                                                 : cuda_tensor_where(mask, upstream, zeros);
-                            gb = fusion_active() ? fusion_where(mask, zeros, upstream)
-                                                 : cuda_tensor_where(mask, zeros, upstream);
+                            ga = gradient_route_extrema(mask, ties, upstream, half, zeros, 0);
+                            if (ga)
+                                gb = gradient_route_extrema(mask, ties, upstream, half, zeros, 1);
                         }
+                        if (half) cuda_tensor_destroy(half);
                         if (zeros) cuda_tensor_destroy(zeros);
+                        if (ties) cuda_tensor_destroy(ties);
                         if (mask) cuda_tensor_destroy(mask);
                     }
                     break;
@@ -1142,17 +1210,33 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                 }
                 else if (node->op == OP_POW)
                 {
-                    double scalar_value = node->scalar.dtype == DTYPE_INT64
-                        ? (double)node->scalar.v.i64
-                        : node->scalar.dtype == DTYPE_FLOAT64
-                            ? node->scalar.v.f64 : (double)node->scalar.v.f32;
-                    scalar_value_t log_scalar = {0};
-                    log_scalar.dtype = node->a->dtype;
-                    if (log_scalar.dtype == DTYPE_FLOAT64) log_scalar.v.f64 = log(scalar_value);
-                    else log_scalar.v.f32 = (float)log(scalar_value);
-                    temporary = cuda_scalar_op(output, log_scalar, OP_MUL);
-                    if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_MUL);
-                    if (temporary) cuda_tensor_destroy(temporary);
+                    scalar_value_t base = cast_single_value(node->scalar, DTYPE_FLOAT64);
+                    if (base.dtype == DTYPE_UNKNOWN)
+                    {
+                        CUDA_THROW_INVALID("Invalid scalar base in power backward");
+                        cuda_tensor_destroy(upstream);
+                        return 0;
+                    }
+                    if (base.v.f64 == 1.0)
+                        ga = gradient_scale(upstream, 0.0);
+                    else
+                    {
+                        tensor_t *values = gradient_cast(output, upstream->dtype);
+                        temporary = values ? gradient_scale(values, log(base.v.f64)) : NULL;
+                        if (values) cuda_tensor_destroy(values);
+                        if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_MUL);
+                        if (temporary) cuda_tensor_destroy(temporary);
+                        if (ga && base.v.f64 == 0.0)
+                        {
+                            tensor_t *positive = cuda_scalar_op(node->a,
+                                gradient_scalar(upstream->dtype, 0.0), OP_GT);
+                            tensor_t *routed = positive
+                                ? gradient_where_constant(positive, ga, 0.0) : NULL;
+                            cuda_tensor_destroy(ga);
+                            ga = routed;
+                            if (positive) cuda_tensor_destroy(positive);
+                        }
+                    }
                 }
                 else
                 {
@@ -1171,38 +1255,45 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                 ga = cuda_scalar_op(upstream, node->scalar, OP_DIV);
             else if (node->op == OP_POW)
             {
-                scalar_value_t exponent = node->scalar;
-                double value = exponent.dtype == DTYPE_FLOAT64 ? exponent.v.f64 :
-                    exponent.dtype == DTYPE_INT64 ? (double)exponent.v.i64 : exponent.v.f32;
-                scalar_value_t lowered = {0};
-                lowered.dtype = node->a->dtype;
-                if (lowered.dtype == DTYPE_FLOAT64) lowered.v.f64 = value - 1.0;
-                else lowered.v.f32 = (float)(value - 1.0);
-                temporary = cuda_scalar_op(node->a, lowered, OP_POW);
-                if (temporary)
+                scalar_value_t exponent = cast_single_value(node->scalar, DTYPE_FLOAT64);
+                if (exponent.dtype == DTYPE_UNKNOWN)
                 {
-                    tensor_t *scaled = cuda_scalar_op(temporary, exponent, OP_MUL);
-                    if (scaled) ga = cuda_tensor_op(upstream, scaled, OP_MUL);
-                    if (scaled) cuda_tensor_destroy(scaled);
-                    cuda_tensor_destroy(temporary);
+                    CUDA_THROW_INVALID("Invalid scalar exponent in power backward");
+                    cuda_tensor_destroy(upstream);
+                    return 0;
+                }
+                if (exponent.v.f64 == 0.0)
+                    ga = gradient_scale(upstream, 0.0);
+                else
+                {
+                    scalar_value_t lowered = gradient_scalar(upstream->dtype, exponent.v.f64 - 1.0);
+                    tensor_t *values = gradient_cast(node->a, upstream->dtype);
+                    temporary = values ? cuda_scalar_op(values, lowered, OP_POW) : NULL;
+                    if (values) cuda_tensor_destroy(values);
+                    if (temporary)
+                    {
+                        tensor_t *scaled = cuda_scalar_op(temporary, node->scalar, OP_MUL);
+                        if (scaled) ga = cuda_tensor_op(upstream, scaled, OP_MUL);
+                        if (scaled) cuda_tensor_destroy(scaled);
+                        cuda_tensor_destroy(temporary);
+                    }
                 }
             }
             else if (node->op == OP_MAXIMUM || node->op == OP_MINIMUM)
             {
-                operation_type_t comparison;
-                if (node->op == OP_MAXIMUM)
-                    comparison = node->parameter ? OP_GT : OP_GE;
-                else
-                    comparison = node->parameter ? OP_LT : OP_LE;
-                tensor_t *mask = node->parameter
-                    ? cuda_scalar_op(node->a, node->scalar, comparison)
-                    : cuda_scalar_op(node->a, node->scalar, comparison);
-                tensor_t *zeros = mask ? gradient_scale(upstream, 0.0) : NULL;
-                if (mask && zeros)
-                    ga = fusion_active() ? fusion_where(mask, upstream, zeros)
-                                         : cuda_tensor_where(mask, upstream, zeros);
+                operation_type_t comparison = node->op == OP_MAXIMUM ? OP_GE : OP_LE;
+                tensor_t *values = gradient_cast(node->a, output->dtype);
+                tensor_t *mask = values ? cuda_scalar_op(values, node->scalar, comparison) : NULL;
+                tensor_t *ties = mask ? cuda_scalar_op(values, node->scalar, OP_EQ) : NULL;
+                tensor_t *zeros = ties ? gradient_scale(upstream, 0.0) : NULL;
+                tensor_t *half = zeros ? gradient_scale(upstream, 0.5) : NULL;
+                if (half)
+                    ga = gradient_route_extrema(mask, ties, upstream, half, zeros, 0);
+                if (half) cuda_tensor_destroy(half);
                 if (zeros) cuda_tensor_destroy(zeros);
+                if (ties) cuda_tensor_destroy(ties);
                 if (mask) cuda_tensor_destroy(mask);
+                if (values) cuda_tensor_destroy(values);
             }
             else
             {
@@ -1227,9 +1318,9 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                     break;
                 case OP_EXP2:
                 {
-                    scalar_value_t ln2 = {.v.f32 = 0.6931471805599453f,
-                                          .dtype = DTYPE_FLOAT32};
-                    temporary = cuda_scalar_op(output, ln2, OP_MUL);
+                    tensor_t *values = gradient_cast(output, upstream->dtype);
+                    temporary = values ? gradient_scale(values, 0.69314718055994530942) : NULL;
+                    if (values) cuda_tensor_destroy(values);
                     if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_MUL);
                     if (temporary) cuda_tensor_destroy(temporary);
                     break;
@@ -1248,11 +1339,10 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                 case OP_LOG2:
                 case OP_LOG10:
                 {
-                    scalar_value_t scale = {
-                        .v.f32 = node->op == OP_LOG2
-                            ? 0.6931471805599453f : 2.302585092994046f,
-                        .dtype = DTYPE_FLOAT32};
-                    temporary = cuda_scalar_op(node->a, scale, OP_MUL);
+                    tensor_t *values = gradient_cast(node->a, upstream->dtype);
+                    temporary = values ? gradient_scale(values, node->op == OP_LOG2
+                        ? 0.69314718055994530942 : 2.30258509299404568402) : NULL;
+                    if (values) cuda_tensor_destroy(values);
                     if (temporary) ga = cuda_tensor_op(upstream, temporary, OP_DIV);
                     if (temporary) cuda_tensor_destroy(temporary);
                     break;
@@ -1341,8 +1431,7 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                     break;
                 case OP_ABS:
                     {
-                        scalar_value_t zero = {0};
-                        zero.dtype = node->a->dtype;
+                        scalar_value_t zero = gradient_scalar(upstream->dtype, 0.0);
                         tensor_t *positive = cuda_scalar_op(node->a, zero, OP_GT);
                         tensor_t *negative = cuda_scalar_op(node->a, zero, OP_LT);
                         tensor_t *negative_gradient = gradient_negate(upstream);
@@ -1376,6 +1465,16 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                     cuda_tensor_destroy(upstream);
                     return 0;
             }
+            if (ga && (node->op == OP_LOG || node->op == OP_LOG1P ||
+                       node->op == OP_LOG2 || node->op == OP_LOG10))
+            {
+                tensor_t *outside = cuda_scalar_op(node->a,
+                    gradient_scalar(upstream->dtype, node->op == OP_LOG1P ? -1.0 : 0.0), OP_LT);
+                tensor_t *routed = outside ? gradient_where_constant(outside, ga, NAN) : NULL;
+                cuda_tensor_destroy(ga);
+                ga = routed;
+                if (outside) cuda_tensor_destroy(outside);
+            }
             break;
 
         case AUTOGRAD_REDUCE:
@@ -1396,16 +1495,6 @@ static int autograd_propagate(tensor_t *output, tensor_t *upstream,
                 upstream = NULL;
                 int axis = node->parameter;
                 int flip_axis = axis < 0 ? 0 : axis;
-                if (axis == -1)
-                {
-                    int shape[MAX_DIMS];
-                    memcpy(shape, node->a->shape, node->a->ndims * sizeof(int));
-                    tensor_t *reshaped = cuda_tensor_reshape(
-                        scan_gradient, shape, node->a->ndims);
-                    cuda_tensor_destroy(scan_gradient);
-                    scan_gradient = reshaped;
-                }
-
                 tensor_transform_spec_t reverse_spec = {0};
                 reverse_spec.op = OP_FLIP;
                 reverse_spec.output_ndims = scan_gradient
@@ -1728,6 +1817,9 @@ int autograd_backward(tensor_t *tensor, tensor_t *gradient, int retain_graph)
             entries[i].gradient = NULL;
         }
     }
+
+    if (success)
+        fusion_record_backward(topology.items, topology.count);
 
     if (success && !retain_graph)
     {

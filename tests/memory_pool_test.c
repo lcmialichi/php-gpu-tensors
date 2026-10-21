@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include "php.h"
 #include <cuda_runtime.h>
 #include <cuda.h>
@@ -23,15 +25,18 @@ static CUcontext test_context = (CUcontext)&owner_context_token;
 static CUcontext saved_context;
 static int saved_device;
 static int context_pushes;
+static int context_queries;
 
 static cudaError_t test_get_device(int *device)
 {
+    context_queries++;
     *device = test_device;
     return cudaSuccess;
 }
 
 static CUresult test_get_context(CUcontext *context)
 {
+    context_queries++;
     *context = test_context;
     return CUDA_SUCCESS;
 }
@@ -125,8 +130,66 @@ static cudaError_t test_cuda_free(void *ptr)
 #define php_error_docref test_cleanup_warning
 #include "../src/backends/cuda/memory_pool.c"
 
+static void *reject_foreign_owner(void *allocation)
+{
+    int expected = getpid() == atomic_load(&owner_process)
+        ? CUDA_OWNER_THREAD : CUDA_OWNER_FORKED;
+    size_t bytes = live_bytes;
+    size_t calls = device_allocation_calls;
+    int queries = context_queries;
+    assert(tensor_mem_owner_status() == expected);
+    assert(tensor_mem_claim_owner() == expected);
+    assert(!tensor_mem_init(1024 * 1024));
+    assert(!tensor_mem_context_matches());
+    assert(cuda_mem_alloc(128) == NULL);
+    cuda_mem_free(allocation);
+    tensor_mem_destroy();
+    assert(live_bytes == bytes && device_allocation_calls == calls);
+    assert(context_queries == queries && invalid_frees == 0);
+    return NULL;
+}
+
+static void *claim_from_thread(void *result)
+{
+    *(int *)result = tensor_mem_claim_owner();
+    return NULL;
+}
+
 int main(void)
 {
+    assert(tensor_mem_owner_status() == CUDA_OWNER_UNCLAIMED);
+    pid_t worker = fork();
+    assert(worker >= 0);
+    if (worker == 0)
+    {
+        alarm(5);
+        pthread_t thread;
+        int result;
+        assert(pthread_create(&thread, NULL, claim_from_thread, &result) == 0);
+        assert(pthread_join(thread, NULL) == 0 && result == CUDA_OWNER_CURRENT);
+        assert(tensor_mem_owner_status() == CUDA_OWNER_THREAD);
+        assert(pthread_create(&thread, NULL, claim_from_thread, &result) == 0);
+        assert(pthread_join(thread, NULL) == 0 && result == CUDA_OWNER_THREAD);
+        assert(context_queries == 0 && device_allocation_calls == 0);
+        _exit(0);
+    }
+    int status;
+    assert(waitpid(worker, &status, 0) == worker);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    worker = fork();
+    assert(worker >= 0);
+    if (worker == 0)
+    {
+        alarm(5);
+        assert(tensor_mem_init(1024 * 1024));
+        assert(tensor_mem_owner_status() == CUDA_OWNER_CURRENT);
+        tensor_mem_destroy();
+        _exit(0);
+    }
+    assert(waitpid(worker, &status, 0) == worker);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    assert(tensor_mem_owner_status() == CUDA_OWNER_UNCLAIMED);
+
     fail_metadata = 1;
     assert(!tensor_mem_init(64 * 1024 * 1024));
     assert(live_bytes == 0);
@@ -159,6 +222,22 @@ int main(void)
     assert(live_bytes == reserved_bytes + 8 * 1024 * 1024);
     void *independent = cuda_mem_alloc(12 * 1024 * 1024);
     assert(small && pooled && independent);
+    pthread_t thread;
+    assert(pthread_create(&thread, NULL, reject_foreign_owner, small) == 0);
+    assert(pthread_join(thread, NULL) == 0);
+    assert(tensor_mem_owner_status() == CUDA_OWNER_CURRENT);
+    pthread_mutex_lock(&central_mutex);
+    worker = fork();
+    assert(worker >= 0);
+    if (worker == 0)
+    {
+        alarm(5);
+        reject_foreign_owner(small);
+        _exit(0);
+    }
+    pthread_mutex_unlock(&central_mutex);
+    assert(waitpid(worker, &status, 0) == worker);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     fail_metadata = 1;
     cuda_mem_free(small);
     cuda_mem_free(independent);

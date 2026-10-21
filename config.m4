@@ -183,6 +183,7 @@ if test "$PHP_CUDA" != "no"; then
     src/cuda_wrapper.cpp \
     src/cuda_array/cuda_array_ce.c \ 
     src/contiguous_array_ce.c \
+    src/host_tensor.c \
     src/nn.c \
     src/optimizer.c \
     src/cuda_array/ca_private.c \
@@ -210,12 +211,17 @@ if test "$PHP_CUDA" != "no"; then
     PHP_ADD_MAKEFILE_FRAGMENT(Makefile.frag, $ext_srcdir)
 else
     PHP_ADD_INCLUDE([src])
+    PHP_ADD_INCLUDE([src/cuda_array])
     SRC_FILES="\
     src/cpu_module.c \
     src/backend_contract.c \
     src/cuda_exceptions.c \
     src/operator_overload_ce.c \
-    src/cpu_host_array.c \
+    src/contiguous_array_ce.c \
+    src/host_tensor.c \
+    src/data_types.c \
+    src/cuda_array/tensor_import.c \
+    src/cuda_array/tensor_transfer.c \
     src/host_array_unsupported.c"
     PHP_NEW_EXTENSION(phptensors, $SRC_FILES, yes)
 fi

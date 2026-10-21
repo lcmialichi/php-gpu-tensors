@@ -2,7 +2,6 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdbool.h>
-#include "operations.h"
 #include <stdio.h>
 #include <math.h>
 

@@ -117,7 +117,9 @@ static void fusion_scalar_source(smart_str *source, scalar_value_t scalar)
         case DTYPE_INT32: smart_str_append_printf(source, "%d", scalar.v.i32); break;
         case DTYPE_INT8: smart_str_append_printf(source, "%d", scalar.v.i8); break;
         case DTYPE_BOOL: smart_str_appends(source, scalar.v.b ? "true" : "false"); break;
-        default: ZEND_ASSERT(0);
+        default:
+            CUDA_THROW_INVALID("Unsupported scalar dtype in Fusion code generation");
+            break;
     }
 }
 
@@ -546,6 +548,11 @@ int fusion_generate_source(fusion_plan *plan)
             for (size_t j = 0; j < step->root_count; j++)
                 fusion_emit_node(plan, step, step->roots[j], &source, seen);
         efree(seen);
+        if (EG(exception))
+        {
+            smart_str_free(&source);
+            return 0;
+        }
         smart_str_append_printf(&source, "extern \"C\" __global__ void %s(", step->name);
         fusion_params(&source, step, 1);
         for (size_t j = 0; j < step->root_count; j++)

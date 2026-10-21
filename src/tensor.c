@@ -1,4 +1,5 @@
 #include "tensor.h"
+#include <cuda_runtime.h>
 #include "autograd.h"
 #include "data_types.h"
 #include "php.h"
@@ -17,8 +18,21 @@ static tensor_t *handle_allocation_failure(tensor_t *tensor, const char *message
 static int tensor_storage_range_valid(tensor_t *tensor, size_t element_offset,
                                       size_t element_count);
 
+int cuda_require_runtime_owner(void)
+{
+    int status = tensor_mem_claim_owner();
+    if (status == CUDA_OWNER_CURRENT) return 1;
+    if (status == CUDA_OWNER_FORKED)
+        CUDA_THROW_RUNTIME("CUDA cannot be used after fork from a process that already accessed CUDA; fork before the first CUDA call or exec a fresh PHP worker");
+    else
+        CUDA_THROW_RUNTIME("CUDA is owned by another thread; only one CUDA owner thread per process is supported");
+    return 0;
+}
+
 int cuda_tensor_require_context(void)
 {
+    if (!cuda_require_runtime_owner()) return 0;
+    if (tensor_mem_device() < 0 && !cuda_initialize_memory_pool()) return 0;
     if (tensor_mem_context_matches()) return 1;
     CUDA_THROW_RUNTIME("CUDA operations require the owning device %d and its original context; changing devices or contexts is not supported", tensor_mem_device());
     return 0;
@@ -806,7 +820,10 @@ void cuda_tensor_destroy(tensor_t *tensor)
         else if (tensor->data && !tensor->is_on_gpu)
         {
             if (tensor->host_pinned)
-                cudaFreeHost(tensor->data);
+            {
+                if (tensor_mem_owner_status() == CUDA_OWNER_CURRENT)
+                    cudaFreeHost(tensor->data);
+            }
             else
                 efree(tensor->data);
         }
