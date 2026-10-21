@@ -22,14 +22,24 @@ fi
 cd "$BUILD_DIR"
 "$PHP_BIN" -n tests/check_api_surface.php
 "$PHP_BIN" -n tests/generate_arginfo.php --check
+LEASE_TEST_BINARY=$(mktemp)
+trap 'rm -f "$LEASE_TEST_BINARY"' EXIT
+${CC:-cc} -D_GNU_SOURCE -Werror=implicit-function-declaration \
+   $($PHP_CONFIG --includes) -Isrc tests/module_tensor_lease_test.c -o "$LEASE_TEST_BINARY"
+"$LEASE_TEST_BINARY"
+${CC:-cc} -std=c99 -Wall -Wextra -Werror -Isrc \
+   tests/module_stream_status_test.c -o "$LEASE_TEST_BINARY"
+"$LEASE_TEST_BINARY"
+rm -f "$LEASE_TEST_BINARY"
+trap - EXIT
 if [ "$CPU_ONLY" -eq 1 ]; then
    "$PHP_BIN" -n -d extension="$PWD/modules/phptensors.so" tests/check_native_api.php --cpu-only
-   make test TESTS="tests/native_api_contract.phpt tests/backend_contract.phpt tests/cpu_backend.phpt tests/host_array_contract.phpt tests/host_array_storage.phpt tests/host_array_copy_cast.phpt tests/host_array_broadcast.phpt tests/host_array_views.phpt tests/host_array_math.phpt tests/host_array_reductions.phpt tests/host_array_lifecycle.phpt tests/host_array_operator_aliasing.phpt tests/host_array_serialization.phpt tests/namespaces.phpt tests/operator_overload_aliasing.phpt tests/operator_overload_protocol.phpt tests/tensor_shape_boundaries.phpt" TEST_PHP_ARGS="-q"
+   make test TESTS="tests/native_api_contract.phpt tests/backend_contract.phpt tests/cpu_backend.phpt tests/host_array_contract.phpt tests/host_array_storage.phpt tests/host_array_copy_cast.phpt tests/host_array_broadcast.phpt tests/host_array_views.phpt tests/host_array_math.phpt tests/host_array_reductions.phpt tests/host_array_lifecycle.phpt tests/host_array_operator_aliasing.phpt tests/host_array_serialization.phpt tests/host_array_transfer_layout.phpt tests/transfer_benchmark_contract.phpt tests/namespaces.phpt tests/operator_overload_aliasing.phpt tests/operator_overload_protocol.phpt tests/tensor_shape_boundaries.phpt" TEST_PHP_ARGS="-q"
    exit 0
 fi
 "$PHP_BIN" -n -d extension="$PWD/modules/phptensors.so" tests/check_native_api.php --cuda
 if [ "${1:-}" = "--cuda-api-only" ]; then
-   make test TESTS="tests/native_api_contract.phpt tests/native_api_cuda_parsers.phpt tests/operator_overload_protocol.phpt tests/operator_overload_aliasing.phpt tests/host_array_operator_aliasing.phpt" TEST_PHP_ARGS="-q"
+   make test TESTS="tests/native_api_contract.phpt tests/native_api_cuda_parsers.phpt tests/operator_overload_protocol.phpt tests/operator_overload_aliasing.phpt tests/host_array_operator_aliasing.phpt tests/host_array_transfer_layout.phpt tests/transfer_benchmark_contract.phpt" TEST_PHP_ARGS="-q"
    exit 0
 fi
 if [ "${1:-}" = "--require-gpu" ]; then

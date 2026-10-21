@@ -129,15 +129,15 @@ final class CompiledModule
     public function autoGrid(string $name, int|CudaArray $elements): array {}
     /** Execute a kernel and synchronize. @throws RuntimeException */
     public function launch(string $name, ?array $config = [], ?array $args = []): bool {}
-    /** Queue a kernel and return its operation ID. @throws RuntimeException */
+    /** Queue a kernel and return its operation ID; submitted tensor storage stays retained through completion. @throws RuntimeException */
     public function launchAsync(string $name, ?array $config = [], ?array $args = []): int {}
-    /** Queue a batch and return statuses after synchronization. @throws RuntimeException */
+    /** Queue a batch, synchronize its stream and return aggregate success. @throws RuntimeException */
     public function launchAsyncBatch(array $operations): bool|array {}
-    /** Synchronize one operation ID or all outstanding operations. */
+    /** Synchronize one ID, or synchronize and clean up all operation records. @throws RuntimeException */
     public function sync(?int $op_id = null): bool {}
-    /** Query completion without blocking. */
+    /** Query GPU completion without blocking on pending streams. @throws RuntimeException */
     public function isFinished(?int $op_id = null): bool {}
-    /** Wait for one or all operations; timeout is in milliseconds. */
+    /** Wait for one or all operations; a timeout in milliseconds does not cancel pending work. @throws RuntimeException */
     public function wait(?int $op_id = null, int $timeout_ms = -1): bool {}
     /** Check whether an entry point was registered. */
     public function hasKernel(string $name): bool {}
@@ -157,7 +157,7 @@ final class CompiledModule
     public function getStats(): array {}
     /** Return active operation metadata. */
     public function getPendingOperations(): array {}
-    /** Cancel an operation and release its resources. */
+    /** Wait for an operation to finish, without preempting its kernel; cleanup releases its record. @throws RuntimeException */
     public function cancelOperation(int $op_id): bool {}
     /** Remove completed operation records and return their count. */
     public function cleanup(): int {}

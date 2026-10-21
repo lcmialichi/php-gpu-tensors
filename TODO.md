@@ -563,6 +563,33 @@ coverage and unsupported cases instead.
 
 - [ ] **EXEC-01 — Validate CPU/GPU transfer correctness and cost separately.**
   Preserve existing direct contiguous paths and device packing for strided views.
+  **Progress:** a shared [raw-byte fixture](tests/fixtures/transfer_contract.php)
+  covers all 13 dtypes, including IEEE signed zeros, infinities, NaN payloads,
+  subnormals and exact 64-bit integer patterns. The
+  [host staging regression](tests/host_array_transfer_layout.phpt) checks nine
+  dense/offset/strided/broadcast/scalar/empty/singleton layouts, retained views,
+  independent copies and large dense/sparse packing. It passes on PHP 8.4/8.5 ZTS
+  CPU and PHP 8.3 CUDA-profile host code, including system malloc in all three.
+  The selected CPU runner passes 19/19 per version; CUDA API-only passes 7/7.
+  The [GPU transfer matrix](tests/cuda_transfer_contract.phpt) exercises those
+  layouts from pinned/unpinned sources, independent upload/download storage and
+  device-packed dense/sparse exports. It and both existing transfer regressions
+  explicitly skip when the device query fails; their actual GPU assertions remain
+  pending. The [cost benchmark](tests/benchmark_transfers.php) now separates host
+  import/export, upload, download and device-buffer export, with all 13 dtypes,
+  three default sizes and five layouts. Each case has a fresh worker, byte checks,
+  first-call resolution flags, calibrated warm batches, raw samples, median/p95,
+  logical bytes/s, whole-case RSS/Zend peaks and explicit allocation scope.
+  The [report contract](tests/transfer_benchmark_contract.phpt) validates statistics,
+  process isolation, CLI errors and bounded staging for a 4 MiB transpose.
+  Local PHP 8.4 ZTS CPU measurement completed all 195 default cases and 234
+  operation measurements (one extra warmup, three samples), all byte-exact.
+  The 4 MiB FP32 transpose used 8,394,488 extra Zend peak bytes, below the
+  13,631,488-byte staging budget. GPU requests explicitly fail on CPU-only builds
+  or unavailable device queries without emitting a success-shaped report.
+  Warm samples include allocation/release; p95 describes batch means, not
+  individual-call tail latency. Device memory snapshots are not a peak counter.
+  GPU measurements and full peak-memory/performance acceptance remain pending.
   **Accept:** byte-exact supported-dtype round trips for contiguous tensors,
   offset/strided/broadcast views, empties and pinned/unpinned host storage;
   defined ownership/copy independence and exception behavior.
@@ -570,6 +597,41 @@ coverage and unsupported cases instead.
   for small/medium/large tensors; packed buffers must not expand into PHP scalars.
 
 - [ ] **EXEC-02 — Formalize async resource and ordering contracts.**
+  **Progress:** CompiledModule now retains exact native tensor allocations during
+  argument preparation and through stream completion/cleanup, rather than relying
+  only on PHP object references. This covers reconstruction from scalar-conversion
+  callbacks, duplicate arguments, retained views, synchronous launches, async
+  operation records and earlier work in a batch. Conversion exceptions stop the
+  failing submission; previous batch work is synchronized before lease release.
+  Async records are detached before PHP argument destructors can reenter cleanup.
+  The batch's temporary status array is now released before returning its existing
+  aggregate boolean result.
+  The [native lease unit](tests/module_tensor_lease_test.c) passes with PHP 8.4/8.5
+  CPU headers and the PHP 8.3 CUDA profile, including an ASan/UBSan run on PHP 8.4.
+  CPU runners pass 19/19 per version; the rebuilt CUDA module passes 7/7 host/API
+  tests. Public signatures/snapshot are unchanged.
+  The expanded [GPU regression](tests/cuda_async_lifetime.phpt) covers callback
+  reconstruction, aborted scalar conversion and reentrant argument cleanup, but
+  explicitly skips without a device. Actual GPU assertions, overlapping
+  Fusion/custom streams, mutation/read ordering, failure injection and race checks
+  remain open. No device-wide synchronization was added to the allocator.
+  **Completion/ordering increment:** fixed a use-after-free in global `wait()`,
+  added shared owner-context checks for async queries/synchronization, and stopped
+  treating failed driver checks as completion. Public checks, timeout maintenance
+  and pool-pressure reclamation keep active records/leases after failure.
+  Query methods no longer synchronize expired pending streams, and `wait()` polling
+  does not invoke that blocking maintenance path. Pending flags are refreshed after
+  completion/cleanup, including reentrant argument destruction. Global `sync()` and
+  `wait()` release records previously completed by ID.
+  Streams are no longer borrowed from still-owned records merely because a query
+  succeeds; pool pressure completes/reclaims the owning record before reuse.
+  The [stream-status unit](tests/module_stream_status_test.c) passes 24 simulated
+  driver/context outcomes in CPU 8.4/8.5 and CUDA 8.3 gates, plus host ASan/UBSan.
+  CPU suites remain 19/19 per version; CUDA build and 7/7 host/API tests pass.
+  GPU regressions now also cover completion flags, repeated global waits and
+  pressure beyond 100 submitted operations; they still SKIP without a device.
+  Fatal-driver destruction, sync/batch failure cleanup, workspaces, real GPU fault
+  injection and cross-stream dependency/mutation rules still need verification.
   Evidence: the general allocator recycles freed blocks immediately without stream/
   event ownership ([pool](src/backends/cuda/memory_pool.c)); Fusion and CompiledModule
   implement different retention/synchronization mechanisms.

@@ -1,0 +1,30 @@
+<?php
+return [
+    'patterns' => array_map('hex2bin', [
+        'float16' => '00000080007c00fc017e0100003cff7b',
+        'bfloat16' => '00000080807f80ffc17f0100803f7f7f',
+        'float32' => '00000000000000800000807f000080ff0100c07f010000000000803fffff7f7f',
+        'float64' => '00000000000000000000000000000080000000000000f07f000000000000f0ff010000000000f87f0100000000000000000000000000f03fffffffffffffef7f',
+        'int8' => '00807fff01fe55aa',
+        'int16' => '00000080ff7fffff0100feff5555aaaa',
+        'int32' => '0000000000000080ffffff7fffffffff01000000feffffff55555555aaaaaaaa',
+        'int64' => '00000000000000000000000000000080ffffffffffffff7fffffffffffffffff0100000000000000feffffffffffffff5555555555555555aaaaaaaaaaaaaaaa',
+        'uint8' => '00807fff01fe55aa',
+        'uint16' => '00000080ff7fffff0100feff5555aaaa',
+        'uint32' => '0000000000000080ffffff7fffffffff01000000feffffff55555555aaaaaaaa',
+        'uint64' => '00000000000000000000000000000080ffffffffffffff7fffffffffffffffff0100000000000000feffffffffffffff5555555555555555aaaaaaaaaaaaaaaa',
+        'bool' => '0001000101000100',
+    ]),
+    'layouts' => [
+        'contiguous' => [[2, 4], [0, 1, 2, 3, 4, 5, 6, 7], static fn($x) => $x],
+        'offset' => [[4], [4, 5, 6, 7], static fn($x) => $x->slice(1)],
+        'transpose' => [[4, 2], [0, 4, 1, 5, 2, 6, 3, 7], static fn($x) => $x->transpose()],
+        'stepped' => [[2, 2], [1, 3, 5, 7], static fn($x) => $x->slice(':, 1:4:2')],
+        'offset-stepped' => [[2], [5, 7], static fn($x) => $x->slice(1, [1, 4, 2])],
+        'broadcast' => [[3, 4], [4, 5, 6, 7, 4, 5, 6, 7, 4, 5, 6, 7],
+            static fn($x) => $x->slice(1)->broadcastTo([3, 4])],
+        'scalar' => [[], [6], static fn($x) => $x->slice(1, 2)],
+        'empty' => [[0, 4], [], static fn($x) => $x->slice([0, 0])],
+        'singleton' => [[1, 2, 4], [0, 1, 2, 3, 4, 5, 6, 7], static fn($x) => $x->reshape([1, 2, 4])],
+    ],
+];

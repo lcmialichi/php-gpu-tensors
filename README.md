@@ -180,6 +180,9 @@ It is one workload, not a universal speedup or a benchmark of this exact checkou
 Use the [kernel benchmark](docs/guide.md#kernel-benchmark) to measure your
 workload, or explore the separate
 [benchmark reports](https://github.com/lcmialichi/php-gpu-tensors-benchmarks).
+For data movement, use the [transfer-cost benchmark](docs/guide.md#transfer-cost-benchmark):
+it separates host staging from GPU copies and reports latency, throughput and
+explicit memory/allocation scope.
 
 ## API map for developers and AI tools
 

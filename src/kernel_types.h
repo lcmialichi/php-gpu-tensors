@@ -52,6 +52,7 @@ typedef struct _cuda_async_operation
     void **temp_buffers;
     int temp_buffers_count;
     zval retained_args;
+    struct module_tensor_lease *retained_tensors;
     zend_bool is_active;
     double start_time;
 

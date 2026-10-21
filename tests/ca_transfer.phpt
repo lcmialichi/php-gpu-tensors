@@ -3,7 +3,12 @@ CudaArray transfer to PHP array and host tensor
 --SKIPIF--
 <?php
 if (!extension_loaded('phptensors')) die('skip phptensors extension unavailable');
-if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
+if (!class_exists('PhpTensors\\NN', false)) die('skip CUDA-enabled build required');
+try {
+    if (cuda_get_device_count() < 1) die('skip CUDA device unavailable');
+} catch (PhpTensors\RuntimeException $error) {
+    die('skip CUDA device query unavailable: ' . $error->getMessage());
+}
 ?>
 --FILE--
 <?php

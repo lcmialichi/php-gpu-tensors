@@ -379,9 +379,58 @@ $module->launch('scale', args: [$data, 3, 512],
     config: ['block' => [256, 1, 1], 'grid' => [2, 1, 1]]);
 ```
 
-`launch()` runs synchronously. Use `launchAsync()` or `launchAsyncBatch()` for
-asynchronous work, and keep input arrays alive until it completes. See the
-[JIT examples](../examples/README.md).
+`launch()` runs synchronously. `launchAsync()` returns an operation ID; call
+`sync()` or `wait()` before consuming its results. Despite its name,
+`launchAsyncBatch()` queues work on a shared stream and synchronizes before
+returning aggregate success; it is not a pending-execution handle.
+
+CompiledModule retains both PHP arguments and the exact native tensor allocations
+submitted to its streams. Reconstructing an argument object does not free storage
+already captured for a launch. Views retain their backing allocations, and repeated
+arguments are retained/released independently. Protection starts during argument
+preparation, before scalar conversions can execute PHP callbacks. A conversion
+exception aborts that submission; kernels already submitted earlier in a batch
+still finish before the error propagates. Batches are not transactional.
+Completed operation records can keep resources until cleanup.
+
+Completion checks activate the operation's owning CUDA context and restore the
+caller's context. Driver failures are errors, not successful completion:
+public checks retain the active record and its resources when completion cannot
+be established. `isFinished()` and status queries do not synchronize expired
+pending streams. A `wait()` timeout likewise does not cancel or release pending
+work.
+
+`sync()` and `wait()` without an ID clean up completed records, including records
+previously completed by an ID-specific call. ID-specific completion keeps its
+record available until `cleanup()` or pool reclamation. `cancelOperation()` waits
+for completion; it cannot preempt an executing CUDA kernel. These methods update
+the pending-operation statistics consistently.
+
+Each pooled stream remains owned by its operation until cleanup, even if the GPU
+has already finished its work. A successful query alone does not make that stream
+available to a second record. At the 100-stream limit, a new async launch may wait
+for the oldest owned operation and reclaim its record before reusing the stream.
+
+This ownership rule does **not** insert dependencies between separate streams or
+make concurrent reads/writes safe. Wait before reading results or modifying
+storage used by pending custom kernels. Arbitrary kernels remain responsible for
+bounds checks and their mutation/gradient behavior. The allocator was not changed
+to add device-wide synchronization on every free.
+See the [JIT examples](../examples/README.md).
+
+The [native lease test](../tests/module_tensor_lease_test.c) exercises reference
+ownership, duplicate arguments and shared views without a GPU, using a test
+destructor. It runs in CPU and CUDA API-only gates and also passed with ASan/UBSan
+on PHP 8.4 headers. The [GPU lifetime regression](../tests/cuda_async_lifetime.phpt)
+adds reconstruction during scalar callbacks, failed-conversion submission and
+reentrant argument cleanup, plus completion flags, repeated global waits and pool
+pressure. The [stream-status unit](../tests/module_stream_status_test.c) tests the
+shared driver guard with 24 simulated combinations of query/synchronization,
+pending/completed/failed work, and context push/pop failures. It passes in all
+three build profiles and with host ASan/UBSan.
+The GPU regression's PHP syntax is checked, but its execution assertions still
+require a working device. Mocked driver tests do not validate GPU memory safety,
+destruction after fatal driver failures, or ordering between independent streams.
 
 ## Optional kernel fusion
 
@@ -592,6 +641,20 @@ $gpu = new CudaArray([1, 2, 3]);
 `HostArray` stores data on the CPU; `CudaArray` stores it on the GPU. Operations
 do not move data implicitly. Use `toGpu()` and `toHost()` for synchronous copies
 that preserve shape and dtype.
+
+Cross-backend transfers own independent storage and copy the logical contents of
+views into dense row-major output, rather than copying gaps from their backing
+allocation. Reconstructing or releasing the source does not change a completed
+transfer. Downloads produce ordinary, unpinned host storage; pinned upload
+sources remain an explicit CUDA-only allocation option.
+Calling `toHost()` on an existing `HostArray` instead returns that same object,
+not an independent copy. Use `copy()` when independent host storage is needed.
+
+Binary transfers do not convert elements to PHP scalars or change dtype. Use
+`toBuffer()`/`fromBuffer()` for exact bits, including signed zeros, NaN payloads
+and integers outside PHP's native integer range. The bytes are native-endian;
+this is not an endian-converting file format. Host/device copies are value
+snapshots, not autograd-history transfers.
 
 `clone $tensor` creates independent storage on the same backend and preserves
 host pinning. It copies values, not autograd history; use `$gpu->copy()` for a
@@ -864,6 +927,64 @@ diagnostics for details.
 Built-in CUDA offset/grid arithmetic preserves 64-bit values. Unsupported grid
 sizes fail explicitly; device and memory-pool limits still apply.
 
+## Transfer cost benchmark
+
+Use [benchmark_transfers.php](../tests/benchmark_transfers.php) to measure host
+buffer import/export separately from CPU/GPU uploads and downloads:
+
+```bash
+PHP_VERSION=$(php-config --version | cut -d. -f1,2)
+MODULE="$PWD/phptensors_build-${PHP_VERSION}/modules/phptensors.so"
+REVISION=$(git describe --always --dirty)
+php -n tests/benchmark_transfers.php --binary="$MODULE" --revision="$REVISION" \
+  > transfers-cpu.json
+
+# Requires a CUDA build and a working GPU; also measures pinned upload sources.
+php -n tests/benchmark_transfers.php --binary="$MODULE" --revision="$REVISION" \
+  --mode=gpu > transfers-gpu.json
+```
+
+The parent needs no loaded extension: every case starts a fresh `PHP_BINARY -n`
+worker loading the supplied module. Normal INI files and parent INI overrides are
+not inherited; the report records the worker's actual CUDA pool setting.
+Keep the PHP binary and module ABI matched. The source revision is user-supplied,
+not inferred from the binary; module, benchmark and fixture SHA-256 fingerprints
+are recorded separately.
+
+Defaults cover all 13 dtypes, 1,024/65,536/1,048,576 source elements and five
+layouts: contiguous, offset, transpose, stepped and broadcast. GPU mode measures
+both ordinary and pinned host sources; downloads still allocate ordinary host
+storage. Use `--dtypes=float32,bfloat16`, `--sizes=1024,65536`,
+`--layouts=contiguous,transpose`, `--warmups=2` and `--samples=7` to narrow a run.
+Sizes must be positive multiples of eight. Throughput uses the logical payload,
+which is half the source element count for stepped views.
+
+The JSON separates the first measured call from warm reuse, with raw samples,
+median/p95, bytes/s and memory evidence. First-call times below clock resolution
+are explicitly marked, not replaced with invented durations. Warm samples use
+batches calibrated to at least one millisecond and report per-call batch means;
+their p95 is **not** an individual-call tail-latency percentile.
+Every warm call allocates and releases a result, including PHP loop overhead and
+GPU completion. This is not allocation-free or preallocated-destination timing.
+Byte-exact checks run before and after the timed batches.
+
+Peak RSS and Zend memory cover the entire isolated case, including source data
+and correctness checks. The live-output delta counts only Zend-managed memory,
+not device or pinned allocations. CUDA memory snapshots are global device
+before/after observations, **not device peak memory**. The benchmark rejects
+`USE_ZEND_ALLOC=0`; unavailable GPUs fail rather than emitting a successful report.
+The [benchmark contract test](../tests/transfer_benchmark_contract.phpt) verifies
+the JSON/statistics, isolation, invalid inputs and a 4 MiB transposed export's
+Zend staging budget (three payloads plus 1 MiB beyond resident input state).
+Performance thresholds still require a stable, dedicated baseline.
+
+Local PHP 8.4 ZTS CPU validation completed all 195 default dtype/size/layout cases
+with one extra warmup batch and three measured batches: 234 operation measurements,
+all byte-exact. For the 4 MiB FP32 transpose, the observed additional whole-case
+Zend peak was 8,394,488 bytes, below the 13,631,488-byte staging budget.
+This validates reporting and bounded host staging, not a stable throughput budget
+or GPU performance.
+
 ## Validation status
 
 The CPU-02 minimum numerical core implementation is complete. Its real-CUDA
@@ -873,11 +994,25 @@ gate, tracked separately as CPU-02-GPU in [TODO.md](../TODO.md).
 Build and CPU tests do not substitute for GPU runtime tests. The source has been
 validated on the following configurations:
 
+The first EXEC-01 increment adds a shared raw-byte fixture for all 13 dtypes and
+nine layouts: dense, offset, transposed, stepped, offset/stepped, broadcast,
+rank-zero, empty and singleton-axis views. The
+[host staging regression](../tests/host_array_transfer_layout.phpt) passes on
+PHP 8.4/8.5 ZTS CPU and the PHP 8.3 CUDA profile, also with system malloc.
+The selected CPU runner now passes 19/19 per version and the CUDA API-only runner
+passes 7/7 host tests, including the transfer benchmark contract.
+The [GPU matrix](../tests/cuda_transfer_contract.phpt)
+adds pinned/unpinned round trips, ownership checks and large dense/sparse
+device-packing cases; it and both existing transfer regressions explicitly skip
+when the device query is unavailable. Their GPU assertions are not yet validated.
+Transfer-cost instrumentation is available; actual GPU latency/throughput and
+device peak-memory acceptance remain open in EXEC-01.
+
 | PHP / mode | GPU and configuration | Validation |
 | --- | --- | --- |
 | 8.1, Docker development image | GPU-enabled CUDA 12.6.3 environment | Previous CPU-02 foundation slice only: build, shared native shape check and 19 targeted PHPTs passed, including all 169 CPU/CUDA cast decisions, broadcast arithmetic, transfers, lifecycle and Fusion regressions; three numerical regressions passed with system malloc and two host tests with no visible GPU. Earlier milestone: full FPM-enabled suite passed 97 PHPTs with one expected CPU-only skip and seven native checks |
 | 8.1 NTS CLI and PHP-FPM | GPU-enabled CUDA 12.6.3 environment | Pre-CUDA worker fork/recycling, post-CUDA fork rejection and safe inherited-object destruction passed; 24 GPU and eight CPU-only requests across four recycled FPM workers passed with request-state reset, pending shutdown and bounded warm memory |
-| 8.4 and 8.5 ZTS | CPU-only Docker builds | Builds, snapshot, generated arginfo and native/stub reflection of all 12 classes/interfaces pass; 17/17 selected PHPTs per version, including the complete operator protocol. The new API regression also passes with system malloc on PHP 8.4. Earlier CPU-02 validation passed eight host/numerical malloc regressions per version and those eight on a separate PHP 8.4 UBSan build without undefined-behavior reports |
+| 8.4 and 8.5 ZTS | CPU-only Docker builds | Builds, snapshot, generated arginfo and native/stub reflection of all 12 classes/interfaces pass; 19/19 selected PHPTs per version, including the operator protocol, raw-byte host staging and transfer-cost reporting contract. The new API regression also passes with system malloc on PHP 8.4. Earlier CPU-02 validation passed eight host/numerical malloc regressions per version and those eight on a separate PHP 8.4 UBSan build without undefined-behavior reports |
 | 8.3 NTS | CUDA 12.3.2 build, no GPU/driver | Full CUDA build and native/stub reflection of all 19 classes/interfaces pass. SDK linker stub permits host-only loading: 15 shared/API tests pass, including two API/parser regressions that also pass with system malloc; both real-GPU parity matrices explicitly skip. The earlier native shape check passed. This is not GPU execution evidence: Docker GPU startup cannot load `libnvidia-ml.so.1` |
 | 8.3 NTS | GeForce MX570 A, cuDNN 8.9.7 | Beta.5: all 44 GPU PHPT tests passed, including CNN inference |
 | 8.3 and 8.5 NTS | GeForce MX570 A, without cuDNN | Beta.5: 43 GPU PHPT tests passed per runtime; optional cuDNN test skipped |
