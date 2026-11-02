@@ -512,6 +512,17 @@ Unsupported operations may work in `Fusion::run()` but fail in
 `Fusion::compile()`. The planner can generate multiple kernels, so one
 expression does not always mean one launch.
 
+Dependent pointwise outputs can share a kernel, including AdamW's updated
+weights and first/second moments. The planner uses bounded same-shape regions
+(up to four materialized outputs), preserves per-node dtype conversions and
+keeps native operations and index-changing views as boundaries. It retains
+intermediate values needed by consumers outside the region and rejects regions
+whose dependencies cross back through a boundary. Oversized regions use the
+existing segmented plan. `getPlan()` identifies these groups as
+`dependent-outputs`; this is automatic inside opt-in Fusion, not a new optimizer
+mode. Outputs still have independent storage: later replays do not overwrite
+previous parameters, moment estimates or saved best weights.
+
 Use `getStats()`, `getPlan()` and `getSource()` to inspect a plan. See the
 [Fusion example](../examples/07_fusion_graph.php) for capture and replay.
 
@@ -620,6 +631,29 @@ and diagnostic helpers remain in
 [`Support/ClassifierRunner.php`](../examples/Support/ClassifierRunner.php).
 See the [example walkthrough](../examples/README.md#train-mnist-one-standalone-file)
 for the training recipe, performance measurements and compile-once replay.
+
+The dependent-output planner reduces the real model's AdamW update from
+56 to seven kernels. A same-environment comparison with `9832d4f` measured
+31.52/30.12 s before and 16.52/17.02 s after for two complete 40-epoch runs,
+with identical per-epoch losses/validation accuracies and unchanged final
+98.95% test accuracy. See the
+[measurement scope](../examples/README.md#native-dependent-output-fusion).
+For the optimizer and region regression checks, run:
+
+```bash
+docker exec php-cuda-ext-php_cuda_dev-1 \
+  php -n phptensors_build-8.1/run-tests.php -n -d enable_dl=0 \
+  -d extension=/usr/src/ext/phptensors_build-8.1/modules/phptensors.so \
+  tests/optimizer_fusion_outputs.phpt tests/fusion_dependent_outputs.phpt \
+  tests/classifier_training.phpt
+```
+
+These three pass without skips on the rebuilt module, as do the selected
+31 Fusion/autograd/optimizer/classifier/lifetime/ordering regressions.
+The separate memcheck attempt failed before kernel checking because Compute
+Sanitizer could not initialize the WDDM debugger interface (`Device not
+supported`, exit 99). This does not close GPU memory/race acceptance or the
+previously recorded fault-injection failures.
 
 ## API and limits
 

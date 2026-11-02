@@ -47,7 +47,8 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
     if (node && node->c) c = fusion_collect(plan, node->c);
     id = plan->count++;
     plan->items = erealloc(plan->items, plan->count * sizeof(fusion_item));
-    plan->items[id] = (fusion_item){ .tensor = tensor, .a = a, .b = b, .c = c, .slot = id };
+    plan->items[id] = (fusion_item){ .tensor = tensor, .a = a, .b = b, .c = c,
+        .slot = id, .region = SIZE_MAX };
     if (node && node->kind != FUSION_INPUT)
     {
         if (fusion_inline(tensor))
@@ -100,33 +101,66 @@ static size_t fusion_collect(fusion_plan *plan, tensor_t *tensor)
 
 static void fusion_schedule(fusion_plan *plan, size_t id);
 
-static void fusion_dependencies(fusion_plan *plan, size_t id, size_t root)
+static void fusion_dependencies(fusion_plan *plan, size_t id, size_t root, unsigned char *seen)
 {
-    if (id != root && plan->items[id].cut)
+    if (seen)
+    {
+        if (seen[id]) return;
+        seen[id] = 1;
+    }
+    if (id != root && plan->items[id].cut &&
+        (plan->items[root].region == SIZE_MAX ||
+         plan->items[id].region != plan->items[root].region))
     {
         fusion_schedule(plan, id);
         return;
     }
     fusion_node *node = plan->items[id].tensor->fusion;
-    if (node && node->a) fusion_dependencies(plan, fusion_find(plan, node->a), root);
-    if (node && node->b) fusion_dependencies(plan, fusion_find(plan, node->b), root);
-    if (node && node->c) fusion_dependencies(plan, fusion_find(plan, node->c), root);
+    if (node && node->a) fusion_dependencies(plan, fusion_find(plan, node->a), root, seen);
+    if (node && node->b) fusion_dependencies(plan, fusion_find(plan, node->b), root, seen);
+    if (node && node->c) fusion_dependencies(plan, fusion_find(plan, node->c), root, seen);
 }
 
 static void fusion_schedule(fusion_plan *plan, size_t id)
 {
+    size_t region = plan->items[id].region;
+    if (region != SIZE_MAX) id = region;
     fusion_item *item = &plan->items[id];
     if (item->scheduled || !item->tensor->fusion || item->tensor->fusion->kind == FUSION_INPUT)
         return;
-    fusion_dependencies(plan, id, id);
     item->scheduled = 1;
+    if (region != SIZE_MAX)
+    {
+        unsigned char *seen = ecalloc(plan->count, 1);
+        for (size_t i = 0; i < plan->count; i++)
+            if (plan->items[i].region == region)
+            {
+                plan->items[i].scheduled = 1;
+                if (plan->items[i].region_output) fusion_dependencies(plan, i, id, seen);
+            }
+        efree(seen);
+    }
+    else fusion_dependencies(plan, id, id, NULL);
     plan->steps = erealloc(plan->steps, (plan->step_count + 1) * sizeof(fusion_step));
     fusion_step *step = &plan->steps[plan->step_count++];
     memset(step, 0, sizeof(*step));
     step->root = id;
-    step->roots = emalloc(sizeof(size_t));
-    step->roots[0] = id;
-    step->root_count = 1;
+    step->region = region;
+    if (region != SIZE_MAX)
+    {
+        for (size_t i = 0; i < plan->count; i++)
+            if (plan->items[i].region == region && plan->items[i].region_output)
+            {
+                step->roots = erealloc(step->roots, (step->root_count + 1) * sizeof(size_t));
+                step->roots[step->root_count++] = i;
+            }
+    }
+    else
+    {
+        step->roots = emalloc(sizeof(size_t));
+        step->roots[0] = id;
+        step->root_count = 1;
+    }
     if (fusion_inline(item->tensor) && !item->alias)
     {
         snprintf(step->name, sizeof(step->name), "fusion_%zu", plan->kernel_count++);
@@ -213,12 +247,162 @@ static int fusion_depends(fusion_plan *plan, size_t id, size_t other, unsigned c
     return 0;
 }
 
+static int fusion_region_compatible(fusion_item *item, tensor_t *shape)
+{
+    tensor_t *tensor = item->tensor;
+    fusion_node *node = tensor->fusion;
+    return item->region == SIZE_MAX && fusion_inline(tensor) && !item->alias &&
+        (node->kind == FUSION_BINARY || node->kind == FUSION_SCALAR ||
+         node->kind == FUSION_UNARY || node->kind == FUSION_WHERE ||
+         node->kind == FUSION_CAST ||
+         (node->kind == FUSION_VIEW && node->op == OP_RESHAPE &&
+          node->a->ndims == tensor->ndims &&
+          (!tensor->ndims || !memcmp(node->a->shape, tensor->shape, tensor->ndims * sizeof(int))))) &&
+        (tensor->dtype == DTYPE_FLOAT32 || tensor->dtype == DTYPE_FLOAT64 ||
+         tensor->dtype == DTYPE_BOOL) &&
+        tensor->ndims == shape->ndims &&
+        (!shape->ndims || !memcmp(tensor->shape, shape->shape, shape->ndims * sizeof(int)));
+}
+
+static int fusion_region_collect(fusion_plan *plan, size_t id, tensor_t *shape,
+                                 unsigned char *members, int *cost)
+{
+    if (members[id]) return 1;
+    fusion_item *item = &plan->items[id];
+    if (!fusion_region_compatible(item, shape)) return 1;
+    tensor_t *tensor = item->tensor;
+    fusion_node *node = tensor->fusion;
+    members[id] = 1;
+    int operation_cost = node->kind == FUSION_UNARY ? 4 : node->kind == FUSION_WHERE ? 3 :
+        node->op == OP_POW ? 7 : 1;
+    *cost += operation_cost * (tensor->dtype == DTYPE_FLOAT64 ? 2 : 1);
+    if (*cost > FUSION_OUTPUT_REGION_BUDGET) return 0;
+    size_t children[] = {item->a, item->b, item->c};
+    for (int j = 0; j < 3; j++)
+        if (children[j] != SIZE_MAX &&
+            !fusion_region_collect(plan, children[j], shape, members, cost))
+            return 0;
+    return 1;
+}
+
+static int fusion_region_connected(fusion_plan *plan, size_t id, tensor_t *shape,
+                                   unsigned char *members, unsigned char *seen)
+{
+    if (members[id]) return 1;
+    if (seen[id] || !fusion_region_compatible(&plan->items[id], shape)) return 0;
+    seen[id] = 1;
+    fusion_item *item = &plan->items[id];
+    size_t children[] = {item->a, item->b, item->c};
+    for (int j = 0; j < 3; j++)
+        if (children[j] != SIZE_MAX &&
+            fusion_region_connected(plan, children[j], shape, members, seen))
+            return 1;
+    return 0;
+}
+
+static int fusion_region_reenters(fusion_plan *plan, size_t id,
+                                  unsigned char *members, unsigned char *seen)
+{
+    if (members[id]) return 1;
+    if (seen[id]) return 0;
+    seen[id] = 1;
+    fusion_item *item = &plan->items[id];
+    size_t children[] = {item->a, item->b, item->c};
+    for (int j = 0; j < 3; j++)
+        if (children[j] != SIZE_MAX &&
+            fusion_region_reenters(plan, children[j], members, seen))
+            return 1;
+    return 0;
+}
+
+static void fusion_output_regions(fusion_plan *plan)
+{
+    unsigned char *members = ecalloc(plan->count, 1);
+    unsigned char *outputs = ecalloc(plan->count, 1);
+    unsigned char *seen = ecalloc(plan->count, 1);
+    unsigned char *trial = ecalloc(plan->count, 1);
+    for (size_t candidate = plan->count; candidate > 0; candidate--)
+    {
+        size_t root = candidate - 1;
+        fusion_item *item = &plan->items[root];
+        if (!item->output || item->region != SIZE_MAX ||
+            (item->tensor->dtype != DTYPE_FLOAT32 && item->tensor->dtype != DTYPE_FLOAT64))
+            continue;
+        memset(members, 0, plan->count);
+        memset(outputs, 0, plan->count);
+        memset(seen, 0, plan->count);
+        int cost = 0;
+        if (!fusion_region_collect(plan, root, item->tensor, members, &cost) || !members[root])
+            continue;
+        int expanded;
+        do
+        {
+            expanded = 0;
+            for (size_t i = 0; i < plan->count; i++)
+            {
+                if (!plan->items[i].output || members[i]) continue;
+                memset(seen, 0, plan->count);
+                if (!fusion_region_connected(plan, i, item->tensor, members, seen)) continue;
+                memcpy(trial, members, plan->count);
+                int trial_cost = cost;
+                if (!fusion_region_collect(plan, i, item->tensor, trial, &trial_cost)) continue;
+                size_t returned = 0;
+                for (size_t j = 0; j < plan->count; j++)
+                    if (trial[j] && plan->items[j].output) returned++;
+                if (returned > 4) continue;
+                memcpy(members, trial, plan->count);
+                cost = trial_cost;
+                expanded = 1;
+            }
+        } while (expanded);
+        memset(seen, 0, plan->count);
+        size_t returned = 0;
+        int compatible = 1;
+        for (size_t i = 0; i < plan->count && compatible; i++)
+        {
+            fusion_item *current = &plan->items[i];
+            if (members[i] && current->output)
+            {
+                outputs[i] = 1;
+                returned++;
+            }
+            size_t children[] = {current->a, current->b, current->c};
+            for (int j = 0; j < 3 && compatible; j++)
+            {
+                size_t child = children[j];
+                if (child == SIZE_MAX) continue;
+                if (!members[i] && members[child]) outputs[child] = 1;
+                /* A reduction/view boundary may feed back into the pointwise region. */
+                if (members[i] && !members[child] &&
+                    fusion_region_reenters(plan, child, members, seen))
+                    compatible = 0;
+            }
+        }
+        size_t output_count = 0;
+        for (size_t i = 0; i < plan->count; i++) output_count += outputs[i];
+        if (!compatible || returned < 2 || output_count > 4) continue;
+        for (size_t i = 0; i < plan->count; i++)
+            if (members[i])
+            {
+                plan->items[i].region = root;
+                plan->items[i].region_output = outputs[i];
+                if (outputs[i]) plan->items[i].cut = 1;
+            }
+        item->reason = "dependent-outputs";
+    }
+    efree(members);
+    efree(outputs);
+    efree(seen);
+    efree(trial);
+}
+
 static void fusion_group_outputs(fusion_plan *plan)
 {
     for (size_t i = 0; i + 1 < plan->step_count;)
     {
         fusion_step *first = &plan->steps[i], *next = &plan->steps[i + 1];
-        int compatible = first->name[0] && next->name[0] && plan->items[next->root].output;
+        int compatible = first->region == SIZE_MAX && next->region == SIZE_MAX &&
+            first->name[0] && next->name[0] && plan->items[next->root].output;
         tensor_t *shape = plan->items[next->root].tensor;
         unsigned char *seen = ecalloc(plan->count, 1);
         for (size_t j = 0; compatible && j < first->root_count; j++)
@@ -297,6 +481,7 @@ fusion_plan *fusion_build_plan(tensor_t **roots, size_t root_count)
         }
         if (compatible) { item->alias = 1; item->reason = "native-layout-alias"; }
     }
+    fusion_output_regions(plan);
     for (size_t i = 0; i < root_count; i++)
         fusion_schedule(plan, fusion_find(plan, roots[i]));
     fusion_group_outputs(plan);

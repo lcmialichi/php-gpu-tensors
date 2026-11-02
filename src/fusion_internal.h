@@ -16,6 +16,7 @@
 
 #define FUSION_MAX_NODES 512
 #define FUSION_KERNEL_BUDGET 32
+#define FUSION_OUTPUT_REGION_BUDGET 128
 
 typedef enum
 {
@@ -76,6 +77,8 @@ typedef struct
     size_t last_use;
     size_t slot;
     int alias;
+    size_t region;
+    int region_output;
 } fusion_item;
 
 typedef struct
@@ -88,6 +91,7 @@ typedef struct
     char name[32];
     CUfunction function;
     void **arguments;
+    size_t region;
 } fusion_step;
 
 typedef struct

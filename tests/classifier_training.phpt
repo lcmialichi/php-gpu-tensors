@@ -38,6 +38,16 @@ foreach ($initial as $index => $parameter) {
         throw new RuntimeException('Standalone initialization differs from the original recipe.');
     }
 }
+$recipeOptimizer = Optimizer::adamW();
+$recipePlan = compileTrainingPlan(trainingInputs(
+    CudaArray::zeros([128, 784]), CudaArray::zeros([128, 10]), CudaArray::full([1], 0.001),
+    $initial, $recipeOptimizer->initState($initial)
+), $recipeOptimizer);
+$groups = array_filter($recipePlan->getPlan(), fn($step) => $step['reason'] === 'dependent-outputs');
+if (count($groups) !== 6 || $recipePlan->getStats()['fusedKernels'] > 24) {
+    throw new RuntimeException('The full MNIST model lost its six fused AdamW output groups.');
+}
+unset($recipePlan, $recipeOptimizer);
 unset($initial, $initialBuffers);
 echo "initial weights match the original recipe byte for byte\n";
 

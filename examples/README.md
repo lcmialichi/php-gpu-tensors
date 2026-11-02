@@ -104,6 +104,45 @@ Running the actual CLI entrypoint separately also succeeded in 33.19 s, with
 the same final accuracies and exit status 0.
 These are local observations, not a dedicated benchmark or a universal speedup.
 
+#### Native dependent-output fusion
+
+The planner now fuses connected, same-shape pointwise outputs, including
+AdamW's weights and moment estimates, without changing this example or its API.
+The [optimizer regression](../tests/optimizer_fusion_outputs.phpt) checks
+FP32/FP64, variable learning rates, clipping, decay masks, strided gradients,
+non-finite values, async execution and retained snapshots.
+The [region regression](../tests/fusion_dependent_outputs.phpt) checks native
+side exits, boundary reentry, dtype changes and bounded-region fallbacks.
+
+A separate before/after run compared baseline `9832d4f` and this planner on
+PHP 8.1.2 NTS, CUDA 12.6.3, driver 560.94, MX570 A and Docker WSL 2:
+
+| Measurement | Before | Dependent-output fusion |
+| --- | --- | --- |
+| Whole training, first run | 31.52 s | 16.52 s |
+| Whole training, repeat | 30.12 s | 17.02 s |
+| Warm full batch, mean | 1.163 ms | 0.651 ms |
+| Warm AdamW + clipping only, mean | 0.879 ms | 0.322 ms |
+| Optimizer-only kernels | 56 | 7 |
+| Full-batch fused kernels | 58 | 21 |
+| Full-batch execution steps, including native operations/views | 80 | 43 |
+
+Both training runs include data preparation, 40 epochs, validation and final
+test evaluation, with MNIST already downloaded. Every epoch's losses and
+validation accuracy matched the baseline exactly in both repetitions; best
+epoch 37, validation 99.12% and test 98.95% were unchanged. Both batch shapes
+(128 and 88) retain their own CUDA Graph, for 17,200 launches total.
+The warm measurements use a fixed synthetic GPU-resident batch, 50 warmup
+steps and five serial rounds of 200 steps, FP32 and a scalar loss read per step.
+They exclude compilation and are not Python/framework comparisons.
+The two end-to-end repetitions show roughly 1.8-1.9x speedup, not a universal
+performance guarantee on other hardware.
+
+All 31 selected Fusion/autograd/optimizer/classifier/lifetime/ordering PHPTs
+passed with zero skips. Compute Sanitizer memcheck was attempted separately,
+but could not initialize the WDDM debugger interface; that run exited 99 and
+is not GPU memory-safety acceptance. No debugger/system setting was changed.
+
 The core `CudaArray` API also includes shape views (`squeeze()`,
 `unsqueeze()`, `broadcastTo()`), elementwise bounds (`maximum()`, `minimum()`,
 `clamp()`), logical and statistical reductions (`all()`, `any()`, `var()`,

@@ -697,6 +697,19 @@ coverage and unsupported cases instead.
   unsupported promise to interrupt an executing CUDA kernel.
 
 - [ ] **PERF-01 — Establish reproducible performance budgets.**
+  Training increment: bounded same-shape dependent-output regions reduce the
+  MNIST AdamW update from 56 to seven kernels, retaining functional output
+  ownership. The [optimizer](tests/optimizer_fusion_outputs.phpt) and
+  [region](tests/fusion_dependent_outputs.phpt) regressions cover numerical
+  parity, snapshots, async replay, boundaries and budget fallbacks;
+  [the full-model regression](tests/classifier_training.phpt) gates the six
+  AdamW output groups. Selected GPU regressions pass 31/31, zero skips.
+  Two full 40-epoch comparisons preserve every loss/validation-accuracy entry
+  and final test accuracy (98.95%): 31.52/30.12 s before versus 16.52/17.02 s
+  after on PHP 8.1 / CUDA 12.6.3 / MX570 A / WSL 2.
+  [Measurements](examples/README.md#native-dependent-output-fusion) are local,
+  not dedicated-runner budgets. Compute Sanitizer memcheck could not initialize
+  the WDDM debugger interface (exit 99); this is not GPU memory/race acceptance.
   **Accept:** benchmark imports, transfers, CPU arithmetic, eager dispatch, cold JIT,
   warm Fusion replay, reductions and small/large/batched matmul separately.
   Reports include commit/tag, exact command, PHP NTS/ZTS, hardware, Toolkit/driver,

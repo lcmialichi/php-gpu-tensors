@@ -125,6 +125,7 @@ static void fusion_scalar_source(smart_str *source, scalar_value_t scalar)
 
 static int fusion_leaf(fusion_plan *plan, fusion_step *step, size_t id)
 {
+    if (step->region != SIZE_MAX && plan->items[id].region == step->region) return 0;
     for (size_t i = 0; i < step->root_count; i++)
         if (step->roots[i] == id) return 0;
     return !fusion_inline(plan->items[id].tensor) || plan->items[id].cut;
